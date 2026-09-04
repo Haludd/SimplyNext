@@ -12,7 +12,7 @@
 | :---------------------- | :-------------------------------- |
 | **Code**                | `RSK`                             |
 | **Status**              | Live                              |
-| **Last reviewed**       | 2026-08-28                        |
+| **Last reviewed**       | 2026-08-30                        |
 | **Source of truth for** | Known problems                    |
 | **Parent**              | [`SCR`](scribbles.md)             |
 | **Solutions live in**   | [`ARC`](ARC_architecture.md)      |
@@ -165,8 +165,8 @@ the most visible on stage.
    *Risk:* **Rotation and orientation.** Phone rotated, tablet in landscape, video captured in a
    different orientation than assumed
    *Impact:* Apple's own sample sidesteps this by locking to portrait and hard-coding `orientation:
-   .up` — see [`APL_S5.2`](../doc/APL_apple_ref_report.md#52-coordinate-spaces--three-of-them). That
-   shortcut is not available here
+   .up` — see [`APR_S5.2`](../ref_repo/apple/APR_apple_report.md). That shortcut is not available
+   here
 5. **`CAP-15`** · *Sev:* S1 · *Lik:* L2
    *Risk:* **Aspect-ratio and letterbox mismatch** between the model's input, the preview, and the
    source video
@@ -213,7 +213,7 @@ the most visible on stage.
    *Risk:* **Coordinate-space error.** Three coordinate systems are in play; MediaPipe's origin is
    top-left where Apple's Vision is bottom-left
    *Impact:* Documented explicitly as the most likely porting bug —
-   [`APL_S10.2`](../doc/APL_apple_ref_report.md#102-swift--python-port-table)
+   [`APR_S10.2`](../ref_repo/apple/APR_apple_report.md#102-swift--python-port-table)
 
 ---
 
@@ -485,7 +485,7 @@ purely engineering-minded team will under-weight, and the ones a knowledgeable j
 3.  **`SYS-3`** · *Sev:* S2 · *Lik:* L2
     *Risk:* **Thread and queue design.** Apple's sample uses `DispatchQueue.main.sync` as
     back-pressure; the equivalent naive port deadlocks or stalls —
-    [`APL_S4.3`](../doc/APL_apple_ref_report.md#43-threading-model)
+    [`APR_S4.3`](../ref_repo/apple/APR_apple_report.md#43-threading-model)
     *Impact:* Easy to copy the pattern without the reasoning
 4.  **`SYS-4`** · *Sev:* S2 · *Lik:* L2
     *Risk:* **CPU thermal throttling** on a laptop during a long demo
@@ -835,7 +835,7 @@ Every `S3` × `L3` in the register, plus the two structural criticisms of the pr
     *Risk:* Fragile live demo with no fallback
 
 > **Note:** items 3 and 4 are not engineering problems and cannot be fixed by engineering. They are
-> the reason [`ARC_S7.5`](ARC_architecture.md#75-p6--gloves-rejected-on-the-record) and
+> the reason [`ARC_S7.5`](ARC_architecture.md#76-p6--gloves-rejected-on-the-record) and
 > [`ARC_S9`](ARC_architecture.md#9-decisions) (decision D11) exist.
 
 ---
@@ -921,6 +921,13 @@ Every `S3` × `L3` in the register, plus the two structural criticisms of the pr
    `#`-level numbered sections, HTML anchors removed, padded tables, third-person voice,
    placeholders for unfinished content.
 3. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Applied the revised [`RIX_S4.4`](../#44-vertical-spacing) heading spacing and the
-   [`RIX_S4.5`](../#45-tables-and-numbered-lists) table-versus-numbered-list rule: tables whose rows exceeded 100
-   characters became numbered lists.
+   *Change:* Applied the revised [`RIX_S4.4`](../ref_index.md#44-vertical-spacing) heading spacing
+   and the [`RIX_S4.5`](../ref_index.md#45-tables-and-numbered-lists) table-versus-numbered-list
+   rule: tables whose rows exceeded 100 characters became numbered lists.
+4. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Cross-references only. Repointed every `APL` address to
+   [`APR`](../ref_repo/apple/APR_apple_report.md), which moved to `ref_repo/apple/` and was
+   recoded — [`RIX_S2.4`](../ref_index.md#24-retired-codes). No risk was added, removed or
+   re-rated. ⚠ The four reference-repository reports name failure modes not yet catalogued here —
+   MediaPipe's `num_hands = 2` detector pathology, per-frame handedness flips, and the loss of
+   hand identity across frames. Adding them is outstanding work.

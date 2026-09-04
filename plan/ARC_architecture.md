@@ -12,16 +12,21 @@
 | :------------------------- | :------------------------------- |
 | **Code**                   | `ARC`                            |
 | **Status**                 | Live                             |
-| **Last reviewed**          | 2026-08-28                       |
+| **Last reviewed**          | 2026-08-30                       |
 | **Source of truth for**    | Technical direction              |
 | **Parent**                 | [`SCR`](scribbles.md)            |
 | **Scored against**         | [`JCR`](JCR_judging_criteria.md) |
 | **Problems catalogued in** | [`RSK`](RSK_risk_register.md)    |
+| **Evidence base**          | `APS` · `MPS` · `DHS` · `OPS`    |
 
 **For the team.** This document tests the MVP in [`SCR`](scribbles.md) step by step against
 published evidence, states the architecture to build, and ranks the alternatives by cost, hardware
-and risk. The twelve decisions in [`ARC_S9`](#9-decisions) are **Proposed** and await team sign-off; the
-master plan `PLN` is blocked on them.
+and risk. [`ARC_S7.2`](#72-the-four-reference-repositories-compared) compares the four reference
+repositories head-to-head and names the one the perception layer is built on; its evidence base is
+the four repository syntheses [`APS`](../doc/APS_apple_synthesis.md),
+[`MPS`](../doc/MPS_mediapipe_synthesis.md), [`DHS`](../doc/DHS_depthai_synthesis.md) and
+[`OPS`](../doc/OPS_openpose_synthesis.md). The sixteen decisions in [`ARC_S9`](#9-decisions) are
+**Proposed** and await team sign-off; the master plan `PLN` is blocked on them.
 
 **For the assistant.** Every external claim carries a source tag resolving to
 [`ARC_S10`](#10-sources). Preprint-derived figures are marked `⚠` and must not be restated without
@@ -75,7 +80,8 @@ or hallucination.
    *Verdict:* ❌ **Category error**
    *One-line reason:* The runtime risk is context rot and hallucination, not catastrophic forgetting
 
-Each verdict is argued in [`ARC_S2`](#2-step-1--isolating-the-subject)–[`ARC_S5`](#5-step-4--skeleton-to-conversational-text).
+Each verdict is argued in [`ARC_S2`](#2-step-1--isolating-the-subject) through
+[`ARC_S5`](#5-step-4--skeleton-to-conversational-text).
 
 ---
 
@@ -106,8 +112,8 @@ follow that person.** Two facts make this cheap:
 ## 2.2. Recommended Build
 1. **Primary** · *Cost:* free
    *Purpose:* Largest / most central detected person, held with hysteresis (see
-   [`APL_S6.4`](../doc/APL_apple_ref_report.md#64-accumulate-evidence-before-changing-state)) so the
-   subject does not flip between people mid-sentence
+   [`APR_S6.4`](../ref_repo/apple/APR_apple_report.md)) so the subject does not flip between
+   people mid-sentence
 2. **Optional, later** · *Cost:* moderate
    *Purpose:* Explicit per-person masks — `VNGeneratePersonInstanceMaskRequest` on iOS 17+ `[S3]`,
    or MediaPipe Image Segmenter
@@ -118,7 +124,8 @@ follow that person.** Two facts make this cheap:
 > **Decision:** subject selection is a **tracking** problem, not a segmentation problem. Build the
 > hysteresis-held largest-person tracker; do not build segmentation for the hackathon.
 
-Residual issues are catalogued at [`RSK_S2.3`](RSK_risk_register.md#23-subject-selection-and-framing) and
+Residual issues are catalogued at
+[`RSK_S2.3`](RSK_risk_register.md#23-subject-selection-and-framing) and
 [`RSK_S5`](RSK_risk_register.md#5-multi-person-and-conversation).
 
 ---
@@ -215,19 +222,29 @@ named as a **privacy-preserving** design choice in the low-resource sign-languag
 
 
 ## 4.2. Available Depth Information
-1. MediaPipe **world landmarks**
+1. MediaPipe **hand world landmarks**
    *Output:* x, y, z in metres, origin at the hand's geometric centre `[S2]`
    *Reality:* Real 3D **within the hand**. Does not locate the hand in the room
 2. **MediaPipe normalised landmarks**
    *Output:* x, y in image space, z as relative depth
-   *Reality:* z is a weak, relative signal — not metric
-3. **Apple `VNDetectHumanBodyPose3DRequest`**
+   *Reality:* z is a weak, relative signal — not metric. Confirmed in the source: the `z` scale
+   factor is `0.4` × the **crop** width, not the image width `[S21]`
+3. **MediaPipe Holistic pose world landmarks**
+   *Output:* x, y, z in metres, origin at the **hip centre**, with hand world landmarks
+   *"translated so that wrist from hand matches wrist from pose in pose coordinates system"*
+   `[S21]`
+   *Reality:* Not metric depth from the camera, but a **body-centred metric frame** — which is what
+   [`ARC_S4.3`](#43-recommended-representation) actually needs. See
+   [`MPS_S7`](../doc/MPS_mediapipe_synthesis.md#7-what-it-does-not-do)
+4. **Apple `VNDetectHumanBodyPose3DRequest`**
    *Output:* *"points on human bodies in 3D space, relative to the camera"*, and *"if the system
    allows it, the request uses depth information to improve the accuracy"* `[S12]`
    *Reality:* Genuine 3D — but iOS 17+, and the accuracy caveat is Apple's own
-4. **A depth sensor (LiDAR, stereo, TrueDepth)**
+5. **A depth sensor (LiDAR, stereo, TrueDepth)**
    *Output:* Metric depth
-   *Reality:* Accurate, and it kills the "any device with a camera" promise. See
+   *Reality:* Accurate, and it kills the "any device with a camera" promise. `RDH` demonstrates
+   exactly this trade with the OAK-D's `-xyz` mode —
+   [`DHS_S2`](../doc/DHS_depthai_synthesis.md#2-relevance). See
    [`ARC_S6.4`](#64-latency-budget)
 
 
@@ -244,8 +261,17 @@ Not a metric 3D skeleton. A **body-normalised pose representation**:
 4. Add velocity and acceleration as explicit derived features rather than hoping the model infers
    them from a short window.
 
-This is the same discipline as [`APL_S6.6`](../doc/APL_apple_ref_report.md#66-convert-coordinates-exactly-once-at-the-boundary): convert once,
-at the boundary, and let every downstream module see only signing-space coordinates.
+This is the same discipline as
+[`APR_S6.6`](../ref_repo/apple/APR_apple_report.md): convert once, at the boundary, and let every
+downstream module see only signing-space coordinates.
+
+> **Note — step 2 is partly already built.** The reading of the MediaPipe source recorded in
+> [`MPR_S7.1`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#71-holistic-landmarker) shows
+> that `HolisticLandmarker` emits hand world landmarks **already translated into the pose
+> coordinate system**, and pose world landmarks with the origin at the hip centre `[S21]`. What
+> remains for the project is the **scale** normalisation (by shoulder width) and the derived
+> velocity and acceleration features. The origin translation does not need to be written.
+> This is a reduction in scope, not a change of direction.
 
 > **Decision:** ship body-normalised 2D + per-hand world landmarks. Treat true metric 3D as a
 > roadmap item tied to hardware ([`ARC_S6.4`](#64-latency-budget)), not an MVP requirement.
@@ -298,8 +324,8 @@ consistent conditions"* `[S15]`. So even those low numbers are optimistic.
 
 > **Warning:** any submission implying open-domain sign-language translation will be judged
 > against this literature by anyone who knows it. That is a direct route to **0 on
-> [`JCR_S2.2`](JCR_judging_criteria.md#22-c2--original--innovative-idea-20) (originality — "existing solutions address it
-> effectively")** *and* a credibility loss on C3 and C5.
+> [`JCR_S2.2`](JCR_judging_criteria.md#22-c2--original--innovative-idea-20) (originality —
+> "existing solutions address it effectively")** *and* a credibility loss on C3 and C5.
 
 
 
@@ -312,7 +338,7 @@ closed.
 ```text
 P1  segmentation   → geometry + hysteresis, no model
                      motion energy, hands-in-signing-space, pause detection
-                     buffer-and-replay (APL_S5.3) so the run-up is never lost
+                     buffer-and-replay (APR_S5.3) so the run-up is never lost
 
 P2  recognition    → a SMALL temporal classifier over the curated landmark features
                      closed vocabulary, per-class confidence, top-k output
@@ -349,8 +375,8 @@ not apply:
 
 
 ## 5.5. Positioning Against Existing Solutions
-Required for [`JCR_S2.2`](JCR_judging_criteria.md#22-c2--original--innovative-idea-20) and for `D3_p7`'s *"Look for what the
-existing tools still leave undone."*
+Required for [`JCR_S2.2`](JCR_judging_criteria.md#22-c2--original--innovative-idea-20) and for
+`D3_p7`'s *"Look for what the existing tools still leave undone."*
 
 1. **Google SignGemma** — announced at Google I/O, May 2025; an open model for translating sign
    language into spoken-language text, *"best at American Sign Language to English"* `[S16]`
@@ -394,7 +420,7 @@ conversational agent*. Specifically:
 ```text
 ┌─ EDGE / LOCAL ──────────────────────────────────────────────────────────────┐
 │                                                                             │
-│  camera ──► bounded queue (drop-oldest, size 1)      [APL lesson L7]        │
+│  camera ──► bounded queue (drop-oldest, size 1)      [APR lesson L7]        │
 │                │                                                            │
 │                ▼                                                            │
 │  ① SUBJECT TRACKER      largest/central person, hysteresis-held             │
@@ -405,9 +431,9 @@ conversational agent*. Specifically:
 │                │        + brows + mouth                    [ARC_S3.2]       │
 │                ▼                                                            │
 │  ③ NORMALISER           body-relative signing space, + velocity/accel       │
-│                │        confidence GATE — drop, never guess  [APL L2]       │
+│                │        confidence GATE — drop, never guess  [APR L2]       │
 │                ▼                                                            │
-│  ④ SEGMENTER            geometry + hysteresis + buffer-and-replay [APL L3/L4]│
+│  ④ SEGMENTER            geometry + hysteresis + buffer-and-replay [APR L3/L4]│
 │                │        emits: candidate sign windows, utterance boundaries │
 │                ▼                                                            │
 │  ⑤ CLASSIFIER           small temporal model, closed vocabulary             │
@@ -535,6 +561,64 @@ updating*. Target budget per utterance:
 > **Decision:** the agent is invoked **once per utterance**, never per frame. This is what keeps
 > both latency and cost tractable — see [`ARC_S8`](#8-cost-model-against-the-aws-cap).
 
+
+
+
+## 6.5. Perception Engineering Rules
+Added 2026-08-30, from the reading of the four reference repositories. Each rule below is a
+concrete instruction for stages ①–⑤ that the earlier drafting of this document did not know it
+needed. Sources: [`MPS`](../doc/MPS_mediapipe_synthesis.md),
+[`DHS`](../doc/DHS_depthai_synthesis.md), [`APS`](../doc/APS_apple_synthesis.md).
+
+1.  **Use the Tasks API, never the legacy Solutions API** · *Stage:* ②
+    *Rule:* Import from `mediapipe.tasks.python.vision`. `mp.solutions.hands` is excluded from the
+    1.0-line wheel by `setup.py`, and almost every tutorial online uses it `[S21]`
+2.  **Pin the MediaPipe version in `requirements.txt`** · *Stage:* ②
+    *Rule:* An exact version, chosen against the live index and recorded with the date it was
+    checked. The upstream repository has 5,617 commits and has already removed a public API
+3.  **Run the landmarker in `VIDEO` or `LIVE_STREAM` mode** · *Stage:* ②
+    *Rule:* `IMAGE` mode silently disables the tracking loop and runs the palm detector on every
+    call. `LIVE_STREAM` additionally drops frames under load, which is
+    [`APR`](../ref_repo/apple/APR_apple_report.md) lesson L7 implemented inside the library
+4.  **Rate-limit the second-hand search** · *Stage:* ②
+    *Rule:* With `num_hands = 2` and one hand visible, the palm detector runs on **every frame**.
+    Port `RDH`'s tolerance counter — [`DHS_S3.1`](../doc/DHS_depthai_synthesis.md).
+    Signers drop to one hand constantly, so this is the common case, not an edge case
+5.  **Average handedness over a hand's tracked lifetime** · *Stage:* ③
+    *Rule:* Per-frame handedness flips. Because dominant and non-dominant hands carry different
+    grammatical roles ([`ARC_S3.2`](#32-the-landmark-budget)), a flip is a **grammatical** error.
+    ~10 lines — [`DHS_S3.2`](../doc/DHS_depthai_synthesis.md#32-handedness-averaging)
+6.  **Maintain hand identity across frames** · *Stage:* ③
+    *Rule:* MediaPipe orders hands per frame and guarantees nothing between frames. Rule 5 depends
+    on this, so the two are built together
+7.  **Keep both hands and mark handedness uncertain** · *Stage:* ③
+    *Rule:* When two hands classify with the same handedness, do **not** drop one, as `RDH` does. A
+    two-handed sign seen with one hand is unrecognisable — a worse failure than a mislabel. Report
+    the uncertainty, per decision 8
+8.  **Never index a landmark result without checking for absence** · *Stage:* ②–③
+    *Rule:* Empty result lists are the **normal** output when nothing clears the presence gate
+9.  **Do not treat normalised `z` as depth** · *Stage:* ③
+    *Rule:* It is scaled by 0.4 × the *crop* width and is a within-hand ordering only. It must not
+    reach the classifier as though it were a distance
+10. **Signing space is a gate, and hands at rest are not signing** · *Stage:* ④
+    *Rule:* `RDH`'s `hands_up_only` is field evidence that a wrist-above-elbow test suppresses
+    false positives cheaply. Generalise it to hands-in-signing-space
+11. **Instrument perception from the first commit** · *Stage:* ①–⑤
+    *Rule:* Count frames with no hand, frames on which detection ran, landmark inferences split by
+    detection versus tracking, and failed inferences — the shape of `RDH`'s exit statistics. The
+    detection-rate percentage is the one number that exposes rule 4's pathology. Feeds
+    [`ARC_S8.4`](#84-proposed-metric-set)
+12. **Nothing in `src/` imports from `ref_repo/`** · *Stage:* all
+    *Rule:* The directory is git-ignored, so a judge cloning the submission would get an
+    `ImportError`. Anything kept is re-implemented with attribution
+
+> **Warning — the y-flip.** MediaPipe's normalised origin is the **top-left**; Apple's Vision
+> origin is the **bottom-left**. Copying `y = 1 - y` out of
+> [`APR_S5.2`](../ref_repo/apple/APR_apple_report.md#52-coordinate-spaces--three-of-them) into a
+> MediaPipe pipeline flips the image. Already standing policy in
+> [`CLD_S5.4`](../CLAUDE.md#54-working-with-the-reference-repositories); repeated here because this
+> section is where the code will be written from.
+
 ---
 
 
@@ -584,30 +668,113 @@ schedule risk, and effect on the judging criteria.
 
 
 
-## 7.2. P1 — The Recommendation in Detail
+## 7.2. The Four Reference Repositories Compared
+[`ARC_S7.1`](#71-comparison-table) chooses the *approach*. This section chooses the **perception
+library**, against the four repositories in `ref_repo/`. Added 2026-08-30; it did not exist when
+the pipeline in [`ARC_S6.1`](#61-pipeline) was first drafted.
+
+
+
+### 7.2.1. Summary table
+| Repository      | Licence            | Runs on a laptop CPU | Language | Verdict           |
+| :-------------- | :----------------- | :------------------- | :------- | :---------------- |
+| `RMP` MediaPipe | Apache 2.0         | **Yes**, video rate  | Python   | **Build on this** |
+| `RAP` HandPose  | Apple sample       | iOS device only      | Swift    | Architecture only |
+| `RDH` DepthAI   | MIT                | Algorithms only      | Python   | Port the logic    |
+| `ROP` OpenPose  | **Non-commercial** | ~0.1 FPS             | C++      | **Rejected**      |
+
+
+
+### 7.2.2. The four, in one paragraph each
+1. **`RMP` — Google MediaPipe** · *Verdict:* **The dependency**
+   *Reason:* Apache 2.0, `pip install`, no GPU, 21 hand landmarks plus handedness at video rate on
+   a CPU, and a `HolisticLandmarker` that additionally supplies pose-aligned hand world landmarks
+   `[S21]`. Nothing else in `ref_repo/` satisfies the *"any device with a camera"* promise. The
+   costs are real and are listed in [`MPS_S6`](../doc/MPS_mediapipe_synthesis.md): a moving API, a
+   dropped legacy interface, a misnamed option and a detector pathology
+2. **`RAP` — Apple `HandPose`** · *Verdict:* **Architecture, not code**
+   *Reason:* iOS and Swift, so nothing ships. What transfers is the twelve lessons in
+   [`APS_S5`](../doc/APS_apple_synthesis.md#5-the-twelve-lessons), above all buffer-and-replay
+   segmentation (L4) and confidence-as-a-gate (L2). The segmenter at stage ④ is a port of
+   [`APR_S5.3`](../ref_repo/apple/APR_apple_report.md)
+3. **`RDH` — DepthAI hand tracker** · *Verdict:* **Port the tracking logic; reject the hardware**
+   *Reason:* Requiring an OAK camera fails C1 exactly as any depth sensor does
+   ([`ARC_S7.5`](#75-p4p5--depth-and-glasses-as-roadmap-items)). But it is the only place where
+   MediaPipe's tracking state machine exists in readable Python, and it supplies four fixes
+   MediaPipe does not: the detector tolerance counter, handedness averaging, duplicate-hand
+   suppression and a hands-at-rest prior — [`ARC_S6.5`](#65-perception-engineering-rules)
+4. **`ROP` — CMU OpenPose** · *Verdict:* **Rejected, on two independent grounds**
+   *Reason:* Its licence is *"ACADEMIC OR NON-PROFIT ORGANIZATION NONCOMMERCIAL RESEARCH USE
+   ONLY"*, and assigns ownership of derivatives to CMU `[S22]`; and its own documentation reports
+   *"about 0.1 FPS (i.e., about 15 sec / frame)"* on CPU for the default body model, before hands
+   are enabled `[S23]`. Either alone settles it. It remains the best **citation** available —
+   TPAMI 2019 and CVPR 2017 — and the honest comparison
+   [`JCR_S2.2`](JCR_judging_criteria.md#22-c2--original--innovative-idea-20) rewards
+
+
+
+### 7.2.3. Consequences for the pipeline
+1. **Stage ② is MediaPipe Tasks, pinned** — [`ARC_S6.5`](#65-perception-engineering-rules) rules 1
+   and 2
+2. **Stage ② gains a detector rate-limiter** — rule 4, ported from `RDH`
+3. **Stage ③ gains handedness averaging and hand identity** — rules 5 and 6, ported from `RDH`
+4. **Stage ③ loses part of the normaliser** — `HolisticLandmarker` already translates hand world
+   landmarks into the pose frame ([`ARC_S4.3`](#43-recommended-representation))
+5. **Stage ④ is unchanged** — still the Apple state machine, ported to Python
+6. **No OpenPose code, model or derivative enters `src/`** — decision 16
+
+> **Open question — Holistic Landmarker or Hand + Pose + Face separately?** `HolisticLandmarker`
+> gives the body-relative frame for free and derives handedness from the pose skeleton, which is
+> more reliable than classifying it from a hand crop. It is also hard-limited to **one person**
+> `[S21]`, which collides with [`RSK_S5`](RSK_risk_register.md#5-multi-person-and-conversation) and
+> with the two-way-conversation ambition. Running `HandLandmarker` and `PoseLandmarker` separately
+> keeps multi-person open but means writing the normaliser and paying for two model loads. This is
+> a measurement, not an argument: build both behind one interface and time them. Recorded as
+> decision 14.
+
+> **Placeholder — the measurement that settles decision 14.**
+> **Missing:** frames per second and landmark quality for (a) `HolisticLandmarker` and (b)
+> `HandLandmarker` + `PoseLandmarker`, on the demo laptop, with one and two hands in frame.
+> **Update trigger:** the first working capture loop.
+> **Owner:** team. Record in `EVL`.
+
+
+
+
+## 7.3. P1 — The Recommendation in Detail
 1. **Capture**
    *Choice:* Browser `getUserMedia` or OpenCV
    *Why:* Runs on any device with a camera, which is the [`SCR`](scribbles.md) promise and the C1
    scalability argument
 2. **Landmarks**
-   *Choice:* MediaPipe Holistic Landmarker — 543 points, CPU real-time `[S9]`
-   *Why:* Free, on-device, cross-platform, actively maintained
-3. **Features**
+   *Choice:* MediaPipe **Tasks API**, at a **pinned** version — `HolisticLandmarker` (543 points)
+   or `HandLandmarker` + `PoseLandmarker`, per decision 14 · `[S9] [S21]`
+   *Why:* Free, on-device, CPU real-time, Apache 2.0, cross-platform, actively maintained. Never
+   the legacy `mp.solutions` API, which is excluded from the 1.0-line wheel —
+   [`ARC_S6.5`](#65-perception-engineering-rules) rules 1–3
+3. **Tracking state**
+   *Choice:* Detector rate-limiter, handedness averaging, hand identity, duplicate suppression
+   *Why:* MediaPipe supplies none of these and the application needs all four. Ported from `RDH` —
+   [`ARC_S6.5`](#65-perception-engineering-rules) rules 4–7
+4. **Features**
    *Choice:* Curated subset, body-normalised — [`ARC_S3.2`](#32-the-landmark-budget),
    [`ARC_S4.3`](#43-recommended-representation)
    *Why:* Small enough to train on a small dataset
-4. **Segmentation**
+5. **Segmentation**
    *Choice:* Geometry + hysteresis + buffer-and-replay
    *Why:* Ported from
-   [`APL_S5.3`](../doc/APL_apple_ref_report.md#53-handgestureprocessorswift--the-state-machine). No
-   model, no training data, deterministic
-5. **Classifier**
+   [`APR_S5.3`](../ref_repo/apple/APR_apple_report.md).
+   No model, no training data, deterministic. Gated additionally by a hands-in-signing-space test —
+   [`ARC_S6.5`](#65-perception-engineering-rules) rule 10
+6. **Classifier**
    *Choice:* Small temporal model over the feature sequence, closed vocabulary
-   *Why:* The only trained component. Hours on a laptop
-6. **Agent**
+   *Why:* The only trained component. Hours on a laptop. ⚠ MediaPipe Model Maker ships a frozen
+   `gesture_embedder` that may serve as a landmark feature stage; its input format is unverified —
+   [`MPR_S7.4`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#74-model-maker)
+7. **Agent**
    *Choice:* LangGraph on Bedrock, Claude Haiku 4.5
    *Why:* Exactly the stack `D1`/`D2`/`D3` teach and the judges expect
-7. **Output**
+8. **Output**
    *Choice:* Text + TTS, **with the gloss trace visible**
    *Why:* The trace is what makes the system auditable rather than oracular
 
@@ -619,7 +786,7 @@ finish and demonstrate"*, and it is how the submission reaches a **2** rather th
 
 
 
-## 7.3. P2 — Rationale for Building It Regardless
+## 7.4. P2 — Rationale for Building It Regardless
 Even though P1 is the recommendation, **build P2 as well**, in an afternoon. Sample k keyframes
 from an utterance window, send them plus a landmark summary to a multimodal model, and ask for
 the sign.
@@ -629,7 +796,8 @@ It is worth the afternoon for three reasons:
 1. It is a **live fallback** if the classifier is not ready on demo day.
 2. It is a **measured baseline**. A stated comparison — the zero-training approach scored X, the
    trained pipeline scored Y — is precisely the evidence
-   [`JCR_S5`](JCR_judging_criteria.md#5-evaluation-and-metrics) asks for, and almost no hackathon team produces it.
+   [`JCR_S5`](JCR_judging_criteria.md#5-evaluation-and-metrics) asks for, and almost no hackathon
+   team produces it.
 3. It costs almost nothing to keep.
 
 > **Note:** Claude models on Bedrock accept **images**, not video (`D1` demonstrates this with a
@@ -639,15 +807,16 @@ It is worth the afternoon for three reasons:
 
 
 
-## 7.4. P4/P5 — Depth and Glasses as Roadmap Items
+## 7.5. P4/P5 — Depth and Glasses as Roadmap Items
 Depth genuinely helps with occlusion and with the depth-perception problem [`SCR`](scribbles.md)
 lists. Apple's `VNDetectHumanBodyPose3DRequest` even states it *"uses depth information to improve
 the accuracy"* where available `[S12]`.
 
 But requiring a depth camera converts the product from *"any device with a camera"* to *"any
 device with a depth camera"*. That directly attacks the **"scalable or easily adopted"** clause
-that separates a 2 from a 1 on [`JCR_S2.1`](JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20), and it costs money
-and procurement time the schedule does not allow.
+that separates a 2 from a 1 on
+[`JCR_S2.1`](JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20), and it costs
+money and procurement time the schedule does not allow.
 
 **Correct treatment:** slide 9, *Roadmap & future potential*. State that the pipeline was designed
 so that depth is an optional accuracy upgrade rather than a dependency. That is a strength, stated
@@ -656,7 +825,7 @@ as one.
 
 
 
-## 7.5. P6 — Gloves Rejected on the Record
+## 7.6. P6 — Gloves Rejected on the Record
 [`SCR`](scribbles.md) already rules out gloves, and the reasoning deserves to be on a slide,
 because it converts a constraint into a design principle:
 
@@ -671,8 +840,9 @@ because it converts a constraint into a design principle:
 
 > **Decision:** state this explicitly in the submission, and act on it: at least one Deaf or
 > hard-of-hearing person sees the prototype before submission. It answers
-> [`JCR_S4.4`](JCR_judging_criteria.md#44-five-pressure-test-questions) question 3 (*"Would that person recognise
-> themselves?"*), and it is the single cheapest way to avoid `D3_p7`'s **"Comfortable Guess"**
+> [`JCR_S4.4`](JCR_judging_criteria.md#44-five-pressure-test-questions) question 3 (*"Would that
+> person recognise themselves?"*), and it is the single cheapest way to avoid `D3_p7`'s
+> **"Comfortable Guess"**
 > failure.
 
 ---
@@ -760,6 +930,13 @@ Mapping `D3_p32` and `D3_p35` onto this system:
 8. **Robustness**
    *Project version:* Re-test under changed lighting, distance, clothing, background, signer
    *Why it is honest:* `D3_p35` metric 5
+9. **Perception health**
+   *Project version:* Frames with no hand; frames on which the palm detector ran; landmark
+   inferences split by detection versus tracking; failed inferences — the shape of `RDH`'s exit
+   statistics, [`DHS_S3.5`](../doc/DHS_depthai_synthesis.md#35-counting-everything)
+   *Why it is honest:* Detection rate is the one number that exposes the `num_hands = 2`
+   pathology, and it is measured rather than assumed —
+   [`ARC_S6.5`](#65-perception-engineering-rules) rule 11
 
 > **Note:** *refusal precision* is the differentiator expressed as a number. Every competing
 > system optimises "how often is it right". This one also reports "when it was unsure, how often
@@ -773,7 +950,8 @@ Mapping `D3_p32` and `D3_p35` onto this system:
 
 
 # 9. DECISIONS
-Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be written against them.
+Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be written against
+them.
 
 1.  Subject selection is a **tracking** problem. Build hysteresis-held largest-person tracking; do
     **not** build segmentation · *Status:* Proposed
@@ -785,8 +963,7 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
 5.  The only trained component is a **small temporal classifier**. **No LLM is trained** · *Status:*
     Proposed
 6.  Segmentation is **geometry + hysteresis + buffer-and-replay**, ported from
-    [`APL_S5.3`](../doc/APL_apple_ref_report.md#53-handgestureprocessorswift--the-state-machine). No
-    model · *Status:* Proposed
+    [`APR_S5.3`](../ref_repo/apple/APR_apple_report.md). No model · *Status:* Proposed
 7.  The agent runs **once per utterance**, never per frame · *Status:* Proposed
 8.  Below the confidence threshold the system **does not emit a sentence**. It plans a repair action
     · *Status:* Proposed
@@ -795,6 +972,16 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
 11. **At least one Deaf or hard-of-hearing person reviews the prototype before submission** ·
     *Status:* Proposed
 12. **Log token usage from the first commit; report cost per run as a metric** · *Status:* Proposed
+13. **Perception is MediaPipe's Tasks API at a pinned version.** Never the legacy `mp.solutions`
+    interface, which is excluded from the 1.0-line wheel `[S21]` · *Status:* Proposed
+14. **Landmark task chosen by measurement, not argument.** Build `HolisticLandmarker` and
+    `HandLandmarker` + `PoseLandmarker` behind one interface, time both, and record the result —
+    [`ARC_S7.2`](#72-the-four-reference-repositories-compared) · *Status:* Proposed
+15. **The four tracking fixes in [`ARC_S6.5`](#65-perception-engineering-rules) are in scope from
+    the first commit**, not deferred: detector rate-limiting, handedness averaging, hand identity
+    and duplicate suppression · *Status:* Proposed
+16. **No OpenPose code, model or derivative enters `src/`.** Its licence is non-commercial and
+    assigns derivatives to CMU `[S22]`. It is cited, not used · *Status:* Proposed
 
 
 
@@ -812,7 +999,8 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
 2. **SgSL or ASL?** SgSL is the stronger differentiator and the honest choice for a Singapore
    hackathon, but ASL has far more public training data. A defensible middle path: build for SgSL,
    and demonstrate on whichever vocabulary can actually be collected, stated plainly.
-3. **Who is the named person?** [`JCR_S4.4`](JCR_judging_criteria.md#44-five-pressure-test-questions) question 1 is
+3. **Who is the named person?**
+   [`JCR_S4.4`](JCR_judging_criteria.md#44-five-pressure-test-questions) question 1 is
    unanswered and blocks the problem statement.
 4. **Data.** Record a bespoke vocabulary, use a public dataset, or both? This determines the
    week.
@@ -906,6 +1094,27 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
 20. **`[S20]`**
     *Source:* `doc/[D1]`, `[D2]`, `[D3]`, `[D6]` — hackathon training decks
     *Reliability:* Official (organiser)
+21. **`[S21]`**
+    *Source:* [`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md), reporting
+    `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96` — the Hand Landmarker Python API and
+    options, the `setup.py` packaging rule, the presence gate, the `min_tracking_confidence`
+    wiring, the `num_hands` tracking gate, and the `HolisticLandmarker` output contract
+    *Reliability:* Primary — read directly from the source, with `file:line` citations in `MPR`
+22. **`[S22]`**
+    *Source:* [`OPR_S2.2`](../ref_repo/openpose/OPR_openpose_report.md#22-licence), quoting
+    `ref_repo/openpose/openpose/LICENSE`
+    *Reliability:* Primary. ⚠ Read as an engineer, not a lawyer; a commercial path requires
+    qualified review
+23. **`[S23]`**
+    *Source:* [`OPR_S6`](../ref_repo/openpose/OPR_openpose_report.md#6-performance), quoting
+    `ref_repo/openpose/openpose/doc/06_maximizing_openpose_speed.md`
+    *Reliability:* Official but self-reported by the project; not independently reproduced here
+24. **`[S24]`**
+    *Source:* [`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md), reporting
+    `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` at `9773123` — the single-hand tolerance
+    counter, handedness averaging, duplicate-hand suppression and the hands-up-only prior
+    *Reliability:* Primary for the code; ⚠ the frame-rate observations in that repository's README
+    are one practitioner's, not a benchmark
 
 ---
 
@@ -924,6 +1133,18 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
    `#`-level numbered sections, HTML anchors removed, padded tables, third-person voice,
    placeholders for unfinished content.
 3. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Applied the revised [`RIX_S4.4`](../#44-vertical-spacing) heading spacing and the
-   [`RIX_S4.5`](../#45-tables-and-numbered-lists) table-versus-numbered-list rule: tables whose rows exceeded 100
-   characters became numbered lists.
+   *Change:* Applied the revised [`RIX_S4.4`](../ref_index.md#44-vertical-spacing) heading spacing
+   and the [`RIX_S4.5`](../ref_index.md#45-tables-and-numbered-lists) table-versus-numbered-list
+   rule: tables whose rows exceeded 100 characters became numbered lists.
+4. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Revised against the four reference-repository reports. Added
+   [`ARC_S7.2`](#72-the-four-reference-repositories-compared), which compares `RMP`, `RAP`, `RDH`
+   and `ROP` and names MediaPipe's Tasks API as the perception layer; renumbered the alternatives
+   that follow. Added [`ARC_S6.5`](#65-perception-engineering-rules), twelve concrete perception
+   rules. Reduced the scope of [`ARC_S4.3`](#43-recommended-representation): `HolisticLandmarker`
+   already emits pose-aligned hand world landmarks, so only scale normalisation and the derived
+   features remain. Added metric 9, *perception health*, to
+   [`ARC_S8.4`](#84-proposed-metric-set). Added decisions 13–16 (pin the Tasks API; choose the
+   landmark task by measurement; the four tracking fixes are in scope; no OpenPose code in
+   `src/`), and sources `[S21]`–`[S24]`. Repointed every `APL` reference to
+   [`APR`](../ref_repo/apple/APR_apple_report.md) after that document moved and was recoded.

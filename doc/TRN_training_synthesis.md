@@ -233,7 +233,7 @@ is normal"*). *"Every response carries the token counts for that call. Logging t
 into something measured per prompt rather than discovered at the end of the month."*
 
 **Multimodal** — `D1`'s lab `05_multimodal.py` *"sends a photo and a question in the same
-message"*. Images, not video. → [`ARC_S7.3`](../plan/ARC_architecture.md#73-p2--rationale-for-building-it-regardless)
+message"*. Images, not video. → [`ARC_S7.3`](../plan/ARC_architecture.md#74-p2--rationale-for-building-it-regardless)
 
 
 

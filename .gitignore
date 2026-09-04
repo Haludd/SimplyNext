@@ -1,0 +1,44 @@
+# ─── PYTHON ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── SECRETS — see CLD_S4 constraint 3 and CLD_S6 rule 2 ────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+aws_credentials
+
+# ─── MODEL WEIGHTS AND DATA — see CLD_S6 rule 5, 5 GB submission limit ──────
+*.tflite
+*.task
+*.blob
+*.caffemodel
+*.onnx
+*.pt
+*.pth
+*.h5
+data/raw/
+data/interim/
+
+# ─── RECORDED MEDIA — see RSK_S8.3, consent required before committing ──────
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# ─── EDITOR AND OS ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

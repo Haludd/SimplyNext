@@ -12,7 +12,7 @@
 | :---------------------- | :-------------------------------------------- |
 | **Code**                | `RDM`                                         |
 | **Status**              | Live                                          |
-| **Last reviewed**       | 2026-08-28                                    |
+| **Last reviewed**       | 2026-08-30                                    |
 | **Source of truth for** | Onboarding, environment setup, project status |
 | **Related**             | [`RIX`](ref_index.md) · [`CLD`](CLAUDE.md)    |
 
@@ -71,10 +71,13 @@ placeholder as its update trigger fires.
 
 ## 2.2. By Role
 1. **Vision pipeline**
-   [`APL_S10`](doc/APL_apple_ref_report.md#10-relevance-to-simplynext), then
-   [`ARC_S2`](plan/ARC_architecture.md#2-step-1--isolating-the-subject)–[`ARC_S4`](plan/ARC_architecture.md#4-step-3--the-3d-skeleton)
+   [`MPS`](doc/MPS_mediapipe_synthesis.md) and [`APS`](doc/APS_apple_synthesis.md), then
+   [`ARC_S6.5`](plan/ARC_architecture.md#65-perception-engineering-rules) and
+   [`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
 2. **Agent layer**
-   [`TRN_S2`](doc/TRN_training_synthesis.md#2-d1--llm-foundations-agents-prompting-bedrock)–[`TRN_S4`](doc/TRN_training_synthesis.md#4-d3--framing-classes-practices-case-studies),
+   [`TRN_S2`](doc/TRN_training_synthesis.md#2-d1--llm-foundations-agents-prompting-bedrock)
+   through
+   [`TRN_S4`](doc/TRN_training_synthesis.md#4-d3--framing-classes-practices-case-studies),
    then [`ARC_S6`](plan/ARC_architecture.md#6-the-recommended-architecture)
 3. **Deck and video**
    [`JCR_S4`](plan/JCR_judging_criteria.md#4-problem-statement),
@@ -85,7 +88,8 @@ placeholder as its update trigger fires.
 5. **AWS ownership**
    [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget)
 
-Before writing any document or code: [`CLD_S3`](CLAUDE.md#3-document-rules) and [`CLD_S5`](CLAUDE.md#5-conduct-on-this-project).
+Before writing any document or code: [`CLD_S3`](CLAUDE.md#3-document-rules) and
+[`CLD_S5`](CLAUDE.md#5-conduct-on-this-project).
 
 ---
 
@@ -117,7 +121,8 @@ Technical direction and supporting evidence: [`ARC`](plan/ARC_architecture.md).
 
 > **Placeholder — problem statement.**
 > **Missing:** the POV problem statement in `D3_p6` format, naming one person at one moment.
-> **Update trigger:** the four open questions in [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team)
+> **Update trigger:** the four open questions in
+> [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team)
 > are answered, in particular the scenario and the named person.
 > **Owner:** team.
 
@@ -140,13 +145,19 @@ SimplyNext/
 │   ├── ARC_architecture.md          technical direction, sourced
 │   └── RSK_risk_register.md         136 catalogued risks
 │
-├── doc/                             reference material
+├── doc/                             reference material and syntheses
 │   ├── [D1..D6]*.pdf                training decks (read-only originals)
 │   ├── TRN_training_synthesis.md    all six decks, condensed
-│   └── APL_apple_ref_report.md      the Apple reference repository, in full
+│   ├── APS_apple_synthesis.md       Apple HandPose, in short
+│   ├── MPS_mediapipe_synthesis.md   MediaPipe, in short  ← the dependency
+│   ├── DHS_depthai_synthesis.md     DepthAI hand tracker, in short
+│   └── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
 │
-└── ref_repo/apple/                  Apple HandPose sample (Swift, WWDC20)
-    └── SYN_apple_synthesis.md       short orientation
+└── ref_repo/                        four third-party clones. THE CLONES ARE GIT-IGNORED
+    ├── apple/APR_apple_report.md            tracked — Apple, in full
+    ├── google-mediapipe/MPR_mediapipe_report.md      tracked — MediaPipe, in full
+    ├── depthai-hand-tracker/DHR_depthai_report.md    tracked — DepthAI, in full
+    └── openpose/OPR_openpose_report.md               tracked — OpenPose, in full
 ```
 
 `src/`, `tests/` and `data/` do not exist yet — see [`RDM_S9`](#9-project-status).
@@ -170,15 +181,24 @@ Full onboarding sequence for someone joining the team cold. Roughly two hours en
    *Purpose:* What is being built, and why the obvious approach fails
 5. **[`RSK_S10`](plan/RSK_risk_register.md#10-top-ten-risks)** · *Time:* 10 min
    *Purpose:* The ten risks that matter most
-6. **[`SYN`](ref_repo/apple/SYN_apple_synthesis.md)** · *Time:* 5 min
-   *Purpose:* The reference repository in short
+6. **[`MPS`](doc/MPS_mediapipe_synthesis.md)** · *Time:* 5 min
+   *Purpose:* The perception library the project depends on, and its four traps
 7. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
    *Purpose:* The six training decks, condensed
 8. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
    *Purpose:* Working rules
 
-Deep dives, as needed: [`APL`](doc/APL_apple_ref_report.md) for the full Apple analysis, and the
-remainder of [`RSK`](plan/RSK_risk_register.md).
+Then the other three repository syntheses, 5 minutes each:
+[`APS`](doc/APS_apple_synthesis.md) for the segmentation state machine,
+[`DHS`](doc/DHS_depthai_synthesis.md) for the tracking fixes, and
+[`OPS`](doc/OPS_openpose_synthesis.md) for the rejected alternative.
+
+Deep dives, as needed: the four full reports in `ref_repo/` —
+[`APR`](ref_repo/apple/APR_apple_report.md),
+[`MPR`](ref_repo/google-mediapipe/MPR_mediapipe_report.md),
+[`DHR`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md),
+[`OPR`](ref_repo/openpose/OPR_openpose_report.md) — and the remainder of
+[`RSK`](plan/RSK_risk_register.md).
 
 ---
 
@@ -221,8 +241,23 @@ git clone <this-repo>
 cd SimplyNext
 ```
 
-The Apple reference sample is vendored at `ref_repo/apple/`. It is Swift and is **not** part of the
-build.
+**The four reference clones under `ref_repo/` are not in this repository.** `.gitignore` excludes
+them and tracks only the four report documents beside them —
+[`RIX_S5.2`](ref_index.md#52-what-version-control-tracks). To obtain one, clone it into the
+sub-directory the report's provenance section names:
+
+```bash
+# MediaPipe    -> ref_repo/google-mediapipe/mediapipe
+# DepthAI      -> ref_repo/depthai-hand-tracker/depthai_hand_tracker
+# OpenPose     -> ref_repo/openpose/openpose
+git clone https://github.com/google-ai-edge/mediapipe.git
+git clone https://github.com/geaxgx/depthai_hand_tracker.git
+git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git
+```
+
+None of them is part of the build, and **nothing in `src/` may import from `ref_repo/`**. The
+Apple sample is Swift; OpenPose is licensed for non-commercial research only —
+[`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence).
 
 
 
@@ -283,7 +318,8 @@ README.md         must let a judge run the code from a clean clone
 
 
 # 7. AWS SETUP
-Full walkthrough: [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget). Original source: `D6`.
+Full walkthrough: [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget). Original
+source: `D6`.
 
 
 
@@ -331,7 +367,8 @@ SSO sessions expire after 8–12 hours, so each working day starts with
 
 # 8. WORKING CONVENTIONS
 ## 8.1. Documents
-Every `.md` file follows [`RIX_S4`](ref_index.md#4-markdown-formatting-rules): a bold title, a collapsible `# METADATA`
+Every `.md` file follows [`RIX_S4`](ref_index.md#4-markdown-formatting-rules): a bold title, a
+collapsible `# METADATA`
 block, `# N. ALL CAPS` sections, `## N.M. Caps Initials Only` sub-sections, graduated blank lines
 before each heading, `---` between sections, tables only where a row fits on one line, sources
 tagged, and uncertainty marked `⚠`.
@@ -375,12 +412,13 @@ D3_p39       doc/[D3]_..., slide 39
 2.  **Judging criteria**
     🟢 Extracted and checklisted — [`JCR`](plan/JCR_judging_criteria.md)
 3.  **Architecture**
-    🟡 Proposed with sources; **12 decisions awaiting team sign-off** —
+    🟡 Proposed with sources; **16 decisions awaiting team sign-off** —
     [`ARC_S9`](plan/ARC_architecture.md#9-decisions)
 4.  **Risks**
     🟢 136 catalogued — [`RSK`](plan/RSK_risk_register.md)
-5.  **Reference repository**
-    🟢 Analysed — [`APL`](doc/APL_apple_ref_report.md)
+5.  **Reference repositories**
+    🟢 All four analysed and compared; MediaPipe chosen as the perception layer —
+    [`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
 6.  **Training material**
     🟢 Synthesised — [`TRN`](doc/TRN_training_synthesis.md)
 7.  **Master plan (`PLN`)**
@@ -396,7 +434,8 @@ D3_p39       doc/[D3]_..., slide 39
 
 
 ## 9.1. Blocking Questions
-From [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team). These gate the master plan.
+From [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team). These gate the master
+plan.
 
 1. **Which scenario, and therefore which vocabulary?**
    The dataset, the demonstration, and the effectiveness score
@@ -433,14 +472,24 @@ From [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team). Thes
     `plan/RSK_risk_register.md`
 8.  **`TRN`**
     `doc/TRN_training_synthesis.md`
-9.  **`APL`**
-    `doc/APL_apple_ref_report.md`
-10. **`SYN`**
-    `ref_repo/apple/SYN_apple_synthesis.md`
-11. **`D1`–`D6`**
+9.  **`APR` / `APS`**
+    `ref_repo/apple/APR_apple_report.md` · `doc/APS_apple_synthesis.md`
+10. **`MPR` / `MPS`**
+    `ref_repo/google-mediapipe/MPR_mediapipe_report.md` · `doc/MPS_mediapipe_synthesis.md`
+11. **`DHR` / `DHS`**
+    `ref_repo/depthai-hand-tracker/DHR_depthai_report.md` · `doc/DHS_depthai_synthesis.md`
+12. **`OPR` / `OPS`**
+    `ref_repo/openpose/OPR_openpose_report.md` · `doc/OPS_openpose_synthesis.md`
+13. **`RAP` `RMP` `RDH` `ROP`**
+    The four clones themselves, git-ignored — [`RIX_S2.3`](ref_index.md#23-source-material)
+14. **`D1`–`D6`**
     The six training PDFs in `doc/`
-12. **`PLN` `TDO` `EVL` `DEC`**
+15. **`PLN` `TDO` `EVL` `DEC`**
     Reserved, not yet written — [`RIX_S2.2`](ref_index.md#22-planned-documents)
+
+The repository-code pattern — tag + `R` for a report, tag + `S` for a synthesis — is in
+[`RIX_S3.5`](ref_index.md#35-repository-document-codes). `APL`, `SYN` and `REF` were retired on
+2026-08-30 — [`RIX_S2.4`](ref_index.md#24-retired-codes).
 
 
 
@@ -480,9 +529,15 @@ From [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team). Thes
 
 # 11. CREDITS AND SOURCES
 - Training material © 2026 SimplifyNext — `doc/[D1]`–`doc/[D6]`.
-- `ref_repo/apple/` is Apple Inc.'s *Detecting Hand Poses with Vision* sample (WWDC20 session
-  10653), under Apple's sample-code licence. Ideas are ported; code is not —
-  [`APL_S2.2`](doc/APL_apple_ref_report.md#22-licence).
+- `ref_repo/apple/handpose/` is Apple Inc.'s *Detecting Hand Poses with Vision* sample (WWDC20
+  session 10653), under Apple's sample-code licence. Ideas are ported; code is not —
+  [`APR_S2.2`](ref_repo/apple/APR_apple_report.md#22-licence).
+- `ref_repo/google-mediapipe/mediapipe/` is Google's MediaPipe, Apache 2.0 —
+  [`MPR_S2.2`](ref_repo/google-mediapipe/MPR_mediapipe_report.md#22-licence).
+- `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` is `geaxgx/depthai_hand_tracker`, MIT —
+  [`DHR_S2.2`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md#22-licence).
+- `ref_repo/openpose/openpose/` is CMU's OpenPose, **licensed for non-commercial academic research
+  only**. Cited, never used — [`OPR_S2.2`](ref_repo/openpose/OPR_openpose_report.md#22-licence).
 - Singapore Sign Language and interpreter figures: The Singapore Association for the Deaf,
   https://sadeaf.org.sg/.
 - Hearing-loss figures: World Health Organization, *Deafness and hearing loss* fact sheet,

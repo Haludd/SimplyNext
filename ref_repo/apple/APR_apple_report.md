@@ -1,4 +1,4 @@
-**APPLE REFERENCE REPOSITORY — FULL TECHNICAL REPORT**
+**APPLE HANDPOSE — FULL REPOSITORY REPORT**
 
 
 
@@ -8,24 +8,26 @@
 <details>
 <summary>Document code, status, review date, and usage instructions.</summary>
 
-| Field                   | Value                                             |
-| :---------------------- | :------------------------------------------------ |
-| **Code**                | `APL`                                             |
-| **Status**              | Live                                              |
-| **Last reviewed**       | 2026-08-28                                        |
-| **Source of truth for** | Analysis of the Apple reference repository        |
-| **Parent**              | [`RIX_S2.1`](../ref_index.md#21-live-documents)   |
-| **Short version**       | [`SYN`](../ref_repo/apple/SYN_apple_synthesis.md) |
-| **Subject**             | `ref_repo/apple/` at commit `ec30ff6`             |
+| Field                   | Value                                              |
+| :---------------------- | :------------------------------------------------- |
+| **Code**                | `APR`                                              |
+| **Status**              | Live                                               |
+| **Last reviewed**       | 2026-08-30                                         |
+| **Source of truth for** | Analysis of the Apple `HandPose` reference clone   |
+| **Parent**              | [`RIX_S2.1`](../../ref_index.md#21-live-documents) |
+| **Short version**       | [`APS`](../../doc/APS_apple_synthesis.md)          |
+| **Subject**             | `RAP` — `ref_repo/apple/handpose/` at `ec30ff6`    |
 
-**For the team.** What `ref_repo/apple/` is, how it is built, what philosophy it encodes, and which
-parts transfer to SimplyNext. [`APL_S10`](#10-relevance-to-simplynext) holds the twelve lessons and the Swift → Python
-port table.
+**For the team.** What the Apple clone is, how it is built, what philosophy it encodes, and which
+parts transfer to SimplyNext. [`APR_S10`](#10-relevance-to-simplynext) holds the twelve lessons and
+the Swift → Python port table. The five-minute version is
+[`APS`](../../doc/APS_apple_synthesis.md).
 
 **For the assistant.** The sample targets **iOS, not Apple Vision Pro** —
-[`APL_S1.1`](#11-what-this-repository-is). Line numbers refer to the files at the commit named above; re-verify them
-before citing. Nothing in `ref_repo/apple/` may be edited except
-[`SYN`](../ref_repo/apple/SYN_apple_synthesis.md).
+[`APR_S1.1`](#11-what-this-repository-is). Line numbers refer to the files at the commit named
+above; re-verify them before citing. Nothing inside `ref_repo/apple/handpose/` may be edited: it is
+an unmodified third-party clone and is excluded from version control. This document sits beside it
+and is tracked.
 
 </details>
 
@@ -37,7 +39,7 @@ before citing. Nothing in `ref_repo/apple/` may be edited except
 
 # 1. EXECUTIVE SUMMARY
 ## 1.1. What This Repository Is
-`ref_repo/apple/` is Apple's official sample project **"Detecting Hand Poses with Vision"**
+`ref_repo/apple/handpose/` is Apple's official sample project **"Detecting Hand Poses with Vision"**
 (target name `HandPose`). It is a ~450-line iOS application that turns the camera into a
 finger-painting surface: pinching thumb and index finger together draws, and pulling them apart
 ends the stroke. It ships as the companion code to WWDC20 session 10653,
@@ -55,8 +57,9 @@ ends the stroke. It ships as the companion code to WWDC20 session 10653,
 
 
 ## 1.2. Why It Matters to SimplyNext
-Apple's app is, structurally, **steps 1 to 3 of the MVP** ([`SCR`](../plan/scribbles.md), *Current MVP*)
-implemented to production quality, and then it stops — deliberately — right before step 4.
+Apple's app is, structurally, **steps 1 to 3 of the MVP** ([`SCR`](../../plan/scribbles.md),
+*Current MVP*) implemented to production quality, and then it stops — deliberately — right before
+step 4.
 
 1. **1. Isolate the subject from environment noise**
    *Apple's app:* `maximumHandCount = 1`; Vision returns hands ordered by size, so the largest hand
@@ -75,8 +78,9 @@ implemented to production quality, and then it stops — deliberately — right 
 The repository's real value is therefore **not the drawing feature**. It is the
 *plumbing*: how to get from a camera buffer to trustworthy, temporally-stable landmark data
 without the output flickering, stuttering, or lying. That plumbing is where naive sign-language
-prototypes fail, and Apple solved it in about 80 lines. Sections [`APL_S6`](#6-working-philosophy) and
-[`APL_S10`](#10-relevance-to-simplynext) extract those lines.
+prototypes fail, and Apple solved it in about 80 lines. Sections
+[`APR_S6`](#6-working-philosophy) and [`APR_S10`](#10-relevance-to-simplynext) extract those
+lines.
 
 
 
@@ -107,7 +111,7 @@ stops the session rather than degrading quietly.
    `HandPose`
 4. **Associated session**
    WWDC20 session 10653, *Detect Body and Hand Pose with Vision* `[S1]`
-5. **Git history in `ref_repo/apple/`**
+5. **Git history in `ref_repo/apple/handpose/`**
    4 commits: `Initial release for WWDC20` → `Minor updates.` ×2 → `Republish sample code project.`
 6. **Language**
    Swift 5.0, UIKit + storyboards
@@ -122,13 +126,13 @@ library. It will not gain features. Anything missing is missing on purpose.
 `LICENSE.txt` is Apple's standard sample-code licence. Read it before copying code verbatim into
 a submission. Practically, for a hackathon the safe posture is: **copy the architecture and the
 ideas, re-implement the code in Python, and credit the source.** The port from Swift to Python
-happens regardless ([`APL_S10.2`](#102-swift--python-port-table)), so this costs nothing.
+happens regardless ([`APR_S10.2`](#102-swift--python-port-table)), so this costs nothing.
 
 
 
 
 ## 2.3. Build Configuration
-Extracted from `HandPose.xcodeproj/project.pbxproj`, `HandPose/Info.plist` and
+Extracted from `handpose/HandPose.xcodeproj/project.pbxproj`, `handpose/HandPose/Info.plist` and
 `Configuration/SampleCode.xcconfig`:
 
 1. **`IPHONEOS_DEPLOYMENT_TARGET`**
@@ -143,7 +147,7 @@ Extracted from `HandPose.xcodeproj/project.pbxproj`, `HandPose/Info.plist` and
 4. **`UISupportedInterfaceOrientations`**
    *Value:* Portrait only
    *Consequence:* Simplifies the coordinate maths; see
-   [`APL_S5.2`](#52-coordinate-spaces--three-of-them)
+   [`APR_S5.2`](#52-coordinate-spaces--three-of-them)
 5. **`UIRequiresFullScreen`**
    *Value:* `true`
    *Consequence:* No iPad split-view — the preview layer's geometry stays predictable
@@ -155,12 +159,13 @@ Extracted from `HandPose.xcodeproj/project.pbxproj`, `HandPose/Info.plist` and
    *Consequence:* Makes the bundle ID unique per developer. Apple explicitly says **do not** copy
    this pattern into real projects
 
-`HandPose/HandPose.entitlements` requests `app-sandbox`, `device.camera` and `network.client`.
+`handpose/HandPose/HandPose.entitlements` requests `app-sandbox`, `device.camera` and
+`network.client`.
 
 > **Note:** the `network.client` entitlement is **never exercised**. There is not a single
 > network call in the codebase. It is boilerplate. This is worth naming out loud because it is
-> the strongest single piece of evidence for [`APL_S6.1`](#61-on-device-by-default): the entire pipeline is
-> on-device.
+> the strongest single piece of evidence for [`APR_S6.1`](#61-on-device-by-default): the entire
+> pipeline is on-device.
 
 ---
 
@@ -172,21 +177,23 @@ Extracted from `HandPose.xcodeproj/project.pbxproj`, `HandPose/Info.plist` and
 ## 3.1. File Inventory
 ```text
 ref_repo/apple/
-├── README.md                                  6 lines  — points at the WWDC session
-├── LICENSE.txt                                         — Apple sample-code licence
-├── Configuration/SampleCode.xcconfig                   — bundle-ID disambiguator
-├── HandPose.xcodeproj/                                 — project definition
-└── HandPose/
-    ├── AppDelegate.swift                     59 lines  — app entry + AppError enum
-    ├── SceneDelegate.swift                   15 lines  — empty; holds the UIWindow
-    ├── CameraView.swift                      58 lines  — preview layer + point overlay
-    ├── CameraViewController.swift           243 lines  — THE FILE. Capture, Vision, drawing
-    ├── HandGestureProcessor.swift            79 lines  — pinch/apart state machine
-    ├── Base.lproj/Main.storyboard                      — one VC whose view class is CameraView
-    ├── Base.lproj/LaunchScreen.storyboard
-    ├── Assets.xcassets/
-    ├── Info.plist
-    └── HandPose.entitlements
+├── APR_apple_report.md                                 — this document (tracked in git)
+└── handpose/                                           — the clone (git-ignored)
+    ├── README.md                                  6 lines  — points at the WWDC session
+    ├── LICENSE.txt                                     — Apple sample-code licence
+    ├── Configuration/SampleCode.xcconfig               — bundle-ID disambiguator
+    ├── HandPose.xcodeproj/                             — project definition
+    └── HandPose/
+        ├── AppDelegate.swift                 59 lines  — app entry + AppError enum
+        ├── SceneDelegate.swift               15 lines  — empty; holds the UIWindow
+        ├── CameraView.swift                  58 lines  — preview layer + point overlay
+        ├── CameraViewController.swift       243 lines  — THE FILE. Capture, Vision, drawing
+        ├── HandGestureProcessor.swift        79 lines  — pinch/apart state machine
+        ├── Base.lproj/Main.storyboard                  — one VC whose view class is CameraView
+        ├── Base.lproj/LaunchScreen.storyboard
+        ├── Assets.xcassets/
+        ├── Info.plist
+        └── HandPose.entitlements
 ```
 
 Roughly **454 lines of Swift in five files**. Two of them (`SceneDelegate`, and half of
@@ -216,7 +223,8 @@ Roughly **454 lines of Swift in five files**. Two of them (`SceneDelegate`, and 
 `HandGestureProcessor` importing **only `CoreGraphics`** is the most important line in the
 repository's design. The semantic layer has no dependency on cameras, on Vision, or on UIKit. It
 is a pure function of a point stream — which means it is unit-testable, portable, and replaceable.
-The sign-segmentation logic must have the same property. See [`APL_S10.3`](#103-the-architectural-boundary-to-preserve).
+The sign-segmentation logic must have the same property. See
+[`APR_S10.3`](#103-the-architectural-boundary-to-preserve).
 
 ---
 
@@ -307,7 +315,8 @@ plain, testable application code.** Vision knows nothing about the previous fram
 evidence counters, the buffer, the last draw point, the staleness timestamp — is ordinary Swift
 that a human wrote and can reason about.
 
-That rule is the single most transferable idea in the repository, and [`ARC`](../plan/ARC_architecture.md)
+That rule is the single most transferable idea in the repository, and
+[`ARC`](../../plan/ARC_architecture.md)
 adopts it wholesale.
 
 
@@ -332,7 +341,8 @@ The hop is `DispatchQueue.main.sync` inside a `defer` block (`CameraViewControll
 > It is also a deadlock waiting to happen if any main-thread work ever synchronously waits on the
 > capture queue, and it is the wrong pattern the moment inference gets slower than one frame
 > interval — which it will here, once a temporal model runs on top. The port keeps the *intent*
-> (bounded backlog) and changes the *mechanism* to a bounded queue with a drop-oldest policy. See [`RSK_S6`](../plan/RSK_risk_register.md#6-system-and-platform) for the latency risks
+> (bounded backlog) and changes the *mechanism* to a bounded queue with a drop-oldest policy. See
+> [`RSK_S6`](../../plan/RSK_risk_register.md#6-system-and-platform) for the latency risks
 > this touches.
 
 ---
@@ -386,7 +396,7 @@ guard thumbTipPoint.confidence > 0.3 && indexTipPoint.confidence > 0.3 else { re
 `0.3` is a magic number with no comment. Empirically it is permissive — it admits fairly poor
 detections. For sign language, where a wrong handshape is a wrong *word*, this threshold must be a
 tuned, measured parameter, per joint group, not a constant. See
-[`RSK_S3`](../plan/RSK_risk_register.md#3-linguistic).
+[`RSK_S3`](../../plan/RSK_risk_register.md#3-linguistic).
 
 **`processPoints(thumbTip:indexTip:)` (`:104–122`)** handles the empty case first: if either point
 is missing and more than 2 seconds have passed since the last observation, reset the state
@@ -396,7 +406,8 @@ machine and clear the dots. Staleness is treated as a state, not as an absence o
 straight to the raw fingertip midpoint; it draws a quadratic Bézier *to the midpoint between the
 last point and the new point*, using the last point as the control point. This is the standard
 freehand-smoothing trick, and it is doing the same job as a low-pass filter on a jittery signal.
-The landmark stream needs the analogous treatment — see [`APL_S10.1`](#101-lessons-to-carry-across), lesson L6.
+The landmark stream needs the analogous treatment — see
+[`APR_S10.1`](#101-lessons-to-carry-across), lesson L6.
 
 
 
@@ -433,7 +444,7 @@ Two properties of this design are worth reproducing:
 
 The app locks to portrait and passes `orientation: .up` to the request handler, which sidesteps
 the rotation problem entirely rather than solving it. That shortcut is not available for a
-multi-device product — see [`RSK_S2.2`](../plan/RSK_risk_register.md#22-geometric).
+multi-device product — see [`RSK_S2.2`](../../plan/RSK_risk_register.md#22-geometric).
 
 
 
@@ -499,7 +510,8 @@ retroactively includes everything it was unsure about. The `unknown` and `possib
 get their own on-screen colour, so the user can *see* the machine hesitating.
 
 This is the template for sign-boundary detection here: hold frames while unsure, commit
-retroactively, and never discard the run-up to a sign. See [`APL_S10.1`](#101-lessons-to-carry-across), lesson L4.
+retroactively, and never discard the run-up to a sign. See
+[`APR_S10.1`](#101-lessons-to-carry-across), lesson L4.
 
 
 
@@ -556,7 +568,7 @@ on stale data.
 That is worth naming as a deliberate policy: *degrading silently is worse than stopping.* For an
 assistive communication tool, where a silent degradation means putting words in a deaf person's
 mouth, this policy is not merely good practice — it is an ethical requirement. See
-[`RSK_S8`](../plan/RSK_risk_register.md#8-human-ethical-and-legal).
+[`RSK_S8`](../../plan/RSK_risk_register.md#8-human-ethical-and-legal).
 
 
 
@@ -569,7 +581,7 @@ entire app is a double-tap to clear.
 
 That minimalism is itself the lesson: a demo that shows **one capability with zero chrome** is
 easier to understand, easier to film, and harder to break on stage. Directly relevant to the
-5-minute demo video ([`JCR_S7`](../plan/JCR_judging_criteria.md#7-the-5-minute-demo-video)).
+5-minute demo video ([`JCR_S7`](../../plan/JCR_judging_criteria.md#7-the-5-minute-demo-video)).
 
 ---
 
@@ -606,7 +618,8 @@ Swift in application code.
 
 A low-confidence point is **dropped**, not down-weighted, not interpolated, not smoothed into the
 stream. Uncertain input produces no output rather than uncertain output. Compare
-[`RSK_S7.1`](../plan/RSK_risk_register.md#71-fabrication), where the opposite behaviour in an LLM is the
+[`RSK_S7.1`](../../plan/RSK_risk_register.md#71-fabrication), where the opposite behaviour in an
+LLM is the
 single largest risk to this product.
 
 
@@ -753,23 +766,26 @@ feature, not a label.
 ### 7.2.4. Adjacent Vision requests relevant to the MVP
 1. **`VNDetectHumanBodyPoseRequest`**
    *Availability:* iOS 14.0+ `[S6]`
-   *Relevance to [`SCR`](../plan/scribbles.md) MVP:* Step 2 — torso, shoulders, arms; signing space
+   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 2 — torso, shoulders, arms; signing
+   space
    is defined relative to the body
 2. **`VNDetectHumanBodyPose3DRequest`**
    *Availability:* iOS 17.0+ `[S7]` — *"detects points on human bodies in 3D space, relative to the
    camera"*, and *"if the system allows it, the request uses depth information to improve the
    accuracy"*
-   *Relevance to [`SCR`](../plan/scribbles.md) MVP:* Step 3 — the closest first-party answer to "3D
+   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 3 — the closest first-party answer to
+   "3D
    skeleton"
 3. **`VNGeneratePersonInstanceMaskRequest`**
    *Availability:* iOS 17.0+ `[S8]` — *"produces a mask of individual people it finds in the input
    image"*
-   *Relevance to [`SCR`](../plan/scribbles.md) MVP:* Step 1 — per-person masks, i.e. genuinely
+   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 1 — per-person masks, i.e. genuinely
    isolating one signer from bystanders
 
 > **Note:** all three of these post-date the sample. The repository shows Apple's 2020 answer;
 > Apple's 2023 platform answers two more of the four MVP steps out of the box. That matters for
-> [`ARC_S6`](../plan/ARC_architecture.md#6-the-recommended-architecture), where an iOS-native track is one of the options.
+> [`ARC_S6`](../../plan/ARC_architecture.md#6-the-recommended-architecture), where an iOS-native
+> track is one of the options.
 
 ---
 
@@ -788,7 +804,7 @@ The gap between this sample and the product.
     Not used (API postdates the sample). Dominant/non-dominant roles are lost
 4.  **Face and body**
     No `VNDetectHumanBodyPoseRequest`, no face landmarks. Non-manual grammar is invisible — see
-    [`RSK_S3.1`](../plan/RSK_risk_register.md#31-non-manual-grammar)
+    [`RSK_S3.1`](../../plan/RSK_risk_register.md#31-non-manual-grammar)
 5.  **Any temporal model**
     The 3-frame counter is the entire memory. No sequence model, no RNN, no transformer
 6.  **Vocabulary**
@@ -836,7 +852,7 @@ Optional, but seeing the hysteresis behave on a live camera is worth twenty minu
 **What to watch for:** the fingertip dots turn **orange** exactly while the state machine is
 undecided, **green** while committed to drawing, **red** when committed to not drawing. Waving a
 hand out of frame and back shows the 2-second reset. That orange interval is the buffer-and-replay
-window of [`APL_S5.3`](#53-handgestureprocessorswift--the-state-machine) made visible.
+window of [`APR_S5.3`](#53-handgestureprocessorswift--the-state-machine) made visible.
 
 ---
 
@@ -848,58 +864,58 @@ window of [`APL_S5.3`](#53-handgestureprocessorswift--the-state-machine) made vi
 ## 10.1. Lessons to Carry Across
 1.  **L1**
     *Lesson:* Keep the ML layer stateless; own all temporal state in plain code
-    *Source:* [`APL_S6.2`](#62-the-model-is-stateless-the-application-owns-all-memory)
+    *Source:* [`APR_S6.2`](#62-the-model-is-stateless-the-application-owns-all-memory)
     *Application:* Landmark extractor returns per-frame features only. Segmentation, smoothing and
     history live in a project module
 2.  **L2**
     *Lesson:* Gate on confidence; drop rather than guess
-    *Source:* [`APL_S6.3`](#63-confidence-is-a-gate-not-a-weight)
+    *Source:* [`APR_S6.3`](#63-confidence-is-a-gate-not-a-weight)
     *Application:* Per-joint-group thresholds, tuned and measured — not one magic `0.3`
 3.  **L3**
     *Lesson:* Hysteresis before any state change
-    *Source:* [`APL_S6.4`](#64-accumulate-evidence-before-changing-state)
+    *Source:* [`APR_S6.4`](#64-accumulate-evidence-before-changing-state)
     *Application:* *N*-consecutive-frame trigger for sign-boundary detection, with contradicting
     evidence zeroing the counter
 4.  **L4**
     *Lesson:* Buffer while uncertain, commit retroactively
-    *Source:* [`APL_S5.3`](#53-handgestureprocessorswift--the-state-machine)
+    *Source:* [`APR_S5.3`](#53-handgestureprocessorswift--the-state-machine)
     *Application:* Ring buffer of landmark frames; when a sign boundary commits, the whole run-up is
     already captured
 5.  **L5**
     *Lesson:* Show the machine hesitating
-    *Source:* [`APL_S5.3`](#53-handgestureprocessorswift--the-state-machine)
+    *Source:* [`APR_S5.3`](#53-handgestureprocessorswift--the-state-machine)
     *Application:* Three-state UI: *listening* / *unsure* / *committed*. Directly serviceable as an
-    honesty mechanism — see [`RSK_S7.4`](../plan/RSK_risk_register.md#74-confidence-and-honesty)
+    honesty mechanism — see [`RSK_S7.4`](../../plan/RSK_risk_register.md#74-confidence-and-honesty)
 6.  **L6**
     *Lesson:* Smooth the output, not the decision
-    *Source:* [`APL_S5.1`](#51-cameraviewcontrollerswift--capture-and-orchestration)
+    *Source:* [`APR_S5.1`](#51-cameraviewcontrollerswift--capture-and-orchestration)
     *Application:* Low-pass the rendered landmark trail for the UI; feed the model the raw, gated
     stream
 7.  **L7**
     *Lesson:* Drop frames under load
-    *Source:* [`APL_S6.7`](#67-drop-frames-never-queue-them)
+    *Source:* [`APR_S6.7`](#67-drop-frames-never-queue-them)
     *Application:* Bounded queue, drop-oldest. Never let the buffer grow
 8.  **L8**
     *Lesson:* Staleness is a state
-    *Source:* [`APL_S6.8`](#68-staleness-is-a-state)
+    *Source:* [`APR_S6.8`](#68-staleness-is-a-state)
     *Application:* An "N seconds without hands" timeout closes the utterance and flushes it to
     output
 9.  **L9**
     *Lesson:* Convert coordinates once, at boundaries
-    *Source:* [`APL_S6.6`](#66-convert-coordinates-exactly-once-at-the-boundary)
+    *Source:* [`APR_S6.6`](#66-convert-coordinates-exactly-once-at-the-boundary)
     *Application:* One normalisation step from pixel space into body-relative signing space; every
     downstream module sees only the latter
 10. **L10**
     *Lesson:* Fail loudly and stop
-    *Source:* [`APL_S6.10`](#610-fail-loudly-and-stop)
+    *Source:* [`APR_S6.10`](#610-fail-loudly-and-stop)
     *Application:* Never emit a "best guess" sentence when the pipeline is broken. Say so
 11. **L11**
     *Lesson:* Zero-chrome demo
-    *Source:* [`APL_S5.6`](#56-scenedelegateswift-and-the-storyboards)
+    *Source:* [`APR_S5.6`](#56-scenedelegateswift-and-the-storyboards)
     *Application:* One screen, one capability, no settings, for the 5-minute video
 12. **L12**
     *Lesson:* Cheap arithmetic where it suffices
-    *Source:* [`APL_S6.9`](#69-use-cheap-arithmetic-for-the-semantic-layer)
+    *Source:* [`APR_S6.9`](#69-use-cheap-arithmetic-for-the-semantic-layer)
     *Application:* Motion energy, hand-in-signing-space tests, and velocity thresholds are geometry
     — do not spend a model on them
 
@@ -958,7 +974,7 @@ The project stack is Python `[D3_p42]`. This maps every Apple concept to its lik
 > MediaPipe's at the **top-left**. Apple's `y := 1 - y` line exists to reconcile Vision with
 > AVFoundation. Copying that line into a MediaPipe pipeline flips the image upside down. It is
 > the single most likely bug to arise from reading this repository, so it is called out here and
-> again in [`SYN`](../ref_repo/apple/SYN_apple_synthesis.md).
+> again in [`APS`](../../doc/APS_apple_synthesis.md).
 
 
 
@@ -986,8 +1002,8 @@ The Apple sample is silent on every hard problem in this product:
 - how to attribute utterances when two people sign at once;
 - how to know when the system is wrong.
 
-Those are the subject of [`ARC`](../plan/ARC_architecture.md) and
-[`RSK`](../plan/RSK_risk_register.md). The Apple repository provides a solid floor and nothing
+Those are the subject of [`ARC`](../../plan/ARC_architecture.md) and
+[`RSK`](../../plan/RSK_risk_register.md). The Apple repository provides a solid floor and nothing
 above the knee.
 
 ---
@@ -999,7 +1015,8 @@ above the knee.
 # 11. SOURCES
 1.  **`[S1]`** · *Reliability:* Official
     *Source:* Apple, *Detect Body and Hand Pose with Vision*, WWDC20 session 10653 —
-    https://developer.apple.com/videos/play/wwdc2020/10653/ (cited by `ref_repo/apple/README.md`)
+    https://developer.apple.com/videos/play/wwdc2020/10653/
+    (cited by `ref_repo/apple/handpose/README.md`)
 2.  **`[S2]`** · *Reliability:* Official
     *Source:* Apple Developer Documentation, `VNDetectHumanHandPoseRequest` —
     https://developer.apple.com/documentation/vision/vndetecthumanhandposerequest
@@ -1028,7 +1045,8 @@ above the knee.
     *Source:* Google AI Edge, *Holistic landmarks detection task guide* —
     https://ai.google.dev/edge/mediapipe/solutions/vision/holistic_landmarker
 11. **`[S11]`** · *Reliability:* Primary
-    *Source:* The repository itself: `ref_repo/apple/` at commit `ec30ff6`, *Republish sample code
+    *Source:* The repository itself: `ref_repo/apple/handpose/` at commit `ec30ff6`, *Republish
+    sample code
     project.*
 
 All line numbers in this document refer to the files as they stand at `[S11]`.
@@ -1045,10 +1063,18 @@ All line numbers in this document refer to the files as they stand at `[S11]`.
    Apple's official API documentation.
 2. **2026-08-28** · *Author:* Claude (Opus 5)
    *Change:* Reformatted to the revised conventions in
-   [`RIX_S4`](../ref_index.md#4-markdown-formatting-rules): bold title, collapsible `# METADATA`,
+   [`RIX_S4`](../../ref_index.md#4-markdown-formatting-rules): bold title, collapsible `# METADATA`,
    `#`-level numbered sections, HTML anchors removed, padded tables, third-person voice,
    placeholders for unfinished content.
 3. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Applied the revised [`RIX_S4.4`](../#44-vertical-spacing) heading spacing and the
-   [`RIX_S4.5`](../#45-tables-and-numbered-lists) table-versus-numbered-list rule: tables whose rows exceeded 100
-   characters became numbered lists.
+   *Change:* Applied the revised [`RIX_S4.4`](../../ref_index.md#44-vertical-spacing) heading
+   spacing and the [`RIX_S4.5`](../../ref_index.md#45-tables-and-numbered-lists)
+   table-versus-numbered-list rule: tables whose rows exceeded 100 characters became numbered
+   lists.
+4. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Recoded `APL` → `APR` and moved from `doc/` into `ref_repo/apple/`, beside the clone
+   it describes — [`RIX_S2.1`](../../ref_index.md#21-live-documents). The clone was relocated from
+   `ref_repo/apple/` to `ref_repo/apple/handpose/` so that a tracked document can sit next to an
+   untracked embedded repository; every path in this document was updated accordingly. The short
+   version, formerly `SYN` in this directory, is now [`APS`](../../doc/APS_apple_synthesis.md) in
+   `doc/`. No analysis changed.

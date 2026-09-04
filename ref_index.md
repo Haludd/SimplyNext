@@ -12,7 +12,7 @@
 | :---------------------- | :--------------------------------------------------------- |
 | **Code**                | `RIX`                                                      |
 | **Status**              | Live                                                       |
-| **Last reviewed**       | 2026-08-28                                                 |
+| **Last reviewed**       | 2026-08-30                                                 |
 | **Source of truth for** | Document locations, addressing scheme, markdown formatting |
 | **Related**             | [`CLD`](CLAUDE.md) · [`RDM`](README.md)                    |
 
@@ -91,11 +91,32 @@ reader to locate the exact paragraph: open the file the code names, then search 
 8.  **`TRN`** — `doc/TRN_training_synthesis.md` · *Status:* Live
     *Contents:* Synthesis of all six hackathon training decks
     *SoT for:* Training content
-9.  **`APL`** — `doc/APL_apple_ref_report.md` · *Status:* Live
-    *Contents:* Technical report on the Apple reference repository
+
+**Reference-repository documents.** Two per repository, on the pattern in
+[`RIX_S3.5`](#35-repository-document-codes): a **full report** beside the clone it describes, and a
+**synthesis** in `doc/`. The reports live inside `ref_repo/` and are the only files there that
+version control tracks — [`RIX_S5.2`](#52-what-version-control-tracks).
+
+9.  **`APR`** — `ref_repo/apple/APR_apple_report.md` · *Status:* Live
+    *Contents:* Full technical report on the Apple `HandPose` clone
     *SoT for:* Apple repository analysis
-10. **`SYN`** — `ref_repo/apple/SYN_apple_synthesis.md` · *Status:* Live
-    *Contents:* Short in-place synthesis of the Apple repository; defers to `APL`
+10. **`APS`** — `doc/APS_apple_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of the Apple repository; defers to `APR`
+11. **`MPR`** — `ref_repo/google-mediapipe/MPR_mediapipe_report.md` · *Status:* Live
+    *Contents:* Full technical report on MediaPipe, focused on the Hand Landmarker task
+    *SoT for:* MediaPipe repository analysis
+12. **`MPS`** — `doc/MPS_mediapipe_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of MediaPipe; defers to `MPR`
+13. **`DHR`** — `ref_repo/depthai-hand-tracker/DHR_depthai_report.md` · *Status:* Live
+    *Contents:* Full technical report on the DepthAI hand tracker
+    *SoT for:* DepthAI repository analysis
+14. **`DHS`** — `doc/DHS_depthai_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of the DepthAI hand tracker; defers to `DHR`
+15. **`OPR`** — `ref_repo/openpose/OPR_openpose_report.md` · *Status:* Live
+    *Contents:* Full technical report on OpenPose, including the licence analysis
+    *SoT for:* OpenPose repository analysis
+16. **`OPS`** — `doc/OPS_openpose_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of OpenPose and the record of its rejection; defers to `OPR`
 
 
 
@@ -153,18 +174,47 @@ Read-only originals. Reference a slide as `<code>_p<slide>`, for example `D3_p39
    *File:* `doc/[D6]_Hackathon_AWS_Access_Guide.pdf`
    *Contents:* AWS registration, 2FA, sandbox lease, **budget caps**
    *Synthesised in:* [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget)
-7. **`REF`**
-   *File:* `ref_repo/apple/`
-   *Contents:* Apple `HandPose` sample code (Swift, WWDC20)
-   *Synthesised in:* [`APL`](doc/APL_apple_ref_report.md)
+7.  **`RAP`**
+    *File:* `ref_repo/apple/handpose/` at `ec30ff6`
+    *Contents:* Apple `HandPose` sample code (Swift, WWDC20)
+    *Documented in:* [`APR`](ref_repo/apple/APR_apple_report.md) ·
+    [`APS`](doc/APS_apple_synthesis.md)
+8.  **`RMP`**
+    *File:* `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96`
+    *Contents:* Google MediaPipe — the framework and the Tasks API. **A dependency, not just a
+    reference**
+    *Documented in:* [`MPR`](ref_repo/google-mediapipe/MPR_mediapipe_report.md) ·
+    [`MPS`](doc/MPS_mediapipe_synthesis.md)
+9.  **`RDH`**
+    *File:* `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` at `9773123`
+    *Contents:* `geaxgx/depthai_hand_tracker` — MediaPipe's hand models on Luxonis OAK hardware,
+    with the pipeline re-implemented in NumPy
+    *Documented in:* [`DHR`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md) ·
+    [`DHS`](doc/DHS_depthai_synthesis.md)
+10. **`ROP`**
+    *File:* `ref_repo/openpose/openpose/` at `5c5d965`
+    *Contents:* CMU OpenPose. ⚠ **Non-commercial licence** — read
+    [`OPR_S2.2`](ref_repo/openpose/OPR_openpose_report.md#22-licence) before touching it
+    *Documented in:* [`OPR`](ref_repo/openpose/OPR_openpose_report.md) ·
+    [`OPS`](doc/OPS_openpose_synthesis.md)
+
+> **Note:** the clones themselves are **excluded from version control** —
+> [`RIX_S5.2`](#52-what-version-control-tracks). A teammate obtains them by cloning from the
+> upstream remote each report names in its provenance section.
 
 
 
 
 ## 2.4. Retired Codes
-| Code | File | Retired on | Reason |
-| :--- | :--- | :--------- | :----- |
-| :--- | :--- | :--------- | :----- |
+All retired on **2026-08-30**, in the change that registered the three new reference
+repositories.
+
+1. **`APL`** — `doc/APL_apple_ref_report.md`
+   *Reason:* Recoded `APR` and moved to `ref_repo/apple/`, beside the clone it describes
+2. **`SYN`** — `ref_repo/apple/SYN_apple_synthesis.md`
+   *Reason:* Recoded `APS` and moved to `doc/`, alongside the other syntheses
+3. **`REF`** — `ref_repo/apple/`
+   *Reason:* One source code per repository is now required: `RAP`, `RMP`, `RDH`, `ROP`
 
 ---
 
@@ -177,11 +227,12 @@ Read-only originals. Reference a slide as `<code>_p<slide>`, for example `D3_p39
 ```text
 <CODE>_S<section>[.<sub>[.<sub>]]
 
-APL_S4        → doc/APL_apple_ref_report.md, section 4
-APL_S4.2      → ... section 4.2
+APR_S4        → ref_repo/apple/APR_apple_report.md, section 4
+APR_S4.2      → ... section 4.2
 RSK_S3.1      → plan/RSK_risk_register.md, section 3.1
 D3_p39        → doc/[D3]_..., slide 39        (source PDFs use page addresses)
-REF:CameraViewController.swift:212            (a line in the Apple reference repository)
+RAP:HandPose/CameraViewController.swift:212   (a line in a reference repository, relative
+RMP:mediapipe/tasks/python/vision/hand_landmarker.py:311        to that clone's own root)
 ```
 
 Risk items carry their own stable IDs on top of the section address — see
@@ -193,8 +244,9 @@ Risk items carry their own stable IDs on top of the section address — see
 ## 3.2. Choosing a Code
 - Three characters, uppercase, `A–Z` only. No digits, no reuse, no collision with `D1`–`D6`.
 - The code compresses the document's real name: `ARChitecture` → `ARC` · `RiSK` → `RSK` ·
-  `Judging CRiteria` → `JCR` · `APpLe` → `APL` · `TRaiNing` → `TRN` · `SYNthesis` → `SYN` ·
-  `Reference IndeX` → `RIX`.
+  `Judging CRiteria` → `JCR` · `TRaiNing` → `TRN` · `Reference IndeX` → `RIX`.
+- Reference-repository documents follow the systematic pattern in
+  [`RIX_S3.5`](#35-repository-document-codes) instead.
 
 
 
@@ -225,6 +277,29 @@ Headings carry no HTML anchor. The address is derived from the document code dec
 The GitHub slug is the heading text lowercased, with punctuation removed and spaces replaced by
 hyphens. Where the slug is unknown, link the file alone and keep the address as the link text; the
 address still resolves by search.
+
+
+
+
+## 3.5. Repository Document Codes
+Every repository in `ref_repo/` carries three codes, built from a two-letter repository tag plus
+one role letter. The pattern is fixed so that a fifth repository needs no discussion.
+
+| Repository           | Tag  | Source | Report | Synthesis |
+| :------------------- | :--- | :----- | :----- | :-------- |
+| Apple `HandPose`     | `AP` | `RAP`  | `APR`  | `APS`     |
+| Google MediaPipe     | `MP` | `RMP`  | `MPR`  | `MPS`     |
+| DepthAI hand tracker | `DH` | `RDH`  | `DHR`  | `DHS`     |
+| CMU OpenPose         | `OP` | `ROP`  | `OPR`  | `OPS`     |
+
+1. **`R` + tag** — the **source clone** itself, registered in
+   [`RIX_S2.3`](#23-source-material). Not a document
+2. **tag + `R`** — the **full report**, in `ref_repo/<slug>/`, beside the clone it describes
+3. **tag + `S`** — the **synthesis**, in `doc/`, alongside the other syntheses
+
+Reports hold the depth: file-by-file analysis, line citations, port tables. Syntheses hold the
+five-minute orientation. Where a report and its synthesis disagree, **the report wins**, and each
+synthesis says so in its own metadata block.
 
 ---
 
@@ -293,7 +368,7 @@ carries a field table and, where useful, notes addressed to the team and to the 
 | Section         | `# N.`       | ALL CAPS             | `# 3. RECOMMENDED ARCHITECTURE`       |
 | Sub-section     | `## N.M.`    | Caps Initials Only   | `## 3.2. Pose Extraction`             |
 | Sub-sub-section | `### N.M.K.` | First character only | `### 3.2.1. Landmark budget`          |
-| Deeper          |     ---      |         ---          | Use a bold lead-in or a table instead |
+| Deeper          | ---          | ---                  | Use a bold lead-in or a table instead |
 
 Headings are as short as the idea allows and name the content rather than describing it. Every
 heading number ends with a period, so a search for `3.2.` reaches the heading and not the prose.
@@ -424,25 +499,43 @@ the team and actionable by the assistant.
 # 5. DIRECTORY MAP
 ```text
 SimplyNext/
-├── ref_index.md                     RIX — registry, addressing, formatting
-├── README.md                        RDM — human entry point
-├── CLAUDE.md                        CLD — rules for AI agents
+├── ref_index.md                          RIX — registry, addressing, formatting
+├── README.md                             RDM — human entry point
+├── CLAUDE.md                             CLD — rules for AI agents
+├── .gitignore                            excludes every clone under ref_repo/
 │
-├── plan/                            what the team is building
-│   ├── scribbles.md                 SCR — raw ideation (product intent)
-│   ├── JCR_judging_criteria.md      JCR
-│   ├── ARC_architecture.md          ARC
-│   └── RSK_risk_register.md         RSK
+├── plan/                                 what the team is building
+│   ├── scribbles.md                      SCR — raw ideation (product intent)
+│   ├── JCR_judging_criteria.md           JCR
+│   ├── ARC_architecture.md               ARC
+│   └── RSK_risk_register.md              RSK
 │
-├── doc/                             reference and supporting material
-│   ├── [D1..D6]*.pdf                original training decks (read-only)
-│   ├── TRN_training_synthesis.md    TRN
-│   └── APL_apple_ref_report.md      APL
+├── doc/                                  reference material and syntheses
+│   ├── [D1..D6]*.pdf                     original training decks (read-only)
+│   ├── TRN_training_synthesis.md         TRN
+│   ├── APS_apple_synthesis.md            APS
+│   ├── MPS_mediapipe_synthesis.md        MPS
+│   ├── DHS_depthai_synthesis.md          DHS
+│   └── OPS_openpose_synthesis.md         OPS
 │
-└── ref_repo/
-    └── apple/                       Apple HandPose sample (Swift, WWDC20)
-        └── SYN_apple_synthesis.md   SYN
+└── ref_repo/                             tracked: the reports. ignored: the clones
+    ├── apple/
+    │   ├── APR_apple_report.md           APR   ← tracked
+    │   └── handpose/                     RAP   ← ignored
+    ├── google-mediapipe/
+    │   ├── MPR_mediapipe_report.md       MPR   ← tracked
+    │   └── mediapipe/                    RMP   ← ignored
+    ├── depthai-hand-tracker/
+    │   ├── DHR_depthai_report.md         DHR   ← tracked
+    │   └── depthai_hand_tracker/         RDH   ← ignored
+    └── openpose/
+        ├── OPR_openpose_report.md        OPR   ← tracked
+        └── openpose/                     ROP   ← ignored
 ```
+
+Each repository directory holds **exactly two entries**: the project's report, and the clone in a
+sub-directory of its own. The nesting is not decoration — a clone carries its own `.git`, and git
+refuses to track a file inside an embedded repository, so the report must sit one level above it.
 
 
 
@@ -451,12 +544,38 @@ SimplyNext/
 1. **`plan/`** · *Does not hold:* Third-party material
    *Holds:* Plans, to-dos, decisions, risks, criteria, evaluation protocol
 2. **`doc/`** · *Does not hold:* Project plans
-   *Holds:* Training decks, external references, and syntheses of them
+   *Holds:* Training decks, and the syntheses — training and repository alike
 3. **`ref_repo/`** · *Does not hold:* Project source code
-   *Holds:* Unmodified third-party repositories, plus one synthesis file each
+   *Holds:* One unmodified third-party clone per sub-directory, plus that repository's full report
 4. **`src/` *(future)*** · *Does not hold:* Documents
    *Holds:* Implementation — the folder shape judges expect is in
    [`TRN_S4.3`](doc/TRN_training_synthesis.md#43-development-best-practices)
+
+
+
+
+## 5.2. What Version Control Tracks
+`.gitignore` excludes everything under `ref_repo/` and then re-admits only the report documents:
+
+```text
+ref_repo/**
+!ref_repo/
+!ref_repo/*/
+!ref_repo/*/[A-Z][A-Z][A-Z]_*.md
+ref_repo/*/*/
+```
+
+The consequences, in order of how often they bite:
+
+1. **A teammate cloning this repository gets the reports, not the clones.** Each report's
+   provenance section names the upstream remote and the commit it was read at
+2. **Nothing in `src/` may import from `ref_repo/`.** A judge running the submission would get an
+   `ImportError`. Algorithms worth keeping are re-implemented, with attribution
+3. **A report must be named `<CODE>_<name>.md` at the top of its repository directory**, or the
+   un-ignore rule will not match it and it will be silently untracked
+4. **A clone must live in its own sub-directory**, never directly in `ref_repo/<slug>/`
+5. **Model weights stay out.** `.gitignore` also excludes `*.tflite`, `*.task`, `*.blob`,
+   `*.caffemodel` and similar, against the 5 GB submission limit — `CLD_S6` rule 5
 
 ---
 
@@ -473,6 +592,15 @@ SimplyNext/
    numbered sections, HTML anchors removed, padded tables, third-person voice. Added
    [`RIX_S4.7`](#47-placeholders) and [`RIX_S4.9`](#49-tone).
 3. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Added [`RIX_S4.4`](#44-vertical-spacing) (vertical spacing before headings) and reworked
-   [`RIX_S4.5`](#45-tables-and-numbered-lists) into the table-versus-numbered-list rule; renumbered the sections that
-   follow. Converted every table whose rows exceeded 100 characters into a numbered list.
+   *Change:* Added [`RIX_S4.4`](#44-vertical-spacing) (vertical spacing before headings) and
+   reworked [`RIX_S4.5`](#45-tables-and-numbered-lists) into the table-versus-numbered-list rule;
+   renumbered the sections that follow. Converted every table whose rows exceeded 100 characters
+   into a numbered list.
+4. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Registered the three new reference repositories. Retired `APL`, `SYN` and `REF`;
+   introduced the systematic repository-code pattern in
+   [`RIX_S3.5`](#35-repository-document-codes) and registered `RAP`/`APR`/`APS`,
+   `RMP`/`MPR`/`MPS`, `RDH`/`DHR`/`DHS` and `ROP`/`OPR`/`OPS`. Full reports now live beside the
+   clone they describe in `ref_repo/`; syntheses live in `doc/`. Added
+   [`RIX_S5.2`](#52-what-version-control-tracks) for the `.gitignore` rules that exclude the clones
+   while tracking the reports, and redrew the directory map.

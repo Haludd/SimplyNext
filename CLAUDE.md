@@ -12,7 +12,7 @@
 | :---------------------- | :----------------------------------------- |
 | **Code**                | `CLD`                                      |
 | **Status**              | Live                                       |
-| **Last reviewed**       | 2026-08-28                                 |
+| **Last reviewed**       | 2026-08-30                                 |
 | **Source of truth for** | Agent behaviour in this repository         |
 | **Related**             | [`RIX`](ref_index.md) · [`RDM`](README.md) |
 
@@ -68,7 +68,14 @@ gloves or wearables.
 | The technical direction, with sources | [`ARC`](plan/ARC_architecture.md)           |
 | What can go wrong                     | [`RSK`](plan/RSK_risk_register.md)          |
 | What the training decks require       | [`TRN`](doc/TRN_training_synthesis.md)      |
-| The Apple reference repository        | [`APL`](doc/APL_apple_ref_report.md)        |
+| Which perception library, and why     | [`MPS`](doc/MPS_mediapipe_synthesis.md)     |
+| The Apple reference repository        | [`APS`](doc/APS_apple_synthesis.md)         |
+| The DepthAI reference repository      | [`DHS`](doc/DHS_depthai_synthesis.md)       |
+| The OpenPose reference repository     | [`OPS`](doc/OPS_openpose_synthesis.md)      |
+
+Each synthesis in `doc/` points to a **full report** kept beside the clone it describes, in
+`ref_repo/`. The code pattern is in
+[`RIX_S3.5`](ref_index.md#35-repository-document-codes).
 
 ---
 
@@ -78,7 +85,8 @@ gloves or wearables.
 
 # 3. DOCUMENT RULES
 ## 3.1. Writing Documents
-1.  Follow [`RIX_S4`](ref_index.md#4-markdown-formatting-rules) exactly: bold title, collapsible `# METADATA` block,
+1.  Follow [`RIX_S4`](ref_index.md#4-markdown-formatting-rules) exactly: bold title, collapsible
+    `# METADATA` block,
     heading ladder, vertical spacing, `---` between `#` sections, padded tables
 2.  The title is bold text, never a heading. `#` is reserved for numbered sections: `# 1. ALL CAPS`,
     `## 1.1. Caps Initials Only`, `### 1.1.1. First character only`
@@ -94,7 +102,8 @@ gloves or wearables.
     cells with a centred `---`
 7.  **Leave blank lines before every heading:** five before `#`, four before `##`, three before
     `###`. Never leave a blank line after a heading — [`RIX_S4.4`](ref_index.md#44-vertical-spacing)
-8.  Register the document's three-letter code in [`RIX_S2`](ref_index.md#2-document-registry) before or with
+8.  Register the document's three-letter code in [`RIX_S2`](ref_index.md#2-document-registry)
+    before or with
     creation
 9.  Filenames are `<CODE>_<snake_case_name>.md`, except `README.md`, `CLAUDE.md`, `ref_index.md`,
     `plan/scribbles.md`
@@ -104,7 +113,8 @@ gloves or wearables.
     plainly
 12. Every document in `plan/` carries a `# N. CHANGE LOG`. Add a line when it changes
 13. Dates are absolute (`2026-08-28`)
-14. Cross-reference by address — `` [`ARC_S7.1`](plan/ARC_architecture.md#71-comparison-table) `` — never by
+14. Cross-reference by address — `` [`ARC_S7.1`](plan/ARC_architecture.md#71-comparison-table) ``
+    — never by
     prose description
 
 
@@ -128,16 +138,21 @@ gloves or wearables.
 2. **`doc/`** · *Never:* Project plans
    *Contents:* Training decks, external references, syntheses of them
 3. **`ref_repo/`** · *Never:* Project source code
-   *Contents:* Unmodified third-party repositories, plus one synthesis file each
+   *Contents:* One unmodified third-party clone per sub-directory, plus that repository's full
+   report. The clones are **git-ignored**; the reports are tracked —
+   [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks)
 4. **`src/` *(future)*** · *Never:* Documents
-   *Contents:* Implementation
+   *Contents:* Implementation. **Never imports from `ref_repo/`** — the clones are not committed,
+   so a judge running the submission would get an `ImportError`
 
 
 
 
 ## 3.4. Do Not Edit
 - The six PDFs in `doc/` — they are primary sources.
-- Anything inside `ref_repo/apple/` **except** `SYN_apple_synthesis.md`.
+- Any clone under `ref_repo/`: `apple/handpose/`, `google-mediapipe/mediapipe/`,
+  `depthai-hand-tracker/depthai_hand_tracker/`, `openpose/openpose/`. The only editable files in
+  `ref_repo/` are the four reports — `APR`, `MPR`, `DHR`, `OPR`.
 - The body of `plan/scribbles.md` — it is the team's raw ideation. Cross-references and formatting
   may be maintained; the wording may not be rewritten.
 
@@ -210,15 +225,27 @@ the team.
 
 
 
-## 5.4. Working with the Reference Repository
-`ref_repo/apple/` is Apple's WWDC20 `HandPose` sample — **iOS, not Apple Vision Pro**. Do not
-repeat that error in any document or slide. See
-[`APL_S1.1`](doc/APL_apple_ref_report.md#11-what-this-repository-is).
+## 5.4. Working with the Reference Repositories
+Four clones sit under `ref_repo/`, each with a full report beside it and a synthesis in `doc/` —
+[`RIX_S3.5`](ref_index.md#35-repository-document-codes). Four standing facts about them:
 
-When porting ideas from it: Vision's normalised coordinate space has its origin at the
-**bottom-left**; MediaPipe's at the **top-left**. Copying Apple's `y = 1 - y` line into a MediaPipe
-pipeline flips the image. See
-[`APL_S10.2`](doc/APL_apple_ref_report.md#102-swift--python-port-table).
+1. **`RAP` is iOS, not Apple Vision Pro.** `ref_repo/apple/handpose/` is Apple's WWDC20 `HandPose`
+   sample, targeting iOS 14 and the Vision framework. Do not repeat that error in any document or
+   slide — [`APR_S1.1`](ref_repo/apple/APR_apple_report.md#11-what-this-repository-is)
+2. **The y-flip trap.** Vision's normalised coordinate space has its origin at the **bottom-left**;
+   MediaPipe's at the **top-left**. Copying Apple's `y = 1 - y` line into a MediaPipe pipeline
+   flips the image — [`APR_S10.2`](ref_repo/apple/APR_apple_report.md#102-swift--python-port-table)
+3. **`RMP` is a dependency, and it moves.** MediaPipe is the perception layer
+   ([`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)). Write
+   against `mediapipe.tasks.python.vision`, never the legacy `mp.solutions` API, and always at a
+   pinned version — [`MPS_S6`](doc/MPS_mediapipe_synthesis.md#6-the-four-traps-that-will-cost-a-day)
+4. **`ROP` is licensed for non-commercial research only**, and assigns derivatives to CMU. **No
+   OpenPose code, model or derivative enters `src/`.** It is cited, never used —
+   [`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence)
+
+`RDH` requires hardware the project is not buying, but its Python is hardware-free and four of its
+tracking fixes are in scope —
+[`ARC_S6.5`](plan/ARC_architecture.md#65-perception-engineering-rules).
 
 ---
 
@@ -233,6 +260,12 @@ pipeline flips the image. See
    [`RSK_S8.3`](plan/RSK_risk_register.md#83-privacy-and-data-protection)
 4. Keep the `ref_index.md` update in the same commit as the document change it describes
 5. Do not add training data or model weights without checking the 5 GB submission limit
+6. **Never commit a third-party clone.** `.gitignore` excludes everything under `ref_repo/` and
+   re-admits only `ref_repo/*/[A-Z][A-Z][A-Z]_*.md` — the four reports. A new reference repository
+   is cloned into its own sub-directory, `ref_repo/<slug>/<clone>/`, never directly into
+   `ref_repo/<slug>/` — [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks)
+7. A clone carries its own `.git`. If one is ever added to the index as an embedded repository,
+   remove it with `git rm --cached <path>` before relying on the ignore rules
 
 ---
 
@@ -250,5 +283,13 @@ pipeline flips the image. See
    placeholders.
 3. **2026-08-28** · *Author:* Claude (Opus 5)
    *Change:* Added the table-versus-numbered-list rule and the heading-spacing rule to
-   [`CLD_S3.1`](#31-writing-documents); converted the over-width rule tables in this file into numbered
-   lists.
+   [`CLD_S3.1`](#31-writing-documents); converted the over-width rule tables in this file into
+   numbered lists.
+4. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Updated for the three new reference repositories. Rewrote
+   [`CLD_S5.4`](#54-working-with-the-reference-repositories) as four standing facts covering all
+   four clones, including the OpenPose licence prohibition. Recorded in
+   [`CLD_S3.3`](#33-where-things-go) and [`CLD_S6`](#6-git) that the clones are git-ignored, that
+   the reports are tracked, and that `src/` never imports from `ref_repo/`. Repointed `APL` and
+   `SYN` to [`APR`](ref_repo/apple/APR_apple_report.md) and
+   [`APS`](doc/APS_apple_synthesis.md).

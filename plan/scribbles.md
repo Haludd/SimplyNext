@@ -12,7 +12,7 @@
 | :----------------------------- | :----------------------- |
 | **Code**                       | `SCR`                    |
 | **Status**                     | Live                     |
-| **Last reviewed**              | 2026-08-28               |
+| **Last reviewed**              | 2026-08-30               |
 | **Source of truth for**        | **Product intent**       |
 | **Where every document lives** | [`RIX`](../ref_index.md) |
 
@@ -34,8 +34,10 @@ maintained; the wording may not be changed — [`CLD_S3.4`](../CLAUDE.md#34-do-n
    [`ARC_S5.4`](ARC_architecture.md#54-corrections-to-scr--issues) — "training an LLM" is
    **rejected** as a premise, and "memory loss during training" is a category error
 4. **RESEARCH AREAS → 1. Read apple repo**
-   [`APL`](../doc/APL_apple_ref_report.md) (full) ·
-   [`SYN`](../ref_repo/apple/SYN_apple_synthesis.md) (short version)
+   [`APR`](../ref_repo/apple/APR_apple_report.md) (full) ·
+   [`APS`](../doc/APS_apple_synthesis.md) (short version) · and the three repositories added
+   since: [`MPS`](../doc/MPS_mediapipe_synthesis.md) · [`DHS`](../doc/DHS_depthai_synthesis.md) ·
+   [`OPS`](../doc/OPS_openpose_synthesis.md)
 5. **CONTEXT → competition information**
    [`JCR`](JCR_judging_criteria.md) — judging criteria and deliverables ·
    [`TRN`](../doc/TRN_training_synthesis.md) — all six training decks
@@ -127,6 +129,13 @@ only.
    [`RIX_S4`](../ref_index.md#4-markdown-formatting-rules): bold title, collapsible `# METADATA`,
    numbered `#`-level sections. Body wording unchanged.
 2. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Applied the revised [`RIX_S4.4`](../#44-vertical-spacing) heading spacing and the
-   [`RIX_S4.5`](../#45-tables-and-numbered-lists) table-versus-numbered-list rule: tables whose rows exceeded 100
-   characters became numbered lists.
+   *Change:* Applied the revised [`RIX_S4.4`](../ref_index.md#44-vertical-spacing) heading spacing
+   and the [`RIX_S4.5`](../ref_index.md#45-tables-and-numbered-lists) table-versus-numbered-list
+   rule: tables whose rows exceeded 100 characters became numbered lists.
+3. **2026-08-30** · *Author:* Claude (Opus 5)
+   *Change:* Cross-references only. *RESEARCH AREAS → 1. Read apple repo* now points at
+   [`APR`](../ref_repo/apple/APR_apple_report.md) and [`APS`](../doc/APS_apple_synthesis.md) after
+   the Apple documents moved and were recoded, and additionally at the three reference
+   repositories added since — [`MPS`](../doc/MPS_mediapipe_synthesis.md),
+   [`DHS`](../doc/DHS_depthai_synthesis.md), [`OPS`](../doc/OPS_openpose_synthesis.md). Body
+   wording unchanged.

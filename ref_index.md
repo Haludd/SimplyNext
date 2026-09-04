@@ -12,7 +12,7 @@
 | :---------------------- | :--------------------------------------------------------- |
 | **Code**                | `RIX`                                                      |
 | **Status**              | Live                                                       |
-| **Last reviewed**       | 2026-08-30                                                 |
+| **Last reviewed**       | 2026-09-04                                                 |
 | **Source of truth for** | Document locations, addressing scheme, markdown formatting |
 | **Related**             | [`CLD`](CLAUDE.md) · [`RDM`](README.md)                    |
 
@@ -97,26 +97,64 @@ reader to locate the exact paragraph: open the file the code names, then search 
 **synthesis** in `doc/`. The reports live inside `ref_repo/` and are the only files there that
 version control tracks — [`RIX_S5.2`](#52-what-version-control-tracks).
 
-9.  **`APR`** — `ref_repo/apple/APR_apple_report.md` · *Status:* Live
+The repositories are grouped by the problem they address: **`ref_repo/tracking/`** for
+perception — finding and following the body — and **`ref_repo/translation/`** for turning what was
+tracked into language, and back. Items 9–16 are the tracking set; items 17–28 the translation set.
+
+9.  **`APR`** — `ref_repo/tracking/apple/APR_apple_report.md` · *Status:* Live
     *Contents:* Full technical report on the Apple `HandPose` clone
     *SoT for:* Apple repository analysis
 10. **`APS`** — `doc/APS_apple_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the Apple repository; defers to `APR`
-11. **`MPR`** — `ref_repo/google-mediapipe/MPR_mediapipe_report.md` · *Status:* Live
+11. **`MPR`** — `ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md` · *Status:* Live
     *Contents:* Full technical report on MediaPipe, focused on the Hand Landmarker task
     *SoT for:* MediaPipe repository analysis
 12. **`MPS`** — `doc/MPS_mediapipe_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of MediaPipe; defers to `MPR`
-13. **`DHR`** — `ref_repo/depthai-hand-tracker/DHR_depthai_report.md` · *Status:* Live
+13. **`DHR`** — `ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md` · *Status:* Live
     *Contents:* Full technical report on the DepthAI hand tracker
     *SoT for:* DepthAI repository analysis
 14. **`DHS`** — `doc/DHS_depthai_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the DepthAI hand tracker; defers to `DHR`
-15. **`OPR`** — `ref_repo/openpose/OPR_openpose_report.md` · *Status:* Live
+15. **`OPR`** — `ref_repo/tracking/openpose/OPR_openpose_report.md` · *Status:* Live
     *Contents:* Full technical report on OpenPose, including the licence analysis
     *SoT for:* OpenPose repository analysis
 16. **`OPS`** — `doc/OPS_openpose_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of OpenPose and the record of its rejection; defers to `OPR`
+17. **`SLR`** — `ref_repo/translation/slrt/SLR_slrt_report.md` · *Status:* Live
+    *Contents:* Full technical report on `FangyunWei/SLRT` — six papers on recognition and
+    translation
+    *SoT for:* SLRT repository analysis
+18. **`SLS`** — `doc/SLS_slrt_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of SLRT and the numbers it supplies; defers to `SLR`
+19. **`SAR`** — `ref_repo/translation/sam-slr/SAR_sam_slr_report.md` · *Status:* Live
+    *Contents:* Full technical report on SAM-SLR, including the licence contradiction
+    *SoT for:* SAM-SLR repository analysis
+20. **`SAS`** — `doc/SAS_sam_slr_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of SAM-SLR and its two decisive tables; defers to `SAR`
+21. **`SPR`** — `ref_repo/translation/sign-pose/SPR_sign_pose_report.md` · *Status:* Live
+    *Contents:* Full technical report on `pose-format`, including the MediaPipe collision
+    *SoT for:* `pose-format` repository analysis
+22. **`SPS`** — `doc/SPS_sign_pose_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of `pose-format`; defers to `SPR`
+23. **`SSR`** — `ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md` ·
+    *Status:* Live
+    *Contents:* Full technical report on the spoken-to-signed pipeline
+    *SoT for:* Spoken-to-signed repository analysis; **the reverse translation direction**
+24. **`SSS`** — `doc/SSS_spoken_to_signed_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of the spoken-to-signed pipeline; defers to `SSR`
+25. **`LTR`** — `ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md` ·
+    *Status:* Live
+    *Contents:* Full report on the sign language processing survey and its 49-dataset registry
+    *SoT for:* **The field's published state, and what data exists**
+26. **`LTS`** — `doc/LTS_signlang_literature_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of the survey and the facts it settles; defers to `LTR`
+27. **`STR`** — `ref_repo/translation/sign-translator/STR_sign_translator_report.md` ·
+    *Status:* Live
+    *Contents:* Full technical report on `sign-language-translator`, including the Tasks-API example
+    *SoT for:* `sign-language-translator` repository analysis
+28. **`STS`** — `doc/STS_sign_translator_synthesis.md` · *Status:* Live
+    *Contents:* Short synthesis of `sign-language-translator`; defers to `STR`
 
 
 
@@ -175,28 +213,70 @@ Read-only originals. Reference a slide as `<code>_p<slide>`, for example `D3_p39
    *Contents:* AWS registration, 2FA, sandbox lease, **budget caps**
    *Synthesised in:* [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget)
 7.  **`RAP`**
-    *File:* `ref_repo/apple/handpose/` at `ec30ff6`
+    *File:* `ref_repo/tracking/apple/handpose/` at `ec30ff6`
     *Contents:* Apple `HandPose` sample code (Swift, WWDC20)
-    *Documented in:* [`APR`](ref_repo/apple/APR_apple_report.md) ·
+    *Documented in:* [`APR`](ref_repo/tracking/apple/APR_apple_report.md) ·
     [`APS`](doc/APS_apple_synthesis.md)
 8.  **`RMP`**
-    *File:* `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96`
+    *File:* `ref_repo/tracking/google-mediapipe/mediapipe/` at `251c0cb96`
     *Contents:* Google MediaPipe — the framework and the Tasks API. **A dependency, not just a
     reference**
-    *Documented in:* [`MPR`](ref_repo/google-mediapipe/MPR_mediapipe_report.md) ·
+    *Documented in:* [`MPR`](ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md) ·
     [`MPS`](doc/MPS_mediapipe_synthesis.md)
 9.  **`RDH`**
-    *File:* `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` at `9773123`
+    *File:* `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/` at `9773123`
     *Contents:* `geaxgx/depthai_hand_tracker` — MediaPipe's hand models on Luxonis OAK hardware,
     with the pipeline re-implemented in NumPy
-    *Documented in:* [`DHR`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md) ·
+    *Documented in:* [`DHR`](ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md) ·
     [`DHS`](doc/DHS_depthai_synthesis.md)
 10. **`ROP`**
-    *File:* `ref_repo/openpose/openpose/` at `5c5d965`
+    *File:* `ref_repo/tracking/openpose/openpose/` at `5c5d965`
     *Contents:* CMU OpenPose. ⚠ **Non-commercial licence** — read
-    [`OPR_S2.2`](ref_repo/openpose/OPR_openpose_report.md#22-licence) before touching it
-    *Documented in:* [`OPR`](ref_repo/openpose/OPR_openpose_report.md) ·
+    [`OPR_S2.2`](ref_repo/tracking/openpose/OPR_openpose_report.md#22-licence) before touching it
+    *Documented in:* [`OPR`](ref_repo/tracking/openpose/OPR_openpose_report.md) ·
     [`OPS`](doc/OPS_openpose_synthesis.md)
+11. **`RSL`**
+    *File:* `ref_repo/translation/slrt/SLRT/` at `38a4f7b`
+    *Contents:* `FangyunWei/SLRT` — six published papers on sign language recognition and
+    translation. ⚠ **No licence file** — read
+    [`SLR_S2.2`](ref_repo/translation/slrt/SLR_slrt_report.md#22-licence) before touching it
+    *Documented in:* [`SLR`](ref_repo/translation/slrt/SLR_slrt_report.md) ·
+    [`SLS`](doc/SLS_slrt_synthesis.md)
+12. **`RSA`**
+    *File:* `ref_repo/translation/sam-slr/CVPR21Chal-SLR/` at `de6c53a`
+    *Contents:* SAM-SLR, winner of the CVPR 2021 isolated-recognition challenge. ⚠ **Contradictory
+    licence, treated as non-commercial** —
+    [`SAR_S2.2`](ref_repo/translation/sam-slr/SAR_sam_slr_report.md#22-licence)
+    *Documented in:* [`SAR`](ref_repo/translation/sam-slr/SAR_sam_slr_report.md) ·
+    [`SAS`](doc/SAS_sam_slr_synthesis.md)
+13. **`RSP`**
+    *File:* `ref_repo/translation/sign-pose/pose/` at `7a36fcf`
+    *Contents:* `pose-format` — the field's pose container and manipulation library, MIT. **A
+    candidate dependency, not just a reference**
+    *Documented in:* [`SPR`](ref_repo/translation/sign-pose/SPR_sign_pose_report.md) ·
+    [`SPS`](doc/SPS_sign_pose_synthesis.md)
+14. **`RSS`**
+    *File:* `ref_repo/translation/spoken-to-signed/spoken-to-signed-translation/` at `259aacd`
+    *Contents:* ZurichNLP's `text-to-gloss-to-pose-to-video` pipeline, MIT. **A candidate
+    dependency — the reverse translation direction**
+    *Documented in:*
+    [`SSR`](ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md) ·
+    [`SSS`](doc/SSS_spoken_to_signed_synthesis.md)
+15. **`RLT`**
+    *File:* `ref_repo/translation/signlang-literature/sign-language-processing.github.io/` at
+    `af5fb4a`
+    *Contents:* The sign language processing survey, bibliography and 49-dataset registry, CC BY
+    4.0. ⚠ **A survey, not a primary source**
+    *Documented in:*
+    [`LTR`](ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md) ·
+    [`LTS`](doc/LTS_signlang_literature_synthesis.md)
+16. **`RST`**
+    *File:* `ref_repo/translation/sign-translator/sign-language-translator/` at `cca5f3a`
+    *Contents:* `sign-language-translator` — an Apache 2.0 framework for building a translator for
+    a sign language with no data. ⚠ The sign-to-text direction is **not implemented**
+    *Documented in:*
+    [`STR`](ref_repo/translation/sign-translator/STR_sign_translator_report.md) ·
+    [`STS`](doc/STS_sign_translator_synthesis.md)
 
 > **Note:** the clones themselves are **excluded from version control** —
 > [`RIX_S5.2`](#52-what-version-control-tracks). A teammate obtains them by cloning from the
@@ -210,10 +290,10 @@ All retired on **2026-08-30**, in the change that registered the three new refer
 repositories.
 
 1. **`APL`** — `doc/APL_apple_ref_report.md`
-   *Reason:* Recoded `APR` and moved to `ref_repo/apple/`, beside the clone it describes
-2. **`SYN`** — `ref_repo/apple/SYN_apple_synthesis.md`
+   *Reason:* Recoded `APR` and moved to `ref_repo/tracking/apple/`, beside the clone it describes
+2. **`SYN`** — `ref_repo/tracking/apple/SYN_apple_synthesis.md`
    *Reason:* Recoded `APS` and moved to `doc/`, alongside the other syntheses
-3. **`REF`** — `ref_repo/apple/`
+3. **`REF`** — `ref_repo/tracking/apple/`
    *Reason:* One source code per repository is now required: `RAP`, `RMP`, `RDH`, `ROP`
 
 ---
@@ -227,12 +307,13 @@ repositories.
 ```text
 <CODE>_S<section>[.<sub>[.<sub>]]
 
-APR_S4        → ref_repo/apple/APR_apple_report.md, section 4
+APR_S4        → ref_repo/tracking/apple/APR_apple_report.md, section 4
 APR_S4.2      → ... section 4.2
 RSK_S3.1      → plan/RSK_risk_register.md, section 3.1
 D3_p39        → doc/[D3]_..., slide 39        (source PDFs use page addresses)
 RAP:HandPose/CameraViewController.swift:212   (a line in a reference repository, relative
 RMP:mediapipe/tasks/python/vision/hand_landmarker.py:311        to that clone's own root)
+RSP:src/python/pose_format/pose.py:104
 ```
 
 Risk items carry their own stable IDs on top of the section address — see
@@ -283,7 +364,9 @@ address still resolves by search.
 
 ## 3.5. Repository Document Codes
 Every repository in `ref_repo/` carries three codes, built from a two-letter repository tag plus
-one role letter. The pattern is fixed so that a fifth repository needs no discussion.
+one role letter. The pattern is fixed so that an eleventh repository needs no discussion.
+
+**Tracking** — `ref_repo/tracking/`:
 
 | Repository           | Tag  | Source | Report | Synthesis |
 | :------------------- | :--- | :----- | :----- | :-------- |
@@ -292,10 +375,26 @@ one role letter. The pattern is fixed so that a fifth repository needs no discus
 | DepthAI hand tracker | `DH` | `RDH`  | `DHR`  | `DHS`     |
 | CMU OpenPose         | `OP` | `ROP`  | `OPR`  | `OPS`     |
 
+**Translation** — `ref_repo/translation/`:
+
+| Repository                 | Tag  | Source | Report | Synthesis |
+| :------------------------- | :--- | :----- | :----- | :-------- |
+| FangyunWei SLRT            | `SL` | `RSL`  | `SLR`  | `SLS`     |
+| SAM-SLR                    | `SA` | `RSA`  | `SAR`  | `SAS`     |
+| `pose-format`              | `SP` | `RSP`  | `SPR`  | `SPS`     |
+| Spoken-to-signed           | `SS` | `RSS`  | `SSR`  | `SSS`     |
+| SLP literature survey      | `LT` | `RLT`  | `LTR`  | `LTS`     |
+| `sign-language-translator` | `ST` | `RST`  | `STR`  | `STS`     |
+
 1. **`R` + tag** — the **source clone** itself, registered in
    [`RIX_S2.3`](#23-source-material). Not a document
-2. **tag + `R`** — the **full report**, in `ref_repo/<slug>/`, beside the clone it describes
+2. **tag + `R`** — the **full report**, in `ref_repo/<track>/<slug>/`, beside the clone it
+   describes
 3. **tag + `S`** — the **synthesis**, in `doc/`, alongside the other syntheses
+
+> **Note — `SLR` is a document code, not the field term.** *SLR* also abbreviates *sign language
+> recognition* throughout the literature these documents discuss. Document codes are always written
+> in backticks; the field term never is.
 
 Reports hold the depth: file-by-file analysis, line citations, port tables. Syntheses hold the
 five-minute orientation. Where a report and its synthesis disagree, **the report wins**, and each
@@ -513,29 +612,61 @@ SimplyNext/
 ├── doc/                                  reference material and syntheses
 │   ├── [D1..D6]*.pdf                     original training decks (read-only)
 │   ├── TRN_training_synthesis.md         TRN
-│   ├── APS_apple_synthesis.md            APS
-│   ├── MPS_mediapipe_synthesis.md        MPS
-│   ├── DHS_depthai_synthesis.md          DHS
-│   └── OPS_openpose_synthesis.md         OPS
+│   ├── APS_apple_synthesis.md            APS  ┐
+│   ├── MPS_mediapipe_synthesis.md        MPS  │ tracking
+│   ├── DHS_depthai_synthesis.md          DHS  │
+│   ├── OPS_openpose_synthesis.md         OPS  ┘
+│   ├── SLS_slrt_synthesis.md             SLS  ┐
+│   ├── SAS_sam_slr_synthesis.md          SAS  │
+│   ├── SPS_sign_pose_synthesis.md        SPS  │ translation
+│   ├── SSS_spoken_to_signed_synthesis.md SSS  │
+│   ├── LTS_signlang_literature_synthesis.md  LTS │
+│   └── STS_sign_translator_synthesis.md  STS  ┘
 │
 └── ref_repo/                             tracked: the reports. ignored: the clones
-    ├── apple/
-    │   ├── APR_apple_report.md           APR   ← tracked
-    │   └── handpose/                     RAP   ← ignored
-    ├── google-mediapipe/
-    │   ├── MPR_mediapipe_report.md       MPR   ← tracked
-    │   └── mediapipe/                    RMP   ← ignored
-    ├── depthai-hand-tracker/
-    │   ├── DHR_depthai_report.md         DHR   ← tracked
-    │   └── depthai_hand_tracker/         RDH   ← ignored
-    └── openpose/
-        ├── OPR_openpose_report.md        OPR   ← tracked
-        └── openpose/                     ROP   ← ignored
+    ├── tracking/                         perception — finding and following the body
+    │   ├── apple/
+    │   │   ├── APR_apple_report.md               APR  ← tracked
+    │   │   └── handpose/                         RAP  ← ignored
+    │   ├── google-mediapipe/
+    │   │   ├── MPR_mediapipe_report.md           MPR  ← tracked
+    │   │   └── mediapipe/                        RMP  ← ignored
+    │   ├── depthai-hand-tracker/
+    │   │   ├── DHR_depthai_report.md             DHR  ← tracked
+    │   │   └── depthai_hand_tracker/             RDH  ← ignored
+    │   └── openpose/
+    │       ├── OPR_openpose_report.md            OPR  ← tracked
+    │       └── openpose/                         ROP  ← ignored
+    │
+    └── translation/                      turning what was tracked into language, and back
+        ├── slrt/
+        │   ├── SLR_slrt_report.md                SLR  ← tracked
+        │   └── SLRT/                             RSL  ← ignored
+        ├── sam-slr/
+        │   ├── SAR_sam_slr_report.md             SAR  ← tracked
+        │   └── CVPR21Chal-SLR/                   RSA  ← ignored
+        ├── sign-pose/
+        │   ├── SPR_sign_pose_report.md           SPR  ← tracked
+        │   └── pose/                             RSP  ← ignored
+        ├── spoken-to-signed/
+        │   ├── SSR_spoken_to_signed_report.md    SSR  ← tracked
+        │   └── spoken-to-signed-translation/     RSS  ← ignored
+        ├── signlang-literature/
+        │   ├── LTR_signlang_literature_report.md LTR  ← tracked
+        │   └── sign-language-processing.github.io/  RLT  ← ignored
+        └── sign-translator/
+            ├── STR_sign_translator_report.md     STR  ← tracked
+            └── sign-language-translator/         RST  ← ignored
 ```
 
 Each repository directory holds **exactly two entries**: the project's report, and the clone in a
 sub-directory of its own. The nesting is not decoration — a clone carries its own `.git`, and git
 refuses to track a file inside an embedded repository, so the report must sit one level above it.
+
+The **track** directory above it — `tracking/` or `translation/` — groups repositories by the
+problem they address. A report therefore sits at `ref_repo/<track>/<slug>/`, three levels below the
+repository root, which is what the un-ignore rule in
+[`RIX_S5.2`](#52-what-version-control-tracks) must match.
 
 
 
@@ -561,8 +692,9 @@ refuses to track a file inside an embedded repository, so the report must sit on
 ref_repo/**
 !ref_repo/
 !ref_repo/*/
-!ref_repo/*/[A-Z][A-Z][A-Z]_*.md
-ref_repo/*/*/
+!ref_repo/*/*/
+!ref_repo/*/*/[A-Z][A-Z][A-Z]_*.md
+ref_repo/*/*/*/
 ```
 
 The consequences, in order of how often they bite:
@@ -573,8 +705,12 @@ The consequences, in order of how often they bite:
    `ImportError`. Algorithms worth keeping are re-implemented, with attribution
 3. **A report must be named `<CODE>_<name>.md` at the top of its repository directory**, or the
    un-ignore rule will not match it and it will be silently untracked
-4. **A clone must live in its own sub-directory**, never directly in `ref_repo/<slug>/`
-5. **Model weights stay out.** `.gitignore` also excludes `*.tflite`, `*.task`, `*.blob`,
+4. **A clone must live in its own sub-directory**, never directly in `ref_repo/<track>/<slug>/`
+5. **The depth is fixed at `ref_repo/<track>/<slug>/`.** The un-ignore rules count directory
+   levels, so a repository added at the wrong depth — directly under `ref_repo/`, or one level
+   deeper — will have its report silently untracked and its clone silently committed. Adding a
+   third track means adding a `ref_repo/<track>/` directory, not changing the pattern
+6. **Model weights stay out.** `.gitignore` also excludes `*.tflite`, `*.task`, `*.blob`,
    `*.caffemodel` and similar, against the 5 GB submission limit — `CLD_S6` rule 5
 
 ---
@@ -604,3 +740,14 @@ The consequences, in order of how often they bite:
    clone they describe in `ref_repo/`; syntheses live in `doc/`. Added
    [`RIX_S5.2`](#52-what-version-control-tracks) for the `.gitignore` rules that exclude the clones
    while tracking the reports, and redrew the directory map.
+5. **2026-09-04** · *Author:* Claude (Opus 5)
+   *Change:* Regrouped `ref_repo/` into `tracking/` and `translation/`, repathing `APR`, `MPR`,
+   `DHR` and `OPR` and every reference to them. Registered the six translation repositories and
+   their twelve documents: `RSL`/`SLR`/`SLS`, `RSA`/`SAR`/`SAS`, `RSP`/`SPR`/`SPS`,
+   `RSS`/`SSR`/`SSS`, `RLT`/`LTR`/`LTS` and `RST`/`STR`/`STS`. Split
+   [`RIX_S3.5`](#35-repository-document-codes) into a table per track and noted the `SLR`
+   code/field-term collision. Redrew the directory map.
+   **Corrected [`RIX_S5.2`](#52-what-version-control-tracks):** the `ref_repo/**` block it
+   described was **never present in `.gitignore`**, and the four tracking clones were committed as
+   embedded-repository gitlinks. The block is now written, at the new three-level depth, and
+   consequence 5 records that the depth is load-bearing.

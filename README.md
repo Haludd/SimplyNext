@@ -151,13 +151,27 @@ SimplyNext/
 │   ├── APS_apple_synthesis.md       Apple HandPose, in short
 │   ├── MPS_mediapipe_synthesis.md   MediaPipe, in short  ← the dependency
 │   ├── DHS_depthai_synthesis.md     DepthAI hand tracker, in short
-│   └── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
+│   ├── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
+│   ├── SLS_slrt_synthesis.md        SLRT, in short  ← the published numbers
+│   ├── SAS_sam_slr_synthesis.md     SAM-SLR, in short
+│   ├── SPS_sign_pose_synthesis.md   pose-format, in short  ← a candidate dependency
+│   ├── SSS_spoken_to_signed_synthesis.md      the reverse direction, in short
+│   ├── LTS_signlang_literature_synthesis.md   the field survey, in short
+│   └── STS_sign_translator_synthesis.md       sign-language-translator, in short
 │
-└── ref_repo/                        four third-party clones. THE CLONES ARE GIT-IGNORED
-    ├── apple/APR_apple_report.md            tracked — Apple, in full
-    ├── google-mediapipe/MPR_mediapipe_report.md      tracked — MediaPipe, in full
-    ├── depthai-hand-tracker/DHR_depthai_report.md    tracked — DepthAI, in full
-    └── openpose/OPR_openpose_report.md               tracked — OpenPose, in full
+└── ref_repo/                        ten third-party clones. THE CLONES ARE GIT-IGNORED
+    ├── tracking/                    perception — finding and following the body
+    │   ├── apple/APR_apple_report.md                  tracked — Apple, in full
+    │   ├── google-mediapipe/MPR_mediapipe_report.md   tracked — MediaPipe, in full
+    │   ├── depthai-hand-tracker/DHR_depthai_report.md tracked — DepthAI, in full
+    │   └── openpose/OPR_openpose_report.md            tracked — OpenPose, in full
+    └── translation/                 language — sign to spoken, and back
+        ├── slrt/SLR_slrt_report.md                    tracked — SLRT, in full
+        ├── sam-slr/SAR_sam_slr_report.md              tracked — SAM-SLR, in full
+        ├── sign-pose/SPR_sign_pose_report.md          tracked — pose-format, in full
+        ├── spoken-to-signed/SSR_spoken_to_signed_report.md      tracked
+        ├── signlang-literature/LTR_signlang_literature_report.md tracked
+        └── sign-translator/STR_sign_translator_report.md        tracked
 ```
 
 `src/`, `tests/` and `data/` do not exist yet — see [`RDM_S9`](#9-project-status).
@@ -183,21 +197,25 @@ Full onboarding sequence for someone joining the team cold. Roughly two hours en
    *Purpose:* The ten risks that matter most
 6. **[`MPS`](doc/MPS_mediapipe_synthesis.md)** · *Time:* 5 min
    *Purpose:* The perception library the project depends on, and its four traps
-7. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
+7. **[`LTS`](doc/LTS_signlang_literature_synthesis.md)** · *Time:* 10 min
+   *Purpose:* What the field already knows, what data exists, and what does not
+8. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
    *Purpose:* The six training decks, condensed
-8. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
+9. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
    *Purpose:* Working rules
 
-Then the other three repository syntheses, 5 minutes each:
+Then the remaining repository syntheses, 5 minutes each. **Tracking:**
 [`APS`](doc/APS_apple_synthesis.md) for the segmentation state machine,
 [`DHS`](doc/DHS_depthai_synthesis.md) for the tracking fixes, and
-[`OPS`](doc/OPS_openpose_synthesis.md) for the rejected alternative.
+[`OPS`](doc/OPS_openpose_synthesis.md) for the rejected alternative. **Translation:**
+[`SLS`](doc/SLS_slrt_synthesis.md) for the published accuracy numbers,
+[`SAS`](doc/SAS_sam_slr_synthesis.md) for the landmark budget and the depth-camera answer,
+[`SPS`](doc/SPS_sign_pose_synthesis.md) for the pose library,
+[`SSS`](doc/SSS_spoken_to_signed_synthesis.md) for the reverse direction, and
+[`STS`](doc/STS_sign_translator_synthesis.md) for the correct MediaPipe Tasks setup.
 
-Deep dives, as needed: the four full reports in `ref_repo/` —
-[`APR`](ref_repo/apple/APR_apple_report.md),
-[`MPR`](ref_repo/google-mediapipe/MPR_mediapipe_report.md),
-[`DHR`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md),
-[`OPR`](ref_repo/openpose/OPR_openpose_report.md) — and the remainder of
+Deep dives, as needed: the ten full reports in `ref_repo/`, each beside the clone it describes —
+[`RIX_S2.1`](ref_index.md#21-live-documents) lists them — and the remainder of
 [`RSK`](plan/RSK_risk_register.md).
 
 ---
@@ -241,23 +259,44 @@ git clone <this-repo>
 cd SimplyNext
 ```
 
-**The four reference clones under `ref_repo/` are not in this repository.** `.gitignore` excludes
-them and tracks only the four report documents beside them —
+**The ten reference clones under `ref_repo/` are not in this repository.** `.gitignore` excludes
+them and tracks only the ten report documents beside them —
 [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks). To obtain one, clone it into the
 sub-directory the report's provenance section names:
 
 ```bash
-# MediaPipe    -> ref_repo/google-mediapipe/mediapipe
-# DepthAI      -> ref_repo/depthai-hand-tracker/depthai_hand_tracker
-# OpenPose     -> ref_repo/openpose/openpose
-git clone https://github.com/google-ai-edge/mediapipe.git
-git clone https://github.com/geaxgx/depthai_hand_tracker.git
-git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git
+# tracking/
+git clone https://github.com/google-ai-edge/mediapipe.git \
+    ref_repo/tracking/google-mediapipe/mediapipe
+git clone https://github.com/geaxgx/depthai_hand_tracker.git \
+    ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker
+git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git \
+    ref_repo/tracking/openpose/openpose
+
+# translation/
+git clone https://github.com/FangyunWei/SLRT.git \
+    ref_repo/translation/slrt/SLRT
+git clone https://github.com/jackyjsy/CVPR21Chal-SLR.git \
+    ref_repo/translation/sam-slr/CVPR21Chal-SLR
+git clone https://github.com/sign-language-processing/pose.git \
+    ref_repo/translation/sign-pose/pose
+git clone https://github.com/sign-language-processing/spoken-to-signed-translation.git \
+    ref_repo/translation/spoken-to-signed/spoken-to-signed-translation
+git clone https://github.com/sign-language-processing/sign-language-processing.github.io.git \
+    ref_repo/translation/signlang-literature/sign-language-processing.github.io
+git clone https://github.com/sign-language-translator/sign-language-translator.git \
+    ref_repo/translation/sign-translator/sign-language-translator
 ```
 
-None of them is part of the build, and **nothing in `src/` may import from `ref_repo/`**. The
-Apple sample is Swift; OpenPose is licensed for non-commercial research only —
-[`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence).
+None of them is part of the build, and **nothing in `src/` may import from `ref_repo/`**.
+
+> **Warning — three of the ten may not be shipped.** OpenPose is licensed for non-commercial
+> research only ([`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence)); SLRT carries **no
+> licence file at all** ([`SLS_S2`](doc/SLS_slrt_synthesis.md#2-why-it-cannot-be-used)); and
+> SAM-SLR's licence is self-contradictory and is treated as non-commercial
+> ([`SAS_S2`](doc/SAS_sam_slr_synthesis.md#2-the-licence-contradiction)). They are cited, never
+> used. `pose-format` (MIT), spoken-to-signed (MIT) and `sign-language-translator` (Apache 2.0)
+> are candidate dependencies; the Apple sample is Swift and ships nothing either way.
 
 
 
@@ -473,18 +512,33 @@ plan.
 8.  **`TRN`**
     `doc/TRN_training_synthesis.md`
 9.  **`APR` / `APS`**
-    `ref_repo/apple/APR_apple_report.md` · `doc/APS_apple_synthesis.md`
+    `ref_repo/tracking/apple/APR_apple_report.md` · `doc/APS_apple_synthesis.md`
 10. **`MPR` / `MPS`**
-    `ref_repo/google-mediapipe/MPR_mediapipe_report.md` · `doc/MPS_mediapipe_synthesis.md`
+    `ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md` · `doc/MPS_mediapipe_synthesis.md`
 11. **`DHR` / `DHS`**
-    `ref_repo/depthai-hand-tracker/DHR_depthai_report.md` · `doc/DHS_depthai_synthesis.md`
+    `ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md` · `doc/DHS_depthai_synthesis.md`
 12. **`OPR` / `OPS`**
-    `ref_repo/openpose/OPR_openpose_report.md` · `doc/OPS_openpose_synthesis.md`
-13. **`RAP` `RMP` `RDH` `ROP`**
-    The four clones themselves, git-ignored — [`RIX_S2.3`](ref_index.md#23-source-material)
-14. **`D1`–`D6`**
+    `ref_repo/tracking/openpose/OPR_openpose_report.md` · `doc/OPS_openpose_synthesis.md`
+13. **`SLR` / `SLS`**
+    `ref_repo/translation/slrt/SLR_slrt_report.md` · `doc/SLS_slrt_synthesis.md`
+14. **`SAR` / `SAS`**
+    `ref_repo/translation/sam-slr/SAR_sam_slr_report.md` · `doc/SAS_sam_slr_synthesis.md`
+15. **`SPR` / `SPS`**
+    `ref_repo/translation/sign-pose/SPR_sign_pose_report.md` · `doc/SPS_sign_pose_synthesis.md`
+16. **`SSR` / `SSS`**
+    `ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md` ·
+    `doc/SSS_spoken_to_signed_synthesis.md`
+17. **`LTR` / `LTS`**
+    `ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md` ·
+    `doc/LTS_signlang_literature_synthesis.md`
+18. **`STR` / `STS`**
+    `ref_repo/translation/sign-translator/STR_sign_translator_report.md` ·
+    `doc/STS_sign_translator_synthesis.md`
+19. **`RAP` `RMP` `RDH` `ROP` `RSL` `RSA` `RSP` `RSS` `RLT` `RST`**
+    The ten clones themselves, git-ignored — [`RIX_S2.3`](ref_index.md#23-source-material)
+20. **`D1`–`D6`**
     The six training PDFs in `doc/`
-15. **`PLN` `TDO` `EVL` `DEC`**
+21. **`PLN` `TDO` `EVL` `DEC`**
     Reserved, not yet written — [`RIX_S2.2`](ref_index.md#22-planned-documents)
 
 The repository-code pattern — tag + `R` for a report, tag + `S` for a synthesis — is in
@@ -529,15 +583,38 @@ The repository-code pattern — tag + `R` for a report, tag + `S` for a synthesi
 
 # 11. CREDITS AND SOURCES
 - Training material © 2026 SimplifyNext — `doc/[D1]`–`doc/[D6]`.
-- `ref_repo/apple/handpose/` is Apple Inc.'s *Detecting Hand Poses with Vision* sample (WWDC20
-  session 10653), under Apple's sample-code licence. Ideas are ported; code is not —
-  [`APR_S2.2`](ref_repo/apple/APR_apple_report.md#22-licence).
-- `ref_repo/google-mediapipe/mediapipe/` is Google's MediaPipe, Apache 2.0 —
-  [`MPR_S2.2`](ref_repo/google-mediapipe/MPR_mediapipe_report.md#22-licence).
-- `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` is `geaxgx/depthai_hand_tracker`, MIT —
-  [`DHR_S2.2`](ref_repo/depthai-hand-tracker/DHR_depthai_report.md#22-licence).
-- `ref_repo/openpose/openpose/` is CMU's OpenPose, **licensed for non-commercial academic research
-  only**. Cited, never used — [`OPR_S2.2`](ref_repo/openpose/OPR_openpose_report.md#22-licence).
+**Tracking:**
+
+- `ref_repo/tracking/apple/handpose/` is Apple Inc.'s *Detecting Hand Poses with Vision* sample
+  (WWDC20) — [`APR_S2.2`](ref_repo/tracking/apple/APR_apple_report.md#22-licence).
+- `ref_repo/tracking/google-mediapipe/mediapipe/` is Google's MediaPipe, Apache 2.0 —
+  [`MPR_S2.2`](ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#22-licence).
+- `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/` is `geaxgx/depthai_hand_tracker`,
+  MIT — [`DHR_S2.2`](ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md#22-licence).
+- `ref_repo/tracking/openpose/openpose/` is CMU's OpenPose, **licensed for non-commercial academic
+  research only**. Cited, never used —
+  [`OPR_S2.2`](ref_repo/tracking/openpose/OPR_openpose_report.md#22-licence).
+
+**Translation:**
+
+- `ref_repo/translation/slrt/SLRT/` is `FangyunWei/SLRT`. ⚠ **It carries no licence file**, so no
+  permission to copy exists. Cited, never used —
+  [`SLR_S2.2`](ref_repo/translation/slrt/SLR_slrt_report.md#22-licence).
+- `ref_repo/translation/sam-slr/CVPR21Chal-SLR/` is SAM-SLR. ⚠ **Its licence is
+  self-contradictory** — CC0 in the file, non-commercial in the README, CC BY-NC 4.0 over
+  `SL-GCN/` — and is treated as non-commercial. Cited, never used —
+  [`SAR_S2.2`](ref_repo/translation/sam-slr/SAR_sam_slr_report.md#22-licence).
+- `ref_repo/translation/sign-pose/pose/` is `pose-format`, MIT —
+  [`SPR_S2.2`](ref_repo/translation/sign-pose/SPR_sign_pose_report.md#22-licence).
+- `ref_repo/translation/spoken-to-signed/spoken-to-signed-translation/` is ZurichNLP's pipeline,
+  MIT —
+  [`SSR_S2.2`](ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md#22-licence).
+- `ref_repo/translation/signlang-literature/sign-language-processing.github.io/` is the sign
+  language processing survey, CC BY 4.0 —
+  [`LTR_S2.2`](ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md#22-licence).
+- `ref_repo/translation/sign-translator/sign-language-translator/` is
+  `sign-language-translator`, Apache 2.0 —
+  [`STR_S2.2`](ref_repo/translation/sign-translator/STR_sign_translator_report.md#22-licence).
 - Singapore Sign Language and interpreter figures: The Singapore Association for the Deaf,
   https://sadeaf.org.sg/.
 - Hearing-loss figures: World Health Organization, *Deafness and hearing loss* fact sheet,

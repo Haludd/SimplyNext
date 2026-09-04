@@ -42,3 +42,14 @@ data/interim/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ─── REFERENCE CLONES — see RIX_S5.2 and CLD_S6 rules 6 and 7 ───────────────
+# Exclude everything under ref_repo/, then re-admit only the report documents.
+# Reports sit at ref_repo/<track>/<slug>/<CODE>_<name>.md — three levels deep,
+# because the clones were regrouped into tracking/ and translation/.
+ref_repo/**
+!ref_repo/
+!ref_repo/*/
+!ref_repo/*/*/
+!ref_repo/*/*/[A-Z][A-Z][A-Z]_*.md
+ref_repo/*/*/*/

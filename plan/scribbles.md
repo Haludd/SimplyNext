@@ -34,7 +34,7 @@ maintained; the wording may not be changed — [`CLD_S3.4`](../CLAUDE.md#34-do-n
    [`ARC_S5.4`](ARC_architecture.md#54-corrections-to-scr--issues) — "training an LLM" is
    **rejected** as a premise, and "memory loss during training" is a category error
 4. **RESEARCH AREAS → 1. Read apple repo**
-   [`APR`](../ref_repo/apple/APR_apple_report.md) (full) ·
+   [`APR`](../ref_repo/tracking/apple/APR_apple_report.md) (full) ·
    [`APS`](../doc/APS_apple_synthesis.md) (short version) · and the three repositories added
    since: [`MPS`](../doc/MPS_mediapipe_synthesis.md) · [`DHS`](../doc/DHS_depthai_synthesis.md) ·
    [`OPS`](../doc/OPS_openpose_synthesis.md)
@@ -134,7 +134,7 @@ only.
    rule: tables whose rows exceeded 100 characters became numbered lists.
 3. **2026-08-30** · *Author:* Claude (Opus 5)
    *Change:* Cross-references only. *RESEARCH AREAS → 1. Read apple repo* now points at
-   [`APR`](../ref_repo/apple/APR_apple_report.md) and [`APS`](../doc/APS_apple_synthesis.md) after
+   [`APR`](../ref_repo/tracking/apple/APR_apple_report.md) and [`APS`](../doc/APS_apple_synthesis.md) after
    the Apple documents moved and were recoded, and additionally at the three reference
    repositories added since — [`MPS`](../doc/MPS_mediapipe_synthesis.md),
    [`DHS`](../doc/DHS_depthai_synthesis.md), [`OPS`](../doc/OPS_openpose_synthesis.md). Body

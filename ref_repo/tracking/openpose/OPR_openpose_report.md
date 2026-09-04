@@ -14,8 +14,8 @@
 | **Status**              | Live                                               |
 | **Last reviewed**       | 2026-08-30                                         |
 | **Source of truth for** | Analysis of the OpenPose reference clone           |
-| **Parent**              | [`RIX_S2.1`](../../ref_index.md#21-live-documents) |
-| **Short version**       | [`OPS`](../../doc/OPS_openpose_synthesis.md)       |
+| **Parent**              | [`RIX_S2.1`](../../../ref_index.md#21-live-documents) |
+| **Short version**       | [`OPS`](../../../doc/OPS_openpose_synthesis.md)       |
 | **Subject**             | `ROP` — `openpose/openpose/` at `5c5d965`          |
 
 **For the team.** CMU's OpenPose: the first real-time multi-person whole-body keypoint system, and
@@ -29,8 +29,8 @@ what is worth learning from it anyway, chiefly the part-affinity-field idea in
 
 **For the assistant.** Do not describe OpenPose as an option under consideration. The licence
 question is settled and must be stated plainly wherever it comes up —
-[`CLD_S5.2`](../../CLAUDE.md#52-honesty-about-the-product). Nothing inside
-`ref_repo/openpose/openpose/` may be edited; it is an unmodified clone, excluded from version
+[`CLD_S5.2`](../../../CLAUDE.md#52-honesty-about-the-product). Nothing inside
+`ref_repo/tracking/openpose/openpose/` may be edited; it is an unmodified clone, excluded from version
 control.
 
 </details>
@@ -43,7 +43,7 @@ control.
 
 # 1. EXECUTIVE SUMMARY
 ## 1.1. What This Repository Is
-`ref_repo/openpose/openpose/` is **CMU-Perceptual-Computing-Lab/openpose**, described by its own
+`ref_repo/tracking/openpose/openpose/` is **CMU-Perceptual-Computing-Lab/openpose**, described by its own
 README as *"the first real-time multi-person system to jointly detect human body, hand, facial,
 and foot keypoints (in total 135 keypoints) on single images"* `[S1]`. It is a C++ library built on
 Caffe, authored at Carnegie Mellon University's Perceptual Computing Lab.
@@ -52,7 +52,7 @@ The published record is strong: the core method is *OpenPose: Realtime Multi-Per
 Estimation using Part Affinity Fields*, **IEEE TPAMI 2019**, with the hand detector from *Hand
 Keypoint Detection in Single Images using Multiview Bootstrapping*, **CVPR 2017** `[S1]`. These are
 peer-reviewed venues, which makes OpenPose the most citable thing in `ref_repo/` by a wide margin
-— see [`CLD_S5.1`](../../CLAUDE.md#51-evidence).
+— see [`CLD_S5.1`](../../../CLAUDE.md#51-evidence).
 
 **Output per person:** 25 body/foot keypoints (`BODY_25`), 2 × 21 hand keypoints, 70 face
 keypoints.
@@ -65,7 +65,7 @@ It matters as **evidence and as a rejected alternative**, not as a dependency.
 
 1. **As the honest comparison** · *Use:* `D3_p7` requires looking at *"what the existing tools
    still leave undone"*, and
-   [`JCR_S2.2`](../../plan/JCR_judging_criteria.md#22-c2--original--innovative-idea-20) scores
+   [`JCR_S2.2`](../../../plan/JCR_judging_criteria.md#22-c2--original--innovative-idea-20) scores
    originality against existing solutions. OpenPose is the strongest existing whole-body
    keypoint system, and the submission is better for having read it rather than ignored it
 2. **As citable evidence** · *Use:* TPAMI 2019 and CVPR 2017 are peer-reviewed. Where the project
@@ -78,7 +78,7 @@ It matters as **evidence and as a rejected alternative**, not as a dependency.
    keypoints without regard for the hardware budget" looks like. `RMP` is what the same problem
    looks like when a phone must run it
 
-Against the four MVP steps in [`SCR`](../../plan/scribbles.md):
+Against the four MVP steps in [`SCR`](../../../plan/scribbles.md):
 
 1. **1. Isolate the subject** — solved *better than any other repository here*: genuine
    multi-person, with runtime **invariant to the number of people** for the body model
@@ -198,7 +198,7 @@ toolchain, inside a four-day window, on the day of a demo.
 
 # 3. REPOSITORY MAP
 ```text
-ref_repo/openpose/
+ref_repo/tracking/openpose/
 ├── OPR_openpose_report.md                       — this document (tracked in git)
 └── openpose/                                    — the clone (git-ignored)
     ├── include/openpose/            193 headers   The public C++ API
@@ -258,8 +258,8 @@ matching over those scores assembles the skeletons.
 > is defined relative to *one* signer's body, and `RMP`'s `HolisticLandmarker` already binds hands
 > to a body for a single person. Part affinity fields matter only if the project ever needs to
 > attribute hands to the correct person among several — which is
-> [`RSK_S5`](../../plan/RSK_risk_register.md#5-multi-person-and-conversation), and which
-> [`ARC_S2.2`](../../plan/ARC_architecture.md#22-recommended-build) deliberately defers.
+> [`RSK_S5`](../../../plan/RSK_risk_register.md#5-multi-person-and-conversation), and which
+> [`ARC_S2.2`](../../../plan/ARC_architecture.md#22-recommended-build) deliberately defers.
 
 ---
 
@@ -310,7 +310,7 @@ labelling another image.
 The README notes the face detector *"was trained using the same procedure"*.
 
 > **Decision support — this is the most transferable idea in the repository, and it is about
-> data.** [`ARC_S9.1`](../../plan/ARC_architecture.md#91-open-questions-for-the-team) open question
+> data.** [`ARC_S9.1`](../../../plan/ARC_architecture.md#91-open-questions-for-the-team) open question
 > 4 asks how the project gets training data. Multiview bootstrapping is the published answer to
 > *"how do you label hand keypoints at scale without labelling hand keypoints at scale"*, and its
 > principle — **use geometric consistency across views as a free supervisor** — survives without
@@ -339,7 +339,7 @@ From `include/openpose/flags.hpp:154–162`:
 > six scales, meaning the hand network runs six times per hand per frame. At default settings the
 > published quality is not what is being measured. This is the kind of detail that separates a
 > quoted benchmark number from an observed one, and it is exactly what
-> [`JCR_S4.4`](../../plan/JCR_judging_criteria.md#44-five-pressure-test-questions) asks for.
+> [`JCR_S4.4`](../../../plan/JCR_judging_criteria.md#44-five-pressure-test-questions) asks for.
 
 **Output format** (`doc/02_output.md`): JSON per frame, with `pose_keypoints_2d`,
 `face_keypoints_2d`, `hand_left_keypoints_2d` and `hand_right_keypoints_2d`, each a flat array of
@@ -350,7 +350,7 @@ From `include/openpose/flags.hpp:154–162`:
 > alongside every coordinate, and `--hand_render_threshold` is applied at render time rather than
 > at detection time. It is a defensible design — keep the data, decide later — and it is the
 > opposite of the gate-and-drop rule that
-> [`ARC_S9`](../../plan/ARC_architecture.md#9-decisions) decision 8 adopts. Both are coherent; the
+> [`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions) decision 8 adopts. Both are coherent; the
 > project chooses gating because a downstream LLM must never receive a low-confidence value it can
 > render fluent.
 
@@ -392,11 +392,11 @@ The optimisation advice is all GPU-shaped: enable OpenGL rendering, use cuDNN 5.
 *"cuDNN 6 is ~10% slower"*, reduce `--net_resolution` to 320×176 at a cost in accuracy, enable AVX.
 
 > **Warning — this is the second, independent disqualification.** The product promise in
-> [`SCR`](../../plan/scribbles.md) is *any device with a camera*, and
-> [`JCR_S2.1`](../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20)
+> [`SCR`](../../../plan/scribbles.md) is *any device with a camera*, and
+> [`JCR_S2.1`](../../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20)
 > pays for *"scalable or easily adopted"*. A system needing a CUDA GPU to reach interactive frame
 > rates fails that clause as surely as a depth camera does — see
-> [`ARC_S7.4`](../../plan/ARC_architecture.md#75-p4p5--depth-and-glasses-as-roadmap-items). Even if
+> [`ARC_S7.4`](../../../plan/ARC_architecture.md#75-p4p5--depth-and-glasses-as-roadmap-items). Even if
 > the licence permitted use, this would.
 
 For calibration: `RMP` reaches video rate on a CPU with no GPU at all, using two small models and
@@ -446,7 +446,7 @@ bin\OpenPoseDemo.exe --video examples\media\video.avi --hand --write_json output
 > **Placeholder — a side-by-side landmark comparison.**
 > **Missing:** whether OpenPose's 21 hand keypoints and MediaPipe's 21 hand landmarks agree on
 > the same recorded clip, and where they diverge. This would be genuine evidence for
-> [`JCR_S5`](../../plan/JCR_judging_criteria.md#5-evaluation-and-metrics) and costs one afternoon
+> [`JCR_S5`](../../../plan/JCR_judging_criteria.md#5-evaluation-and-metrics) and costs one afternoon
 > on a GPU machine.
 > **Update trigger:** access to a machine with an Nvidia GPU, and a decision that the comparison is
 > worth the time.
@@ -481,11 +481,11 @@ that publishes its own worst number is trusted on its best.
 1. **The citations** · *Take:* TPAMI 2019, CVPR 2017 · *Where:* `ARC` and `EVL` sources; the
    positioning slide
 2. **The comparison** · *Take:* Why a bottom-up multi-person GPU system was not chosen ·
-   *Where:* [`ARC_S7.2`](../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
+   *Where:* [`ARC_S7.2`](../../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
 3. **The cropping guidance** · *Take:* 10–20% margin, real background · *Where:* Data recording
    protocol in `EVL`
 4. **The bootstrapping principle** · *Take:* ⚠ As a research direction to evaluate, not a plan ·
-   *Where:* [`ARC_S9.1`](../../plan/ARC_architecture.md#91-open-questions-for-the-team), question 4
+   *Where:* [`ARC_S9.1`](../../../plan/ARC_architecture.md#91-open-questions-for-the-team), question 4
 5. **The honesty of the speed document** · *Take:* Report the worst number · *Where:* The
    evaluation section of the deck
 
@@ -506,23 +506,23 @@ that publishes its own worst number is trusted on its best.
 
 # 10. SOURCES
 1. **`[S1]`**
-   *Source:* `ref_repo/openpose/openpose/README.md` at `5c5d965` — the feature list, the runtime
+   *Source:* `ref_repo/tracking/openpose/openpose/README.md` at `5c5d965` — the feature list, the runtime
    claim, the citation block (TPAMI 2019; Simon et al., CVPR 2017; Cao et al., CVPR 2017; Wei et
    al., CVPR 2016) and the commercial-licensing pointer
    *Reliability:* Official project documentation; the underlying papers are peer-reviewed and were
    **not** read in full for this review
 2. **`[S2]`**
-   *Source:* `ref_repo/openpose/openpose/doc/installation/1_prerequisites.md`
+   *Source:* `ref_repo/tracking/openpose/openpose/doc/installation/1_prerequisites.md`
    *Reliability:* Official
 3. **`[S3]`**
-   *Source:* `ref_repo/openpose/openpose/doc/05_faq.md` — the 4 GB GPU memory note
+   *Source:* `ref_repo/tracking/openpose/openpose/doc/05_faq.md` — the 4 GB GPU memory note
    *Reliability:* Official
 4. **`[S4]`**
-   *Source:* `ref_repo/openpose/openpose/doc/06_maximizing_openpose_speed.md` — the 0.3 FPS COCO
+   *Source:* `ref_repo/tracking/openpose/openpose/doc/06_maximizing_openpose_speed.md` — the 0.3 FPS COCO
    and 0.1 FPS `BODY_25` CPU figures, and the cuDNN and `net_resolution` advice
    *Reliability:* Official, self-reported. Not independently reproduced here
 5. **`[S5]`**
-   *Source:* `ref_repo/openpose/openpose/LICENSE` — the non-commercial software licence agreement
+   *Source:* `ref_repo/tracking/openpose/openpose/LICENSE` — the non-commercial software licence agreement
    *Reliability:* Primary. ⚠ Read as an engineer, not a lawyer. If any commercial path is
    contemplated the text must be read by someone qualified
 6. **`[S6]`**

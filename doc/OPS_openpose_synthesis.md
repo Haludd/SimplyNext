@@ -15,11 +15,11 @@
 | **Last reviewed** | 2026-08-30                                           |
 | **Scope**         | Short orientation to `ROP` and why it was not chosen |
 | **Subject**       | `ROP` — `openpose/openpose/` at `5c5d965`            |
-| **Full report**   | [`OPR`](../ref_repo/openpose/OPR_openpose_report.md) |
+| **Full report**   | [`OPR`](../ref_repo/tracking/openpose/OPR_openpose_report.md) |
 
 **For the team.** A five-minute orientation, and the record of a rejection. The complete analysis
-is in [`OPR`](../ref_repo/openpose/OPR_openpose_report.md), which lives beside the clone in
-`ref_repo/openpose/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
+is in [`OPR`](../ref_repo/tracking/openpose/OPR_openpose_report.md), which lives beside the clone in
+`ref_repo/tracking/openpose/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
 [`MPS`](MPS_mediapipe_synthesis.md) and [`DHS`](DHS_depthai_synthesis.md); the four are compared
 head-to-head in
 [`ARC_S7.2`](../plan/ARC_architecture.md#72-the-four-reference-repositories-compared).
@@ -27,7 +27,7 @@ head-to-head in
 **For the assistant.** OpenPose is **not** an option under consideration. Its licence forbids the
 use and its CPU performance forbids the demonstration. State both plainly wherever the question
 arises. No OpenPose code, model or derivative enters `src/`. Where this file and
-[`OPR`](../ref_repo/openpose/OPR_openpose_report.md) disagree, `OPR` wins.
+[`OPR`](../ref_repo/tracking/openpose/OPR_openpose_report.md) disagree, `OPR` wins.
 
 </details>
 
@@ -194,7 +194,7 @@ same thing —
 
 # 6. THE SEVEN LESSONS
 Full rationale in
-[`OPR_S9.1`](../ref_repo/openpose/OPR_openpose_report.md#91-lessons-to-carry-across).
+[`OPR_S9.1`](../ref_repo/tracking/openpose/OPR_openpose_report.md#91-lessons-to-carry-across).
 
 | #  | Lesson                                                                        |
 | :- | :---------------------------------------------------------------------------- |
@@ -220,7 +220,7 @@ person ID tracking"*. No monocular 3D — the 3D module needs multiple calibrate
 CPU real-time path. No hand detection without a body, by default. No pip install. No model weights
 in the repository. No ongoing development since 2020. ⚠ No permissive licence.
 
-Full list: [`OPR_S7`](../ref_repo/openpose/OPR_openpose_report.md).
+Full list: [`OPR_S7`](../ref_repo/tracking/openpose/OPR_openpose_report.md).
 
 ---
 
@@ -237,7 +237,7 @@ If a side-by-side landmark comparison against MediaPipe is judged worth an after
 route is the Windows portable demo on a machine with an Nvidia GPU, with `--hand` and
 `--write_json`. That is a measurement, permitted as internal research; no OpenPose code would
 enter `src/` —
-[`OPR_S8`](../ref_repo/openpose/OPR_openpose_report.md).
+[`OPR_S8`](../ref_repo/tracking/openpose/OPR_openpose_report.md).
 
 ---
 
@@ -248,7 +248,7 @@ enter `src/` —
 # 9. WHERE TO GO NEXT
 | Question                     | Document                                             |
 | :--------------------------- | :--------------------------------------------------- |
-| Full breakdown of OpenPose   | [`OPR`](../ref_repo/openpose/OPR_openpose_report.md) |
+| Full breakdown of OpenPose   | [`OPR`](../ref_repo/tracking/openpose/OPR_openpose_report.md) |
 | The tracker actually chosen  | [`MPS`](MPS_mediapipe_synthesis.md)                  |
 | How the four compare         | [`ARC_S7.2`](../plan/ARC_architecture.md)            |
 | How the submission is scored | [`JCR`](../plan/JCR_judging_criteria.md)             |
@@ -262,5 +262,5 @@ enter `src/` —
 
 # 10. CHANGE LOG
 1. **2026-08-30** · *Author:* Claude (Opus 5)
-   *Change:* Created alongside [`OPR`](../ref_repo/openpose/OPR_openpose_report.md), from a read of
+   *Change:* Created alongside [`OPR`](../ref_repo/tracking/openpose/OPR_openpose_report.md), from a read of
    the README, the licence, the speed documentation and the runtime flags.

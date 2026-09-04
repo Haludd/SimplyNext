@@ -14,18 +14,18 @@
 | **Status**              | Live                                               |
 | **Last reviewed**       | 2026-08-30                                         |
 | **Source of truth for** | Analysis of the Apple `HandPose` reference clone   |
-| **Parent**              | [`RIX_S2.1`](../../ref_index.md#21-live-documents) |
-| **Short version**       | [`APS`](../../doc/APS_apple_synthesis.md)          |
-| **Subject**             | `RAP` — `ref_repo/apple/handpose/` at `ec30ff6`    |
+| **Parent**              | [`RIX_S2.1`](../../../ref_index.md#21-live-documents) |
+| **Short version**       | [`APS`](../../../doc/APS_apple_synthesis.md)          |
+| **Subject**             | `RAP` — `ref_repo/tracking/apple/handpose/` at `ec30ff6`    |
 
 **For the team.** What the Apple clone is, how it is built, what philosophy it encodes, and which
 parts transfer to SimplyNext. [`APR_S10`](#10-relevance-to-simplynext) holds the twelve lessons and
 the Swift → Python port table. The five-minute version is
-[`APS`](../../doc/APS_apple_synthesis.md).
+[`APS`](../../../doc/APS_apple_synthesis.md).
 
 **For the assistant.** The sample targets **iOS, not Apple Vision Pro** —
 [`APR_S1.1`](#11-what-this-repository-is). Line numbers refer to the files at the commit named
-above; re-verify them before citing. Nothing inside `ref_repo/apple/handpose/` may be edited: it is
+above; re-verify them before citing. Nothing inside `ref_repo/tracking/apple/handpose/` may be edited: it is
 an unmodified third-party clone and is excluded from version control. This document sits beside it
 and is tracked.
 
@@ -39,7 +39,7 @@ and is tracked.
 
 # 1. EXECUTIVE SUMMARY
 ## 1.1. What This Repository Is
-`ref_repo/apple/handpose/` is Apple's official sample project **"Detecting Hand Poses with Vision"**
+`ref_repo/tracking/apple/handpose/` is Apple's official sample project **"Detecting Hand Poses with Vision"**
 (target name `HandPose`). It is a ~450-line iOS application that turns the camera into a
 finger-painting surface: pinching thumb and index finger together draws, and pulling them apart
 ends the stroke. It ships as the companion code to WWDC20 session 10653,
@@ -57,7 +57,7 @@ ends the stroke. It ships as the companion code to WWDC20 session 10653,
 
 
 ## 1.2. Why It Matters to SimplyNext
-Apple's app is, structurally, **steps 1 to 3 of the MVP** ([`SCR`](../../plan/scribbles.md),
+Apple's app is, structurally, **steps 1 to 3 of the MVP** ([`SCR`](../../../plan/scribbles.md),
 *Current MVP*) implemented to production quality, and then it stops — deliberately — right before
 step 4.
 
@@ -111,7 +111,7 @@ stops the session rather than degrading quietly.
    `HandPose`
 4. **Associated session**
    WWDC20 session 10653, *Detect Body and Hand Pose with Vision* `[S1]`
-5. **Git history in `ref_repo/apple/handpose/`**
+5. **Git history in `ref_repo/tracking/apple/handpose/`**
    4 commits: `Initial release for WWDC20` → `Minor updates.` ×2 → `Republish sample code project.`
 6. **Language**
    Swift 5.0, UIKit + storyboards
@@ -176,7 +176,7 @@ Extracted from `handpose/HandPose.xcodeproj/project.pbxproj`, `handpose/HandPose
 # 3. REPOSITORY MAP
 ## 3.1. File Inventory
 ```text
-ref_repo/apple/
+ref_repo/tracking/apple/
 ├── APR_apple_report.md                                 — this document (tracked in git)
 └── handpose/                                           — the clone (git-ignored)
     ├── README.md                                  6 lines  — points at the WWDC session
@@ -316,7 +316,7 @@ evidence counters, the buffer, the last draw point, the staleness timestamp — 
 that a human wrote and can reason about.
 
 That rule is the single most transferable idea in the repository, and
-[`ARC`](../../plan/ARC_architecture.md)
+[`ARC`](../../../plan/ARC_architecture.md)
 adopts it wholesale.
 
 
@@ -342,7 +342,7 @@ The hop is `DispatchQueue.main.sync` inside a `defer` block (`CameraViewControll
 > capture queue, and it is the wrong pattern the moment inference gets slower than one frame
 > interval — which it will here, once a temporal model runs on top. The port keeps the *intent*
 > (bounded backlog) and changes the *mechanism* to a bounded queue with a drop-oldest policy. See
-> [`RSK_S6`](../../plan/RSK_risk_register.md#6-system-and-platform) for the latency risks
+> [`RSK_S6`](../../../plan/RSK_risk_register.md#6-system-and-platform) for the latency risks
 > this touches.
 
 ---
@@ -396,7 +396,7 @@ guard thumbTipPoint.confidence > 0.3 && indexTipPoint.confidence > 0.3 else { re
 `0.3` is a magic number with no comment. Empirically it is permissive — it admits fairly poor
 detections. For sign language, where a wrong handshape is a wrong *word*, this threshold must be a
 tuned, measured parameter, per joint group, not a constant. See
-[`RSK_S3`](../../plan/RSK_risk_register.md#3-linguistic).
+[`RSK_S3`](../../../plan/RSK_risk_register.md#3-linguistic).
 
 **`processPoints(thumbTip:indexTip:)` (`:104–122`)** handles the empty case first: if either point
 is missing and more than 2 seconds have passed since the last observation, reset the state
@@ -444,7 +444,7 @@ Two properties of this design are worth reproducing:
 
 The app locks to portrait and passes `orientation: .up` to the request handler, which sidesteps
 the rotation problem entirely rather than solving it. That shortcut is not available for a
-multi-device product — see [`RSK_S2.2`](../../plan/RSK_risk_register.md#22-geometric).
+multi-device product — see [`RSK_S2.2`](../../../plan/RSK_risk_register.md#22-geometric).
 
 
 
@@ -568,7 +568,7 @@ on stale data.
 That is worth naming as a deliberate policy: *degrading silently is worse than stopping.* For an
 assistive communication tool, where a silent degradation means putting words in a deaf person's
 mouth, this policy is not merely good practice — it is an ethical requirement. See
-[`RSK_S8`](../../plan/RSK_risk_register.md#8-human-ethical-and-legal).
+[`RSK_S8`](../../../plan/RSK_risk_register.md#8-human-ethical-and-legal).
 
 
 
@@ -581,7 +581,7 @@ entire app is a double-tap to clear.
 
 That minimalism is itself the lesson: a demo that shows **one capability with zero chrome** is
 easier to understand, easier to film, and harder to break on stage. Directly relevant to the
-5-minute demo video ([`JCR_S7`](../../plan/JCR_judging_criteria.md#7-the-5-minute-demo-video)).
+5-minute demo video ([`JCR_S7`](../../../plan/JCR_judging_criteria.md#7-the-5-minute-demo-video)).
 
 ---
 
@@ -618,7 +618,7 @@ Swift in application code.
 
 A low-confidence point is **dropped**, not down-weighted, not interpolated, not smoothed into the
 stream. Uncertain input produces no output rather than uncertain output. Compare
-[`RSK_S7.1`](../../plan/RSK_risk_register.md#71-fabrication), where the opposite behaviour in an
+[`RSK_S7.1`](../../../plan/RSK_risk_register.md#71-fabrication), where the opposite behaviour in an
 LLM is the
 single largest risk to this product.
 
@@ -766,25 +766,25 @@ feature, not a label.
 ### 7.2.4. Adjacent Vision requests relevant to the MVP
 1. **`VNDetectHumanBodyPoseRequest`**
    *Availability:* iOS 14.0+ `[S6]`
-   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 2 — torso, shoulders, arms; signing
+   *Relevance to [`SCR`](../../../plan/scribbles.md) MVP:* Step 2 — torso, shoulders, arms; signing
    space
    is defined relative to the body
 2. **`VNDetectHumanBodyPose3DRequest`**
    *Availability:* iOS 17.0+ `[S7]` — *"detects points on human bodies in 3D space, relative to the
    camera"*, and *"if the system allows it, the request uses depth information to improve the
    accuracy"*
-   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 3 — the closest first-party answer to
+   *Relevance to [`SCR`](../../../plan/scribbles.md) MVP:* Step 3 — the closest first-party answer to
    "3D
    skeleton"
 3. **`VNGeneratePersonInstanceMaskRequest`**
    *Availability:* iOS 17.0+ `[S8]` — *"produces a mask of individual people it finds in the input
    image"*
-   *Relevance to [`SCR`](../../plan/scribbles.md) MVP:* Step 1 — per-person masks, i.e. genuinely
+   *Relevance to [`SCR`](../../../plan/scribbles.md) MVP:* Step 1 — per-person masks, i.e. genuinely
    isolating one signer from bystanders
 
 > **Note:** all three of these post-date the sample. The repository shows Apple's 2020 answer;
 > Apple's 2023 platform answers two more of the four MVP steps out of the box. That matters for
-> [`ARC_S6`](../../plan/ARC_architecture.md#6-the-recommended-architecture), where an iOS-native
+> [`ARC_S6`](../../../plan/ARC_architecture.md#6-the-recommended-architecture), where an iOS-native
 > track is one of the options.
 
 ---
@@ -804,7 +804,7 @@ The gap between this sample and the product.
     Not used (API postdates the sample). Dominant/non-dominant roles are lost
 4.  **Face and body**
     No `VNDetectHumanBodyPoseRequest`, no face landmarks. Non-manual grammar is invisible — see
-    [`RSK_S3.1`](../../plan/RSK_risk_register.md#31-non-manual-grammar)
+    [`RSK_S3.1`](../../../plan/RSK_risk_register.md#31-non-manual-grammar)
 5.  **Any temporal model**
     The 3-frame counter is the entire memory. No sequence model, no RNN, no transformer
 6.  **Vocabulary**
@@ -885,7 +885,7 @@ window of [`APR_S5.3`](#53-handgestureprocessorswift--the-state-machine) made vi
     *Lesson:* Show the machine hesitating
     *Source:* [`APR_S5.3`](#53-handgestureprocessorswift--the-state-machine)
     *Application:* Three-state UI: *listening* / *unsure* / *committed*. Directly serviceable as an
-    honesty mechanism — see [`RSK_S7.4`](../../plan/RSK_risk_register.md#74-confidence-and-honesty)
+    honesty mechanism — see [`RSK_S7.4`](../../../plan/RSK_risk_register.md#74-confidence-and-honesty)
 6.  **L6**
     *Lesson:* Smooth the output, not the decision
     *Source:* [`APR_S5.1`](#51-cameraviewcontrollerswift--capture-and-orchestration)
@@ -974,7 +974,7 @@ The project stack is Python `[D3_p42]`. This maps every Apple concept to its lik
 > MediaPipe's at the **top-left**. Apple's `y := 1 - y` line exists to reconcile Vision with
 > AVFoundation. Copying that line into a MediaPipe pipeline flips the image upside down. It is
 > the single most likely bug to arise from reading this repository, so it is called out here and
-> again in [`APS`](../../doc/APS_apple_synthesis.md).
+> again in [`APS`](../../../doc/APS_apple_synthesis.md).
 
 
 
@@ -1002,8 +1002,8 @@ The Apple sample is silent on every hard problem in this product:
 - how to attribute utterances when two people sign at once;
 - how to know when the system is wrong.
 
-Those are the subject of [`ARC`](../../plan/ARC_architecture.md) and
-[`RSK`](../../plan/RSK_risk_register.md). The Apple repository provides a solid floor and nothing
+Those are the subject of [`ARC`](../../../plan/ARC_architecture.md) and
+[`RSK`](../../../plan/RSK_risk_register.md). The Apple repository provides a solid floor and nothing
 above the knee.
 
 ---
@@ -1016,7 +1016,7 @@ above the knee.
 1.  **`[S1]`** · *Reliability:* Official
     *Source:* Apple, *Detect Body and Hand Pose with Vision*, WWDC20 session 10653 —
     https://developer.apple.com/videos/play/wwdc2020/10653/
-    (cited by `ref_repo/apple/handpose/README.md`)
+    (cited by `ref_repo/tracking/apple/handpose/README.md`)
 2.  **`[S2]`** · *Reliability:* Official
     *Source:* Apple Developer Documentation, `VNDetectHumanHandPoseRequest` —
     https://developer.apple.com/documentation/vision/vndetecthumanhandposerequest
@@ -1045,7 +1045,7 @@ above the knee.
     *Source:* Google AI Edge, *Holistic landmarks detection task guide* —
     https://ai.google.dev/edge/mediapipe/solutions/vision/holistic_landmarker
 11. **`[S11]`** · *Reliability:* Primary
-    *Source:* The repository itself: `ref_repo/apple/handpose/` at commit `ec30ff6`, *Republish
+    *Source:* The repository itself: `ref_repo/tracking/apple/handpose/` at commit `ec30ff6`, *Republish
     sample code
     project.*
 
@@ -1063,18 +1063,18 @@ All line numbers in this document refer to the files as they stand at `[S11]`.
    Apple's official API documentation.
 2. **2026-08-28** · *Author:* Claude (Opus 5)
    *Change:* Reformatted to the revised conventions in
-   [`RIX_S4`](../../ref_index.md#4-markdown-formatting-rules): bold title, collapsible `# METADATA`,
+   [`RIX_S4`](../../../ref_index.md#4-markdown-formatting-rules): bold title, collapsible `# METADATA`,
    `#`-level numbered sections, HTML anchors removed, padded tables, third-person voice,
    placeholders for unfinished content.
 3. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Applied the revised [`RIX_S4.4`](../../ref_index.md#44-vertical-spacing) heading
-   spacing and the [`RIX_S4.5`](../../ref_index.md#45-tables-and-numbered-lists)
+   *Change:* Applied the revised [`RIX_S4.4`](../../../ref_index.md#44-vertical-spacing) heading
+   spacing and the [`RIX_S4.5`](../../../ref_index.md#45-tables-and-numbered-lists)
    table-versus-numbered-list rule: tables whose rows exceeded 100 characters became numbered
    lists.
 4. **2026-08-30** · *Author:* Claude (Opus 5)
-   *Change:* Recoded `APL` → `APR` and moved from `doc/` into `ref_repo/apple/`, beside the clone
-   it describes — [`RIX_S2.1`](../../ref_index.md#21-live-documents). The clone was relocated from
-   `ref_repo/apple/` to `ref_repo/apple/handpose/` so that a tracked document can sit next to an
+   *Change:* Recoded `APL` → `APR` and moved from `doc/` into `ref_repo/tracking/apple/`, beside the clone
+   it describes — [`RIX_S2.1`](../../../ref_index.md#21-live-documents). The clone was relocated from
+   `ref_repo/tracking/apple/` to `ref_repo/tracking/apple/handpose/` so that a tracked document can sit next to an
    untracked embedded repository; every path in this document was updated accordingly. The short
-   version, formerly `SYN` in this directory, is now [`APS`](../../doc/APS_apple_synthesis.md) in
+   version, formerly `SYN` in this directory, is now [`APS`](../../../doc/APS_apple_synthesis.md) in
    `doc/`. No analysis changed.

@@ -14,9 +14,9 @@
 | **Status**              | Live                                                          |
 | **Last reviewed**       | 2026-08-30                                                    |
 | **Source of truth for** | Analysis of the MediaPipe reference clone                     |
-| **Parent**              | [`RIX_S2.1`](../../ref_index.md#21-live-documents)            |
-| **Short version**       | [`MPS`](../../doc/MPS_mediapipe_synthesis.md)                 |
-| **Subject**             | `RMP` — `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96` |
+| **Parent**              | [`RIX_S2.1`](../../../ref_index.md#21-live-documents)            |
+| **Short version**       | [`MPS`](../../../doc/MPS_mediapipe_synthesis.md)                 |
+| **Subject**             | `RMP` — `ref_repo/tracking/google-mediapipe/mediapipe/` at `251c0cb96` |
 
 **For the team.** The full technical analysis of the repository the pipeline is built on. The
 **Hand Landmarker** task is the focus: [`MPR_S4`](#4-the-hand-landmarker-pipeline) is the
@@ -28,7 +28,7 @@ summarises the ~90% that is irrelevant here so that nobody spends a day reading 
 **For the assistant.** Every constant, threshold and wiring claim in
 [`MPR_S4`](#4-the-hand-landmarker-pipeline) carries a `file:line` citation into the clone at the
 commit named above. Re-verify before citing, because this repository moves — it took 5,617 commits
-to reach this state. Nothing inside `ref_repo/google-mediapipe/mediapipe/` may be edited: it is an
+to reach this state. Nothing inside `ref_repo/tracking/google-mediapipe/mediapipe/` may be edited: it is an
 unmodified third-party clone, excluded from version control. This document sits beside it and is
 tracked.
 
@@ -42,7 +42,7 @@ tracked.
 
 # 1. EXECUTIVE SUMMARY
 ## 1.1. What This Repository Is
-`ref_repo/google-mediapipe/mediapipe/` is Google's **MediaPipe** — an open-source framework for
+`ref_repo/tracking/google-mediapipe/mediapipe/` is Google's **MediaPipe** — an open-source framework for
 building on-device perception pipelines, plus a catalogue of ready-made ML **Tasks** built on it.
 It is developed by Google AI Edge and licensed Apache 2.0 `[S1]`. The clone is `master` at
 `251c0cb96` (2026-08-28); `mediapipe/version.bzl` declares the in-development version as
@@ -67,12 +67,12 @@ and — for the desktop examples — a source build of OpenCV. Consuming the Tas
 
 
 ## 1.2. Why It Matters to SimplyNext
-[`ARC_S7.2`](../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared) names
+[`ARC_S7.2`](../../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared) names
 MediaPipe as the perception layer. This repository is therefore not a reference to learn from at
 leisure, like [`APR`](../apple/APR_apple_report.md) — it is a **dependency**, and the report exists
 so that the team knows what it is depending on.
 
-Mapped onto the four MVP steps in [`SCR`](../../plan/scribbles.md):
+Mapped onto the four MVP steps in [`SCR`](../../../plan/scribbles.md):
 
 1. **1. Isolate the subject from environment noise**
    *MediaPipe:* `num_hands` caps detections; `PoseLandmarker` has `num_poses`;
@@ -86,7 +86,7 @@ Mapped onto the four MVP steps in [`SCR`](../../plan/scribbles.md):
    `HolisticLandmarker`, hand world landmarks **already translated into the pose coordinate
    system**
    *Verdict:* Solved further than
-   [`ARC_S4.3`](../../plan/ARC_architecture.md#43-recommended-representation) assumed. See
+   [`ARC_S4.3`](../../../plan/ARC_architecture.md#43-recommended-representation) assumed. See
    [`MPR_S7.1`](#71-holistic-landmarker)
 4. **4. Turn skeleton motion into conversational text**
    *MediaPipe:* Not attempted. `GestureRecognizer` classifies **single-frame static** hand shapes
@@ -180,7 +180,7 @@ The repository's own README states the position: support for the legacy solution
 > found by search uses `mp.solutions.hands`. Code written against it will import cleanly on an
 > older release and fail on a 1.0-line release. The project writes against the **Tasks API**
 > (`mediapipe.tasks.python.vision`) exclusively —
-> [`ARC_S9`](../../plan/ARC_architecture.md#9-decisions), decision 13 — and pins the version in
+> [`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions), decision 13 — and pins the version in
 > `requirements.txt`.
 
 ⚠ Which versions are published on PyPI, and under which names, was **not verified** during this
@@ -205,7 +205,7 @@ matplotlib
 
 All are pure-pip installable. **No GPU, no CUDA and no compiler are needed to consume the Tasks
 API** — the wheel ships prebuilt native binaries. That single fact is the C1 scalability argument
-in [`JCR_S2.1`](../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20),
+in [`JCR_S2.1`](../../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20),
 and it is what separates MediaPipe from `ROP`.
 
 Building *from source* is a different proposition: Bazel (`.bazelversion` pins the toolchain),
@@ -420,7 +420,7 @@ timestamp.
 
 > **Decision support.** This is Google's C++ implementation of the same rule
 > [`APR_S6.3`](../apple/APR_apple_report.md#63-confidence-is-a-gate-not-a-weight) extracted from
-> Apple's Swift, and the same rule [`ARC_S9`](../../plan/ARC_architecture.md#9-decisions) decision
+> Apple's Swift, and the same rule [`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions) decision
 > 8 makes a design invariant for the whole product. Two independent industrial teams reached it
 > from opposite directions. That convergence is worth one line on the architecture slide.
 
@@ -487,7 +487,7 @@ rate will fall exactly when the signer is mid-sentence.
 > **Warning — measure this before the demo.** The fix is not in MediaPipe. `RDH` solves it in
 > application code with a tolerance counter; see
 > [`DHR_S5.2`](../depthai-hand-tracker/DHR_depthai_report.md#52-the-single-hand-tolerance-threshold)
-> and [`ARC_S6.5`](../../plan/ARC_architecture.md#65-perception-engineering-rules).
+> and [`ARC_S6.5`](../../../plan/ARC_architecture.md#65-perception-engineering-rules).
 
 
 
@@ -573,7 +573,7 @@ otherwise.
 > therefore buys the drop-oldest behaviour for free, at the cost of an asynchronous callback that
 > the segmenter must be built to tolerate. Choosing `VIDEO` keeps the code straight-line and
 > synchronous but makes back-pressure the application's problem. See
-> [`ARC_S6.5`](../../plan/ARC_architecture.md#65-perception-engineering-rules).
+> [`ARC_S6.5`](../../../plan/ARC_architecture.md#65-perception-engineering-rules).
 
 
 
@@ -603,7 +603,7 @@ detected hand**:
 > answer is not trustworthy — see
 > [`DHR_S5.3`](../depthai-hand-tracker/DHR_depthai_report.md#53-handedness-averaging). Since
 > dominant and non-dominant hand carry different grammatical roles
-> ([`ARC_S3.2`](../../plan/ARC_architecture.md#32-the-landmark-budget)), a flip is a linguistic
+> ([`ARC_S3.2`](../../../plan/ARC_architecture.md#32-the-landmark-budget)), a flip is a linguistic
 > error, not a cosmetic one.
 
 
@@ -622,7 +622,7 @@ detected hand**:
 > `y = 1 - thumbTipPoint.location.y` out of
 > [`APR_S5.2`](../apple/APR_apple_report.md#52-coordinate-spaces--three-of-them) into a MediaPipe
 > pipeline flips the image. This is called out in
-> [`CLD_S5.4`](../../CLAUDE.md#54-working-with-the-reference-repositories) because it is the single
+> [`CLD_S5.4`](../../../CLAUDE.md#54-working-with-the-reference-repositories) because it is the single
 > most likely bug to come out of reading both repositories in one week.
 
 The normalised `z` deserves one more sentence, because it is routinely over-trusted: it is scaled
@@ -702,7 +702,7 @@ rotation was removed before the model ran, using seven cheap keypoints from the 
 ## 6.3. Confidence Is a Gate
 `AllowIf(..., hand_presence)`. Below the threshold, no packet. Identical in effect to Apple's
 `confidence > 0.3` guard clause, and to
-[`ARC_S9`](../../plan/ARC_architecture.md#9-decisions) decision 8.
+[`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions) decision 8.
 
 
 
@@ -758,7 +758,7 @@ thresholds, `output_face_blendshapes`, `output_segmentation_mask`, and the same 
 modes with `detect` / `detect_for_video` / `detect_async`.
 
 > **Decision support — this changes
-> [`ARC_S4.3`](../../plan/ARC_architecture.md#43-recommended-representation).** That section
+> [`ARC_S4.3`](../../../plan/ARC_architecture.md#43-recommended-representation).** That section
 > specifies re-expressing hand positions relative to the signer's own body, with the
 > origin at mid-shoulder. Holistic already delivers hand world landmarks **translated into the pose
 > coordinate system**, and pose world landmarks with the origin at the hip centre. A large part of
@@ -770,13 +770,13 @@ Three limits, all hard:
 1. **One person only.** `holistic_landmarker_graph.cc:377–379` forces `num_faces` to 1, with the
    comment *"holistic landmarker only supports a single person"*. There is no `num_poses`. For a
    two-way conversation between a signer and a hearing person in one frame, this is a real
-   constraint — see [`RSK_S5`](../../plan/RSK_risk_register.md#5-multi-person-and-conversation)
+   constraint — see [`RSK_S5`](../../../plan/RSK_risk_register.md#5-multi-person-and-conversation)
 2. **No handedness classification.** Left and right are separate output streams derived from the
    pose skeleton rather than a per-crop classifier. This is arguably *better* — it is the same
    trick `RDH` uses to make handedness robust — but it is not the same field, and code written
    against `HandLandmarkerResult.handedness` does not port across
 3. **468 face landmarks, not 478.** The refined-iris variant is not what this graph documents.
-   [`ARC_S3.2`](../../plan/ARC_architecture.md#32-the-landmark-budget) rejects the full mesh as a
+   [`ARC_S3.2`](../../../plan/ARC_architecture.md#32-the-landmark-budget) rejects the full mesh as a
    model input regardless; the count matters only for indexing the curated subset
 
 
@@ -799,7 +799,7 @@ It exposes the same `num_hands` and three confidence options as the hand landmar
 > **Warning — it is single-frame.** The recogniser classifies a hand *shape* in one frame. It has
 > no temporal model, no notion of movement, and therefore cannot represent the movement parameter
 > that distinguishes many signs. It is not a sign recogniser and must never be described as one in
-> a submission — [`CLD_S5.2`](../../CLAUDE.md#52-honesty-about-the-product). It is, however, a
+> a submission — [`CLD_S5.2`](../../../CLAUDE.md#52-honesty-about-the-product). It is, however, a
 > legitimate baseline for the subset of signs that are static handshapes, and a very cheap one.
 
 
@@ -816,7 +816,7 @@ labelled images. `constants.py:19–37` shows the architecture:
 > **Decision support.** The frozen embedder is a pre-trained landmark feature extractor, produced
 > by Google, that the project could use **as a feature stage under its own temporal classifier**
 > instead of hand-designing features from raw coordinates. That is a genuine option for
-> [`ARC_S7.3`](../../plan/ARC_architecture.md#73-p1--the-recommendation-in-detail) stage 5, and it
+> [`ARC_S7.3`](../../../plan/ARC_architecture.md#73-p1--the-recommendation-in-detail) stage 5, and it
 > is cheap to test. ⚠ The embedder's input format and output dimensionality were **not verified**
 > in this review; that verification is a prerequisite before the option is planned against.
 
@@ -925,7 +925,7 @@ The intended path is three steps:
 | M8 | **Pin the dependency.** A 5,617-commit repository will move under the project            |
 
 M2 and M6 are the two that connect directly to
-[`CLD_S5.2`](../../CLAUDE.md#52-honesty-about-the-product): a system that never guesses needs a
+[`CLD_S5.2`](../../../CLAUDE.md#52-honesty-about-the-product): a system that never guesses needs a
 perception layer that reports absence rather than inventing a plausible hand.
 
 
@@ -933,7 +933,7 @@ perception layer that reports absence rather than inventing a plausible hand.
 
 ## 11.2. What the Project Must Build on Top
 1. **Subject selection** · *Because:* `num_hands` caps count, not identity
-   *Where:* Pipeline stage ① in [`ARC_S6.1`](../../plan/ARC_architecture.md#61-pipeline)
+   *Where:* Pipeline stage ① in [`ARC_S6.1`](../../../plan/ARC_architecture.md#61-pipeline)
 2. **Hand identity across frames** · *Because:* Per-frame ordering only
    *Where:* Stage ③, with handedness averaging ported from `RDH`
 3. **Palm-detector rate limiting** · *Because:* [`MPR_S4.4.2`](#442-the-num_hands--2-pathology)
@@ -969,26 +969,26 @@ perception layer that reports absence rather than inventing a plausible hand.
 
 # 12. SOURCES
 1. **`[S1]`**
-   *Source:* `ref_repo/google-mediapipe/mediapipe/LICENSE` — Apache License 2.0, and
+   *Source:* `ref_repo/tracking/google-mediapipe/mediapipe/LICENSE` — Apache License 2.0, and
    https://github.com/google-ai-edge/mediapipe
    *Reliability:* The repository itself
 2. **`[S2]`**
-   *Source:* `ref_repo/google-mediapipe/mediapipe/docs/solutions/hands.md` — MediaPipe Hands
+   *Source:* `ref_repo/tracking/google-mediapipe/mediapipe/docs/solutions/hands.md` — MediaPipe Hands
    solution page, including the palm-detection and hand-landmark model descriptions and the 95.7% /
    86.22% average-precision figures
    *Reliability:* ⚠ Official, but carries a deprecation banner forwarding to
    https://developers.google.com/mediapipe/solutions/vision/hand_landmarker. Re-verify the numbers
    against the current model card before quoting
 3. **`[S3]`**
-   *Source:* `ref_repo/google-mediapipe/mediapipe/README.md`, *Legacy solutions* section — support
+   *Source:* `ref_repo/tracking/google-mediapipe/mediapipe/README.md`, *Legacy solutions* section — support
    ended 1 March 2023; code continues *"on an as-is basis"*
    *Reliability:* Official
 4. **`[S4]`**
    *Source:* [`DHR`](../depthai-hand-tracker/DHR_depthai_report.md), reporting
-   `ref_repo/depthai-hand-tracker/depthai_hand_tracker/README.md`
+   `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/README.md`
    *Reliability:* Third-party practitioner observation, not a benchmark
 5. **`[S5]`**
-   *Source:* The clone itself: `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96` (2026-08-28).
+   *Source:* The clone itself: `ref_repo/tracking/google-mediapipe/mediapipe/` at `251c0cb96` (2026-08-28).
    All `file:line` citations in [`MPR_S4`](#4-the-hand-landmarker-pipeline) and
    [`MPR_S5`](#5-the-python-api-in-detail) resolve against this commit
    *Reliability:* Primary

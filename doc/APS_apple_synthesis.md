@@ -14,20 +14,20 @@
 | **Status**        | Live                                                         |
 | **Last reviewed** | 2026-08-30                                                   |
 | **Scope**         | Short orientation to `RAP` and what SimplyNext takes from it |
-| **Subject**       | `RAP` — `ref_repo/apple/handpose/` at `ec30ff6`              |
-| **Full report**   | [`APR`](../ref_repo/apple/APR_apple_report.md)               |
+| **Subject**       | `RAP` — `ref_repo/tracking/apple/handpose/` at `ec30ff6`              |
+| **Full report**   | [`APR`](../ref_repo/tracking/apple/APR_apple_report.md)               |
 
 **For the team.** A five-minute orientation. The complete technical analysis, including line
 references and the Swift → Python port table, is in
-[`APR`](../ref_repo/apple/APR_apple_report.md), which lives beside the clone in `ref_repo/apple/`.
+[`APR`](../ref_repo/tracking/apple/APR_apple_report.md), which lives beside the clone in `ref_repo/tracking/apple/`.
 The sibling syntheses are [`MPS`](MPS_mediapipe_synthesis.md),
 [`DHS`](DHS_depthai_synthesis.md) and [`OPS`](OPS_openpose_synthesis.md); the four are compared
 head-to-head in
 [`ARC_S7.2`](../plan/ARC_architecture.md#72-the-four-reference-repositories-compared).
 
-**For the assistant.** Nothing in `ref_repo/apple/handpose/` belongs to the project; it is an
+**For the assistant.** Nothing in `ref_repo/tracking/apple/handpose/` belongs to the project; it is an
 unmodified third-party clone, excluded from version control, and must not be edited. Where this
-file and [`APR`](../ref_repo/apple/APR_apple_report.md) disagree, `APR` wins.
+file and [`APR`](../ref_repo/tracking/apple/APR_apple_report.md) disagree, `APR` wins.
 
 </details>
 
@@ -46,7 +46,7 @@ finger-painting surface: pinching thumb and index together draws, pulling them a
 > iPad**, using Apple's **Vision** framework — a computer-vision library that predates the Vision
 > Pro headset by six years. The hand-pose API is also available on visionOS 1.0+, so this changes
 > nothing technically, but calling it a Vision Pro project in a submission would be a factual
-> error. Details: [`APR_S1.1`](../ref_repo/apple/APR_apple_report.md#11-what-this-repository-is).
+> error. Details: [`APR_S1.1`](../ref_repo/tracking/apple/APR_apple_report.md#11-what-this-repository-is).
 
 ---
 
@@ -130,7 +130,7 @@ camera ──► serial queue (drops late frames)
 
 # 5. THE TWELVE LESSONS
 Full rationale and application in
-[`APR_S10.1`](../ref_repo/apple/APR_apple_report.md#101-lessons-to-carry-across).
+[`APR_S10.1`](../ref_repo/tracking/apple/APR_apple_report.md#101-lessons-to-carry-across).
 
 | #   | Lesson                                                                                  |
 | :-- | :-------------------------------------------------------------------------------------- |
@@ -162,12 +162,12 @@ One hand. Two of twenty-one joints. No chirality (the API postdates the sample).
 no depth. No temporal model beyond a 3-frame counter. A two-symbol output vocabulary. No
 multi-person handling, no text output, no tests, no metrics. Swift and UIKit only.
 
-Full list: [`APR_S8`](../ref_repo/apple/APR_apple_report.md#8-what-the-repository-does-not-do).
+Full list: [`APR_S8`](../ref_repo/tracking/apple/APR_apple_report.md#8-what-the-repository-does-not-do).
 
 > **Note:** Apple's *platform* has since answered two more MVP steps —
 > `VNDetectHumanBodyPose3DRequest` (iOS 17, 3D body points relative to the camera) and
 > `VNGeneratePersonInstanceMaskRequest` (iOS 17, per-person masks). Neither is in this 2020 sample.
-> See [`APR_S7.2`](../ref_repo/apple/APR_apple_report.md#72-the-vision-hand-pose-api-in-detail).
+> See [`APR_S7.2`](../ref_repo/tracking/apple/APR_apple_report.md#72-the-vision-hand-pose-api-in-detail).
 
 ---
 
@@ -177,7 +177,7 @@ Full list: [`APR_S8`](../ref_repo/apple/APR_apple_report.md#8-what-the-repositor
 
 # 7. PORTING TO THE PROJECT STACK
 The implementation is Python (`D3_p42`). Full table:
-[`APR_S10.2`](../ref_repo/apple/APR_apple_report.md#102-swift--python-port-table).
+[`APR_S10.2`](../ref_repo/tracking/apple/APR_apple_report.md#102-swift--python-port-table).
 
 1. **`VNDetectHumanHandPoseRequest` (21 joints)**
    MediaPipe Hand Landmarker (21 landmarks + handedness)
@@ -220,7 +220,7 @@ seconds triggers the reset. The orange window is lesson L4 made visible.
 # 9. WHERE TO GO NEXT
 | Question                                    | Document                                       |
 | :------------------------------------------ | :--------------------------------------------- |
-| Full technical breakdown of this repository | [`APR`](../ref_repo/apple/APR_apple_report.md) |
+| Full technical breakdown of this repository | [`APR`](../ref_repo/tracking/apple/APR_apple_report.md) |
 | The tracker chosen, and why                 | [`MPS`](MPS_mediapipe_synthesis.md)            |
 | What is being built, and why                | [`ARC`](../plan/ARC_architecture.md)           |
 | What can go wrong                           | [`RSK`](../plan/RSK_risk_register.md)          |
@@ -235,8 +235,8 @@ seconds triggers the reset. The orange window is lesson L4 made visible.
 
 # 10. CHANGE LOG
 1. **2026-08-28** · *Author:* Claude (Opus 5)
-   *Change:* Created as `SYN` in `ref_repo/apple/`.
+   *Change:* Created as `SYN` in `ref_repo/tracking/apple/`.
 2. **2026-08-30** · *Author:* Claude (Opus 5)
    *Change:* Recoded `SYN` → `APS` and moved to `doc/`, joining the three new repository syntheses
    — [`RIX_S2.1`](../ref_index.md#21-live-documents). Paths updated for the clone's relocation to
-   `ref_repo/apple/handpose/`. No analysis changed.
+   `ref_repo/tracking/apple/handpose/`. No analysis changed.

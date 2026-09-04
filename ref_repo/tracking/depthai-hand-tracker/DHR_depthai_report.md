@@ -14,8 +14,8 @@
 | **Status**              | Live                                                              |
 | **Last reviewed**       | 2026-08-30                                                        |
 | **Source of truth for** | Analysis of the DepthAI hand-tracker reference clone              |
-| **Parent**              | [`RIX_S2.1`](../../ref_index.md#21-live-documents)                |
-| **Short version**       | [`DHS`](../../doc/DHS_depthai_synthesis.md)                       |
+| **Parent**              | [`RIX_S2.1`](../../../ref_index.md#21-live-documents)                |
+| **Short version**       | [`DHS`](../../../doc/DHS_depthai_synthesis.md)                       |
 | **Subject**             | `RDH` — `depthai-hand-tracker/depthai_hand_tracker/` at `9773123` |
 
 **For the team.** This repository runs the same MediaPipe hand models as `RMP`, but on Luxonis
@@ -28,8 +28,8 @@ where MediaPipe's tracking logic exists in a language the project can read, test
 (`HandTracker*.py`, the `.blob` models, the `template_manager_script_*.py` device scripts) and the
 parts that do not (`mediapipe_utils.py`, `FPS.py`, `HandTrackerRenderer.py`). Never describe this
 repository as something the project depends on — it is not, and
-[`ARC_S7.2`](../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared) rejects
-the hardware. Nothing inside `ref_repo/depthai-hand-tracker/depthai_hand_tracker/` may be edited.
+[`ARC_S7.2`](../../../plan/ARC_architecture.md#72-the-four-reference-repositories-compared) rejects
+the hardware. Nothing inside `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/` may be edited.
 
 </details>
 
@@ -41,7 +41,7 @@ the hardware. Nothing inside `ref_repo/depthai-hand-tracker/depthai_hand_tracker
 
 # 1. EXECUTIVE SUMMARY
 ## 1.1. What This Repository Is
-`ref_repo/depthai-hand-tracker/depthai_hand_tracker/` is **geaxgx/depthai_hand_tracker**, an
+`ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/` is **geaxgx/depthai_hand_tracker**, an
 independent developer's project that runs *"Google Mediapipe Hand Tracking models on Luxonis
 DepthAI hardware (OAK-D, OAK-D lite, OAK-1, …)"* `[S1]`. It is MIT-licensed, about 34 commits
 long, and last changed on **2023-01-14** — a one-line NumPy compatibility fix.
@@ -58,9 +58,9 @@ That last clause is why the repository is in `ref_repo/`.
 
 ## 1.2. Why It Matters to SimplyNext
 The project will not buy an OAK camera —
-[`ARC_S7.1`](../../plan/ARC_architecture.md#71-comparison-table) rates depth hardware `P4` and
+[`ARC_S7.1`](../../../plan/ARC_architecture.md#71-comparison-table) rates depth hardware `P4` and
 rejects it because it breaks the *"scalable or easily adopted"* clause in
-[`JCR_S2.1`](../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20).
+[`JCR_S2.1`](../../../plan/JCR_judging_criteria.md#21-c1--benefits-delivered-by-the-solution-20).
 
 The value is entirely in the source, and it is of three kinds:
 
@@ -77,7 +77,7 @@ The value is entirely in the source, and it is of three kinds:
    hands before the palm detector runs, because *"the palm detector model from Google Mediapipe
    was trained to detect hands that are less than 2 meters away"* `[S1]`
 
-Against the four MVP steps in [`SCR`](../../plan/scribbles.md):
+Against the four MVP steps in [`SCR`](../../../plan/scribbles.md):
 
 1. **1. Isolate the subject** — solved twice over: Solo/Duo modes, and Body Pre Focusing with a
    `higher` / `left` / `right` / `group` selection policy
@@ -176,9 +176,9 @@ are visible in the code: neural inference runs on the device, the host receives 
 hands"* in Edge mode `[S1]`, and the `-xyz` flag returns the wrist's true metric position in the
 camera's coordinate system.
 
-That last capability is exactly the *"depth perception"* item [`SCR`](../../plan/scribbles.md)
+That last capability is exactly the *"depth perception"* item [`SCR`](../../../plan/scribbles.md)
 lists, delivered properly. It is still rejected, for the reason
-[`ARC_S7.4`](../../plan/ARC_architecture.md#75-p4p5--depth-and-glasses-as-roadmap-items) gives:
+[`ARC_S7.4`](../../../plan/ARC_architecture.md#75-p4p5--depth-and-glasses-as-roadmap-items) gives:
 requiring a depth camera converts the product from *"any device with a camera"* into *"any device
 with **this** camera"*, and that is a direct attack on the C1 scalability score, before considering
 procurement inside a four-day window.
@@ -192,7 +192,7 @@ procurement inside a four-day window.
 # 3. REPOSITORY MAP
 ## 3.1. File Inventory
 ```text
-ref_repo/depthai-hand-tracker/
+ref_repo/tracking/depthai-hand-tracker/
 ├── DHR_depthai_report.md                          — this document (tracked in git)
 └── depthai_hand_tracker/                          — the clone (git-ignored)
     ├── mediapipe_utils.py             46 KB   ★ THE FILE. Pure NumPy, no depthai
@@ -396,7 +396,7 @@ comfortable"* `[S1]`.
 > common, one hand is common, and the transition between them is *linguistically meaningful*. The
 > counter is not free — it buys frame rate with detection latency on the second hand. The value
 > must be measured against the chosen vocabulary rather than guessed. See
-> [`ARC_S6.5`](../../plan/ARC_architecture.md#65-perception-engineering-rules).
+> [`ARC_S6.5`](../../../plan/ARC_architecture.md#65-perception-engineering-rules).
 
 
 
@@ -413,7 +413,7 @@ The implementation is a running mean over the hand's tracked lifetime, reset whe
 breaks or the hand count changes (`HandTracker.py:588–593`). It is roughly ten lines.
 
 > **Decision support — this is not an optimisation, it is a correctness fix.**
-> [`ARC_S3.2`](../../plan/ARC_architecture.md#32-the-landmark-budget) puts handedness in the
+> [`ARC_S3.2`](../../../plan/ARC_architecture.md#32-the-landmark-budget) puts handedness in the
 > landmark budget because *"dominant vs non-dominant hand carry different grammatical roles"*. A
 > per-frame flip is therefore a **grammatical** error in the output, not a rendering glitch. The
 > averaging is cheap, it is well understood, and there is no reason not to do it from the first
@@ -457,7 +457,7 @@ left hands, the model may be wrong :-)"* `[S1]`.
 > failure than mislabelling one, because a two-handed sign observed with one hand is
 > unrecognisable. The project should prefer to **keep both hands and mark the handedness as
 > uncertain**, which is the behaviour
-> [`ARC_S9`](../../plan/ARC_architecture.md#9-decisions) decision 8 requires anyway: report the
+> [`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions) decision 8 requires anyway: report the
 > uncertainty rather than resolve it silently.
 
 
@@ -490,7 +490,7 @@ independent implementations, one rule.
 - palm-detection and landmark round-trip times in milliseconds.
 
 > **Decision support.** That list is very close to the perception half of the metric set in
-> [`ARC_S8.4`](../../plan/ARC_architecture.md#84-proposed-metric-set), and it costs a handful of
+> [`ARC_S8.4`](../../../plan/ARC_architecture.md#84-proposed-metric-set), and it costs a handful of
 > counters. In particular, *"frames on which palm detection ran, as a percentage"* is the single
 > number that reveals the `num_hands = 2` pathology, and *"failed landmark inferences"* is the
 > perception-layer analogue of refusal rate. Instrument from the first commit, exactly as
@@ -536,7 +536,7 @@ Two consequences are directly relevant:
 > gestures, the arm is generally folded and the hand up"*. Sign language has the same structure —
 > signing happens in a defined space in front of the torso, and hands at rest are not signing. A
 > hands-in-signing-space test is already stage ④ of
-> [`ARC_S6.1`](../../plan/ARC_architecture.md#61-pipeline); this repository is evidence that the
+> [`ARC_S6.1`](../../../plan/ARC_architecture.md#61-pipeline); this repository is evidence that the
 > heuristic works in practice, from someone who shipped it.
 
 The README also notes the honest limitation: *"the further the distance, the more difficult the
@@ -572,9 +572,9 @@ Three things to take from it:
 
 1. **An explicit `unknown` state per finger, and `None` for the gesture.** The function refuses
    rather than guessing — the same invariant as
-   [`ARC_S9`](../../plan/ARC_architecture.md#9-decisions) decision 8, in twelve lines
+   [`ARC_S9`](../../../plan/ARC_architecture.md#9-decisions) decision 8, in twelve lines
 2. **Cheap arithmetic beats a model where geometry answers the question** — Apple's lesson L12,
-   [`APS_S5`](../../doc/APS_apple_synthesis.md#5-the-twelve-lessons), independently confirmed
+   [`APS_S5`](../../../doc/APS_apple_synthesis.md#5-the-twelve-lessons), independently confirmed
 3. **It is a ceiling, not a floor.** Eight static handshapes, no movement, no orientation, no
    location, no two-handed relationship, no non-manual marking. Sign language uses all of those
 
@@ -582,9 +582,9 @@ Three things to take from it:
 > terms of handshape, orientation, location, movement and non-manual markers. `recognize_gesture`
 > reads **handshape only**, from a single frame. Describing a system of this kind as sign-language
 > recognition would be exactly the capability overstatement
-> [`CLD_S5.2`](../../CLAUDE.md#52-honesty-about-the-product) forbids. It is, however, a fair and
+> [`CLD_S5.2`](../../../CLAUDE.md#52-honesty-about-the-product) forbids. It is, however, a fair and
 > nearly free **baseline** to measure the trained classifier against, in the same spirit as
-> [`ARC_S7.5`](../../plan/ARC_architecture.md#74-p2--rationale-for-building-it-regardless).
+> [`ARC_S7.5`](../../../plan/ARC_architecture.md#74-p2--rationale-for-building-it-regardless).
 
 ---
 
@@ -627,7 +627,7 @@ an OAK camera they cannot run.** No emulator is provided.
 imported and exercised on any machine:
 
 ```python
-import sys; sys.path.append("ref_repo/depthai-hand-tracker/depthai_hand_tracker")
+import sys; sys.path.append("ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker")
 import mediapipe_utils as mpu
 
 anchors = mpu.generate_handtracker_anchors(192, 192)
@@ -669,7 +669,7 @@ implementation.
 
 ## 10.2. Port Table
 1. **`HandednessAverage`** · *Port:* Direct — ~10 lines of Python
-   *Where:* Pipeline stage ③, [`ARC_S6.1`](../../plan/ARC_architecture.md#61-pipeline)
+   *Where:* Pipeline stage ③, [`ARC_S6.1`](../../../plan/ARC_architecture.md#61-pipeline)
 2. **`single_hand_tolerance_thresh`** · *Port:* Direct, as a counter around the Tasks API call
    *Where:* Stage ②. Note the Tasks API hides the detector, so the counter must switch `num_hands`
    or accept the cost
@@ -683,7 +683,7 @@ implementation.
 6. **`HandTracker.exit()` statistics** · *Port:* Direct in spirit
    *Where:* `EVL`, the evaluation protocol
 7. **`recognize_gesture`** · *Port:* As a **baseline only**, clearly labelled
-   *Where:* [`ARC_S7.5`](../../plan/ARC_architecture.md#74-p2--rationale-for-building-it-regardless)
+   *Where:* [`ARC_S7.5`](../../../plan/ARC_architecture.md#74-p2--rationale-for-building-it-regardless)
 8. **`mediapipe_utils.py` algorithms** · *Port:* **Do not port**
    *Where:* Nowhere. The Tasks API performs these inside the graph. Read them to understand what
    the graph is doing; re-implementing them would be building MediaPipe badly
@@ -692,7 +692,7 @@ implementation.
 
 
 ## 10.3. What Not to Take
-1. **The hardware.** [`ARC_S7.1`](../../plan/ARC_architecture.md#71-comparison-table), `P4`
+1. **The hardware.** [`ARC_S7.1`](../../../plan/ARC_architecture.md#71-comparison-table), `P4`
 2. **Edge mode and the device scripts.** No transferable content
 3. **The `.blob` models.** Wrong format, wrong hardware, and 2021 weights
 4. **Same-handedness dropping.** Replace with an uncertainty flag —
@@ -709,14 +709,14 @@ implementation.
 
 # 11. SOURCES
 1. **`[S1]`**
-   *Source:* `ref_repo/depthai-hand-tracker/depthai_hand_tracker/README.md` at `9773123` — the
+   *Source:* `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/README.md` at `9773123` — the
    author's design notes on Solo/Duo modes, Host/Edge modes, Body Pre Focusing, frame-rate
    behaviour and model provenance
    *Reliability:* ⚠ A single practitioner's observations, not a benchmark. Directionally
    trustworthy because it is written by the person who implemented and measured the pipeline;
    no figures in it are independently reproduced
 2. **`[S2]`**
-   *Source:* `ref_repo/depthai-hand-tracker/depthai_hand_tracker/LICENSE.txt` — MIT,
+   *Source:* `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/LICENSE.txt` — MIT,
    "Copyright (c) [2021] [geax]"
    *Reliability:* Primary
 3. **`[S3]`**

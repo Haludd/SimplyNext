@@ -15,11 +15,11 @@
 | **Last reviewed** | 2026-08-30                                                        |
 | **Scope**         | Short orientation to `RDH` and what SimplyNext takes from it      |
 | **Subject**       | `RDH` — `depthai-hand-tracker/depthai_hand_tracker/` at `9773123` |
-| **Full report**   | [`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md)   |
+| **Full report**   | [`DHR`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md)   |
 
 **For the team.** A five-minute orientation. The complete analysis is in
-[`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md), which lives beside the clone in
-`ref_repo/depthai-hand-tracker/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
+[`DHR`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md), which lives beside the clone in
+`ref_repo/tracking/depthai-hand-tracker/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
 [`MPS`](MPS_mediapipe_synthesis.md) and [`OPS`](OPS_openpose_synthesis.md); the four are compared
 head-to-head in
 [`ARC_S7.2`](../plan/ARC_architecture.md#72-the-four-reference-repositories-compared).
@@ -27,7 +27,7 @@ head-to-head in
 **For the assistant.** This repository is **not a dependency**. Its hardware is rejected. What
 transfers is Python, and only from the three files that do not import `depthai`. Never describe
 the project as using DepthAI or OAK hardware. Where this file and
-[`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md) disagree, `DHR` wins.
+[`DHR`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md) disagree, `DHR` wins.
 
 </details>
 
@@ -175,7 +175,7 @@ uncertainty rather than resolve it silently.
 
 # 5. THE NINE LESSONS
 Full rationale in
-[`DHR_S10.1`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md#101-lessons-to-carry-across).
+[`DHR_S10.1`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md#101-lessons-to-carry-across).
 
 | #  | Lesson                                                                           |
 | :- | :------------------------------------------------------------------------------- |
@@ -202,7 +202,7 @@ and matches eight hard-coded patterns (`FIVE`, `FIST`, `OK`, `PEACE`, `ONE`…`F
 hand identity. No tests, no packaging. ⚠ Unmaintained since 2021.
 
 Full list:
-[`DHR_S8`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md).
+[`DHR_S8`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md).
 
 > **Warning — `recognize_gesture` is a ceiling, not a floor.** Sign language is analysed in terms
 > of handshape, orientation, location, movement and non-manual markers. That function reads one of
@@ -226,7 +226,7 @@ setup, and no emulator exists.
 **The algorithms can run today.** `mediapipe_utils.py` needs only OpenCV and NumPy:
 
 ```python
-import sys; sys.path.append("ref_repo/depthai-hand-tracker/depthai_hand_tracker")
+import sys; sys.path.append("ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker")
 import mediapipe_utils as mpu
 anchors = mpu.generate_handtracker_anchors(192, 192)   # expect (2016, 4)
 ```
@@ -248,7 +248,7 @@ both this repository and `RMP`. Confirming it takes five minutes and validates t
 # 8. WHERE TO GO NEXT
 | Question                     | Document                                                        |
 | :--------------------------- | :-------------------------------------------------------------- |
-| Full breakdown of DepthAI    | [`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md) |
+| Full breakdown of DepthAI    | [`DHR`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md) |
 | Library these fixes apply to | [`MPS`](MPS_mediapipe_synthesis.md)                             |
 | Segmentation state machine   | [`APS`](APS_apple_synthesis.md)                                 |
 | Why the hardware is rejected | [`ARC_S7.1`](../plan/ARC_architecture.md)                       |
@@ -264,5 +264,5 @@ both this repository and `RMP`. Confirming it takes five minutes and validates t
 # 9. CHANGE LOG
 1. **2026-08-30** · *Author:* Claude (Opus 5)
    *Change:* Created alongside
-   [`DHR`](../ref_repo/depthai-hand-tracker/DHR_depthai_report.md), from a read of
+   [`DHR`](../ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md), from a read of
    `mediapipe_utils.py`, `HandTracker.next_frame()`, `BodyPreFocusing` and the README.

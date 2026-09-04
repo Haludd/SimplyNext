@@ -14,21 +14,21 @@
 | **Status**        | Live                                                          |
 | **Last reviewed** | 2026-08-30                                                    |
 | **Scope**         | Short orientation to `RMP` and what SimplyNext takes from it  |
-| **Subject**       | `RMP` — `ref_repo/google-mediapipe/mediapipe/` at `251c0cb96` |
-| **Full report**   | [`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md) |
+| **Subject**       | `RMP` — `ref_repo/tracking/google-mediapipe/mediapipe/` at `251c0cb96` |
+| **Full report**   | [`MPR`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md) |
 
 **For the team.** A five-minute orientation to the library the perception layer is built on. The
 complete analysis — every threshold, every wiring citation, the trap list — is in
-[`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md), which lives beside the clone in
-`ref_repo/google-mediapipe/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
+[`MPR`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md), which lives beside the clone in
+`ref_repo/tracking/google-mediapipe/`. The sibling syntheses are [`APS`](APS_apple_synthesis.md),
 [`DHS`](DHS_depthai_synthesis.md) and [`OPS`](OPS_openpose_synthesis.md); the four are compared
 head-to-head in
 [`ARC_S7.2`](../plan/ARC_architecture.md#72-the-four-reference-repositories-compared).
 
 **For the assistant.** MediaPipe is a **dependency**, not a reference to admire. Nothing inside
-`ref_repo/google-mediapipe/mediapipe/` may be edited; it is an unmodified clone, excluded from
+`ref_repo/tracking/google-mediapipe/mediapipe/` may be edited; it is an unmodified clone, excluded from
 version control. Where this file and
-[`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md) disagree, `MPR` wins.
+[`MPR`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md) disagree, `MPR` wins.
 
 </details>
 
@@ -47,7 +47,7 @@ development.
 The project consumes exactly one part of it: **`mediapipe.tasks.python.vision`**, and within that
 principally the **Hand Landmarker**. Everything else — the framework, the Android and iOS
 examples, the GPU paths, the Java, Objective-C and TypeScript bindings — is summarised and set
-aside in [`MPR_S8`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md).
+aside in [`MPR_S8`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md).
 
 > **Warning — this is a live dependency, not a frozen sample.** Unlike `RAP`, which has four
 > commits and will never change, MediaPipe moves continuously and has already dropped an API the
@@ -114,7 +114,7 @@ the model use square anchors only — *"reducing the number of anchors by a fact
 palm-detection average precision is **95.7%**, against an **86.22%** baseline. ⚠ Both figures come
 from a documentation page carrying a deprecation banner; re-verify before putting either on a
 slide —
-[`MPR_S4.1`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#41-the-two-model-design).
+[`MPR_S4.1`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#41-the-two-model-design).
 
 ---
 
@@ -158,7 +158,7 @@ gate, all three are **empty** — that is the normal case, not an error.
 
 # 5. THE EIGHT LESSONS
 Full rationale in
-[`MPR_S11.1`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#111-lessons-to-carry-across).
+[`MPR_S11.1`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#111-lessons-to-carry-across).
 
 | #  | Lesson                                                                          |
 | :- | :------------------------------------------------------------------------------ |
@@ -190,11 +190,11 @@ slide.
 2. **`min_tracking_confidence` is an intersection-over-union threshold**, not a confidence.
    It is wired to `HandAssociationCalculator`'s rectangle-overlap test. Raising it makes the graph
    *more* willing to accept a new hand, not stricter —
-   [`MPR_S4.5`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#45-the-misnamed-option)
+   [`MPR_S4.5`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#45-the-misnamed-option)
 3. **`num_hands = 2` with one hand visible runs the palm detector on every frame.** The tracking
    gate fires only when the tracked-hand count *equals* `num_hands`. Signers drop to one hand
    constantly, so the frame rate falls mid-utterance —
-   [`MPR_S4.4.2`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md).
+   [`MPR_S4.4.2`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md).
    `DHS` carries the fix
 4. **The y-flip.** MediaPipe's normalised origin is the **top-left**; Apple's Vision origin is the
    **bottom-left**. Copying Apple's `y = 1 - y` into a MediaPipe pipeline flips the image —
@@ -217,14 +217,14 @@ identity across frames. No occlusion recovery. No metric position in the room. N
 confidence. Two left hands can be returned at once.
 
 Full list:
-[`MPR_S9`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md).
+[`MPR_S9`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md).
 
 > **Note — Holistic Landmarker answers more of the plan than expected.** It emits 468 face + 33
 > pose + 21 × 2 hand landmarks, and its hand world landmarks are *"translated so that wrist from
 > hand matches wrist from pose in pose coordinates system"*. That is most of the body-relative
 > normaliser [`ARC_S4.3`](../plan/ARC_architecture.md#43-recommended-representation) planned to
 > write. The cost is a hard **one-person-only** limit —
-> [`MPR_S7.1`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md#71-holistic-landmarker).
+> [`MPR_S7.1`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#71-holistic-landmarker).
 
 ---
 
@@ -253,7 +253,7 @@ is the single biggest reason this library was chosen over `ROP`.
 # 9. WHERE TO GO NEXT
 | Question                     | Document                                                      |
 | :--------------------------- | :------------------------------------------------------------ |
-| Full breakdown of MediaPipe  | [`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md) |
+| Full breakdown of MediaPipe  | [`MPR`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md) |
 | Tracking fixes it needs      | [`DHS`](DHS_depthai_synthesis.md)                             |
 | Segmentation state machine   | [`APS`](APS_apple_synthesis.md)                               |
 | Why OpenPose was rejected    | [`OPS`](OPS_openpose_synthesis.md)                            |
@@ -269,5 +269,5 @@ is the single biggest reason this library was chosen over `ROP`.
 
 # 10. CHANGE LOG
 1. **2026-08-30** · *Author:* Claude (Opus 5)
-   *Change:* Created alongside [`MPR`](../ref_repo/google-mediapipe/MPR_mediapipe_report.md), from
+   *Change:* Created alongside [`MPR`](../ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md), from
    a read of the Hand Landmarker Python API and its C++ task graphs.

@@ -12,7 +12,7 @@
 | :---------------------- | :----------------------------------------- |
 | **Code**                | `CLD`                                      |
 | **Status**              | Live                                       |
-| **Last reviewed**       | 2026-08-30                                 |
+| **Last reviewed**       | 2026-09-04                                 |
 | **Source of truth for** | Agent behaviour in this repository         |
 | **Related**             | [`RIX`](ref_index.md) · [`RDM`](README.md) |
 
@@ -61,20 +61,38 @@ A working prototype for the **SimplifyNext Agentic AI Hackathon 2026**: software
 sign language into conversational text or audio in real time, from ordinary camera video, with no
 gloves or wearables.
 
-| Question                              | Document                                    |
-| :------------------------------------ | :------------------------------------------ |
-| What is being built, and why          | [`SCR`](plan/scribbles.md) — product intent |
-| How the submission is scored          | [`JCR`](plan/JCR_judging_criteria.md)       |
-| The technical direction, with sources | [`ARC`](plan/ARC_architecture.md)           |
-| What can go wrong                     | [`RSK`](plan/RSK_risk_register.md)          |
-| What the training decks require       | [`TRN`](doc/TRN_training_synthesis.md)      |
-| Which perception library, and why     | [`MPS`](doc/MPS_mediapipe_synthesis.md)     |
-| The Apple reference repository        | [`APS`](doc/APS_apple_synthesis.md)         |
-| The DepthAI reference repository      | [`DHS`](doc/DHS_depthai_synthesis.md)       |
-| The OpenPose reference repository     | [`OPS`](doc/OPS_openpose_synthesis.md)      |
+| Question                              | Document                                          |
+| :------------------------------------ | :------------------------------------------------ |
+| What is being built, and why          | [`SCR`](plan/scribbles.md) — product intent       |
+| How the submission is scored          | [`JCR`](plan/JCR_judging_criteria.md)             |
+| The technical direction, with sources | [`ARC`](plan/ARC_architecture.md)                 |
+| What can go wrong                     | [`RSK`](plan/RSK_risk_register.md)                |
+| What the training decks require       | [`TRN`](doc/TRN_training_synthesis.md)            |
+| Which perception library, and why     | [`MPS`](doc/MPS_mediapipe_synthesis.md)           |
+| What the field already knows          | [`LTS`](doc/LTS_signlang_literature_synthesis.md) |
+
+**Tracking repositories** — perception, in `ref_repo/tracking/`:
+
+| Repository           | Synthesis                               |
+| :------------------- | :-------------------------------------- |
+| Apple `HandPose`     | [`APS`](doc/APS_apple_synthesis.md)     |
+| Google MediaPipe     | [`MPS`](doc/MPS_mediapipe_synthesis.md) |
+| DepthAI hand tracker | [`DHS`](doc/DHS_depthai_synthesis.md)   |
+| CMU OpenPose         | [`OPS`](doc/OPS_openpose_synthesis.md)  |
+
+**Translation repositories** — language, in `ref_repo/translation/`:
+
+| Repository                 | Synthesis                                         |
+| :------------------------- | :------------------------------------------------ |
+| FangyunWei SLRT            | [`SLS`](doc/SLS_slrt_synthesis.md)                |
+| SAM-SLR                    | [`SAS`](doc/SAS_sam_slr_synthesis.md)             |
+| `pose-format`              | [`SPS`](doc/SPS_sign_pose_synthesis.md)           |
+| Spoken-to-signed           | [`SSS`](doc/SSS_spoken_to_signed_synthesis.md)    |
+| SLP literature survey      | [`LTS`](doc/LTS_signlang_literature_synthesis.md) |
+| `sign-language-translator` | [`STS`](doc/STS_sign_translator_synthesis.md)     |
 
 Each synthesis in `doc/` points to a **full report** kept beside the clone it describes, in
-`ref_repo/`. The code pattern is in
+`ref_repo/<track>/<slug>/`. The code pattern is in
 [`RIX_S3.5`](ref_index.md#35-repository-document-codes).
 
 ---
@@ -138,7 +156,8 @@ Each synthesis in `doc/` points to a **full report** kept beside the clone it de
 2. **`doc/`** · *Never:* Project plans
    *Contents:* Training decks, external references, syntheses of them
 3. **`ref_repo/`** · *Never:* Project source code
-   *Contents:* One unmodified third-party clone per sub-directory, plus that repository's full
+   *Contents:* Two track directories, `tracking/` and `translation/`; inside each, one
+   sub-directory per repository holding an unmodified third-party clone and that repository's full
    report. The clones are **git-ignored**; the reports are tracked —
    [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks)
 4. **`src/` *(future)*** · *Never:* Documents
@@ -150,9 +169,9 @@ Each synthesis in `doc/` points to a **full report** kept beside the clone it de
 
 ## 3.4. Do Not Edit
 - The six PDFs in `doc/` — they are primary sources.
-- Any clone under `ref_repo/`: `apple/handpose/`, `google-mediapipe/mediapipe/`,
-  `depthai-hand-tracker/depthai_hand_tracker/`, `openpose/openpose/`. The only editable files in
-  `ref_repo/` are the four reports — `APR`, `MPR`, `DHR`, `OPR`.
+- **Any clone under `ref_repo/`**, in either track. The only editable files anywhere in
+  `ref_repo/` are the ten reports — `APR`, `MPR`, `DHR`, `OPR`, `SLR`, `SAR`, `SPR`, `SSR`, `LTR`,
+  `STR`.
 - The body of `plan/scribbles.md` — it is the team's raw ideation. Cross-references and formatting
   may be maintained; the wording may not be rewritten.
 
@@ -226,15 +245,19 @@ the team.
 
 
 ## 5.4. Working with the Reference Repositories
-Four clones sit under `ref_repo/`, each with a full report beside it and a synthesis in `doc/` —
-[`RIX_S3.5`](ref_index.md#35-repository-document-codes). Four standing facts about them:
+Ten clones sit under `ref_repo/`, in two tracks, each with a full report beside it and a synthesis
+in `doc/` — [`RIX_S3.5`](ref_index.md#35-repository-document-codes). Nine standing facts.
 
-1. **`RAP` is iOS, not Apple Vision Pro.** `ref_repo/apple/handpose/` is Apple's WWDC20 `HandPose`
-   sample, targeting iOS 14 and the Vision framework. Do not repeat that error in any document or
-   slide — [`APR_S1.1`](ref_repo/apple/APR_apple_report.md#11-what-this-repository-is)
+**Tracking — perception.**
+
+1. **`RAP` is iOS, not Apple Vision Pro.** `ref_repo/tracking/apple/handpose/` is Apple's WWDC20
+   `HandPose` sample, targeting iOS 14 and the Vision framework. Do not repeat that error in any
+   document or slide —
+   [`APR_S1.1`](ref_repo/tracking/apple/APR_apple_report.md#11-what-this-repository-is)
 2. **The y-flip trap.** Vision's normalised coordinate space has its origin at the **bottom-left**;
    MediaPipe's at the **top-left**. Copying Apple's `y = 1 - y` line into a MediaPipe pipeline
-   flips the image — [`APR_S10.2`](ref_repo/apple/APR_apple_report.md#102-swift--python-port-table)
+   flips the image —
+   [`APR_S10.2`](ref_repo/tracking/apple/APR_apple_report.md#102-swift--python-port-table)
 3. **`RMP` is a dependency, and it moves.** MediaPipe is the perception layer
    ([`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)). Write
    against `mediapipe.tasks.python.vision`, never the legacy `mp.solutions` API, and always at a
@@ -242,6 +265,31 @@ Four clones sit under `ref_repo/`, each with a full report beside it and a synth
 4. **`ROP` is licensed for non-commercial research only**, and assigns derivatives to CMU. **No
    OpenPose code, model or derivative enters `src/`.** It is cited, never used —
    [`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence)
+
+**Translation — language.**
+
+5. **Three of the six are shippable; three are not.** `RSP` (MIT), `RSS` (MIT) and `RST`
+   (Apache 2.0) may be used and are candidate dependencies. `RSL` has **no licence file at all**
+   ([`SLR_S2.2`](ref_repo/translation/slrt/SLR_slrt_report.md#22-licence)), `RSA`'s licence is
+   **self-contradictory and is treated as non-commercial**
+   ([`SAR_S2.2`](ref_repo/translation/sam-slr/SAR_sam_slr_report.md#22-licence)), and `RLT` is a
+   document, not code. **Check the licence before quoting the benchmark** — that check has now
+   changed the verdict on three separate repositories
+6. **`RSP` is a candidate dependency with one forbidden path.** `pose-format`'s data structures may
+   be shipped; its **pose estimator may not** — it is built on `mp.solutions.holistic` and pins
+   `mediapipe<0.10.30`, colliding with rule 3. Never install the `mediapipe` extra —
+   [`SPS_S4`](doc/SPS_sign_pose_synthesis.md#4-the-one-thing-not-to-take)
+7. **`RST` is the Tasks-API reference.** It is the only clone in `ref_repo/` that configures
+   `PoseLandmarker` and `HandLandmarker` correctly, in `VIDEO` mode. Its **sign-to-text direction
+   is not implemented**, and that must be stated whenever the repository is described —
+   [`STS_S3`](doc/STS_sign_translator_synthesis.md#3-the-tasks-api-done-right)
+8. **`RLT` is a survey, not a primary source.** Anything taken from it is one step removed — a
+   maintained summary of papers not read — and carries `⚠` under [`CLD_S5.1`](#51-evidence). Cite
+   the underlying paper wherever a number matters
+9. **There is no public Singapore Sign Language data.** Neither the field's 49-dataset registry nor
+   the twenty fingerspelling alphabets in `RSS` contain SgSL or any Southeast Asian sign language.
+   State this as the fact it is, not as an obstacle to be talked around —
+   [`LTS_S5`](doc/LTS_signlang_literature_synthesis.md#5-the-data-situation)
 
 `RDH` requires hardware the project is not buying, but its Python is hardware-free and four of its
 tracking fixes are in scope —
@@ -261,11 +309,18 @@ tracking fixes are in scope —
 4. Keep the `ref_index.md` update in the same commit as the document change it describes
 5. Do not add training data or model weights without checking the 5 GB submission limit
 6. **Never commit a third-party clone.** `.gitignore` excludes everything under `ref_repo/` and
-   re-admits only `ref_repo/*/[A-Z][A-Z][A-Z]_*.md` — the four reports. A new reference repository
-   is cloned into its own sub-directory, `ref_repo/<slug>/<clone>/`, never directly into
-   `ref_repo/<slug>/` — [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks)
+   re-admits only `ref_repo/*/*/[A-Z][A-Z][A-Z]_*.md` — the ten reports. A new reference repository
+   is cloned into its own sub-directory under a track,
+   `ref_repo/<track>/<slug>/<clone>/`, never directly into `ref_repo/<track>/<slug>/` —
+   [`RIX_S5.2`](ref_index.md#52-what-version-control-tracks)
 7. A clone carries its own `.git`. If one is ever added to the index as an embedded repository,
-   remove it with `git rm --cached <path>` before relying on the ignore rules
+   remove it with `git rm --cached <path>` before relying on the ignore rules. **This has already
+   happened once:** the four tracking clones were committed as gitlinks because the `ref_repo/**`
+   block documented in `RIX_S5.2` was never actually present in `.gitignore`. Verify a new rule
+   with `git check-ignore -v <path>` rather than assuming it works
+8. **The un-ignore rules count directory levels.** A repository added at any depth other than
+   `ref_repo/<track>/<slug>/` will have its report silently untracked and its clone silently
+   committed
 
 ---
 
@@ -291,5 +346,14 @@ tracking fixes are in scope —
    four clones, including the OpenPose licence prohibition. Recorded in
    [`CLD_S3.3`](#33-where-things-go) and [`CLD_S6`](#6-git) that the clones are git-ignored, that
    the reports are tracked, and that `src/` never imports from `ref_repo/`. Repointed `APL` and
-   `SYN` to [`APR`](ref_repo/apple/APR_apple_report.md) and
+   `SYN` to [`APR`](ref_repo/tracking/apple/APR_apple_report.md) and
    [`APS`](doc/APS_apple_synthesis.md).
+5. **2026-09-04** · *Author:* Claude (Opus 5)
+   *Change:* Updated for the regrouping of `ref_repo/` into `tracking/` and `translation/` and the
+   six new translation repositories. Rewrote
+   [`CLD_S5.4`](#54-working-with-the-reference-repositories) as nine standing facts across both
+   tracks, covering the three licence problems, the `RSP` estimator prohibition, the `RST`
+   Tasks-API reference and the absence of public SgSL data. Split the document table in
+   [`CLD_S2`](#2-what-this-project-is) by track. Corrected the `.gitignore` pattern in
+   [`CLD_S6`](#6-git) to the new three-level depth, and recorded that the previously documented
+   block was never present — the tracking clones were committed as gitlinks as a result.

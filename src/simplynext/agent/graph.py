@@ -15,13 +15,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from threading import Lock
 from types import MappingProxyType
-from typing import Any, Final, Literal, TypeAlias, TypedDict, cast
+from typing import Any, Final, Literal, Protocol, TypeAlias, TypedDict, cast, runtime_checkable
 from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
 from simplynext.agent.state import (
     AgentState,
@@ -136,6 +136,39 @@ class AdapterUpdate(TypedDict, total=False):
     signer_memory: SignerMemory
 
 
+class AgentToolDefinition(_GraphValue):
+    """Model-facing name, description, and strict JSON input schema for one tool."""
+
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    description: str = Field(min_length=40, max_length=4_000)
+    input_schema: GraphPayload
+
+    @model_validator(mode="after")
+    def require_object_input_schema(self) -> AgentToolDefinition:
+        if self.input_schema.get("type") != "object":
+            raise ValueError("tool input schema must have object as its top-level type")
+        return self
+
+
+@runtime_checkable
+class StateAwareAgentTool(Protocol):
+    """Read-only tool that receives trusted graph state outside model arguments."""
+
+    @property
+    def definition(self) -> AgentToolDefinition:
+        """Return the model-facing definition for this tool."""
+
+        ...
+
+    def invoke(self, arguments: ToolArguments, state: AgentState) -> JsonValue:
+        """Execute against one validated invocation state."""
+
+        ...
+
+
+ToolHandler: TypeAlias = AgentTool | StateAwareAgentTool
+
+
 AssemblerNode: TypeAlias = Callable[
     [AgentGraphState, "AllowedToolExecutor"], Mapping[str, JsonValue]
 ]
@@ -165,6 +198,10 @@ class ToolNotAllowedError(PermissionError):
     """Raised when a node tries to cross the graph's explicit tool boundary."""
 
 
+class ToolStateRequiredError(RuntimeError):
+    """Raised when a state-aware tool is invoked without trusted graph state."""
+
+
 class ThreadScopeError(ValueError):
     """Raised before one checkpoint thread could cross signer or session scope."""
 
@@ -186,7 +223,7 @@ class AllowedToolExecutor:
 
     def __init__(
         self,
-        registry: Mapping[str, AgentTool] | None = None,
+        registry: Mapping[str, ToolHandler] | None = None,
         *,
         allowed_tools: Collection[str] = (),
     ) -> None:
@@ -201,14 +238,18 @@ class AllowedToolExecutor:
         )
         if invalid_names:
             raise ValueError("tool names must be non-empty and have no surrounding whitespace")
-        non_callable = sorted(name for name, tool in available.items() if not callable(tool))
+        non_callable = sorted(
+            name
+            for name, tool in available.items()
+            if not callable(tool) and not isinstance(tool, StateAwareAgentTool)
+        )
         if non_callable:
             raise TypeError(f"registered tools must be callable: {', '.join(non_callable)}")
         unknown = sorted(allowed.difference(available))
         if unknown:
             raise ValueError(f"allowed_tools contains unregistered tools: {', '.join(unknown)}")
 
-        self._tools: Mapping[str, AgentTool] = MappingProxyType(
+        self._tools: Mapping[str, ToolHandler] = MappingProxyType(
             {name: available[name] for name in sorted(allowed)}
         )
 
@@ -218,10 +259,28 @@ class AllowedToolExecutor:
 
         return tuple(self._tools)
 
+    @property
+    def definitions(self) -> tuple[AgentToolDefinition, ...]:
+        """Return model-facing definitions for described tools in allow-list order."""
+
+        definitions: list[AgentToolDefinition] = []
+        for name, tool in self._tools.items():
+            definition = getattr(tool, "definition", None)
+            if definition is None:
+                continue
+            if not isinstance(definition, AgentToolDefinition):
+                raise TypeError(f"tool definition must be AgentToolDefinition: {name}")
+            if definition.name != name:
+                raise ValueError(f"tool definition name does not match registry key: {name}")
+            definitions.append(definition)
+        return tuple(definitions)
+
     def call(
         self,
         name: str,
         arguments: Mapping[str, JsonValue] | None = None,
+        *,
+        state: AgentState | None = None,
     ) -> JsonValue:
         """Validate and call one allowed tool, rejecting all other names."""
 
@@ -232,7 +291,13 @@ class AllowedToolExecutor:
             dict(arguments or {}), strict=True
         )
         _require_finite_json(validated_arguments, f"{name} arguments")
-        result = _JSON_VALUE_ADAPTER.validate_python(tool(validated_arguments), strict=True)
+        if isinstance(tool, StateAwareAgentTool):
+            if state is None:
+                raise ToolStateRequiredError(f"tool requires trusted graph state: {name}")
+            raw_result = tool.invoke(validated_arguments, state)
+        else:
+            raw_result = tool(validated_arguments)
+        result = _JSON_VALUE_ADAPTER.validate_python(raw_result, strict=True)
         _require_finite_json(result, f"{name} result")
         return result
 
@@ -326,7 +391,7 @@ class AgentGraph:
 def build_agent_graph(
     nodes: AgentGraphNodes,
     *,
-    tool_registry: Mapping[str, AgentTool] | None = None,
+    tool_registry: Mapping[str, ToolHandler] | None = None,
     allowed_tools: Collection[str] = (),
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> AgentGraph:
@@ -552,6 +617,7 @@ __all__ = [
     "AgentGraphState",
     "AgentRunRecord",
     "AgentTool",
+    "AgentToolDefinition",
     "AllowedToolExecutor",
     "ConfidentResult",
     "CriticVerdict",
@@ -561,8 +627,11 @@ __all__ = [
     "MAX_GRAPH_LOOP_CAP",
     "RepairAction",
     "RepairResult",
+    "StateAwareAgentTool",
     "ThreadInvocationInProgressError",
     "ThreadScopeError",
     "ToolNotAllowedError",
+    "ToolHandler",
+    "ToolStateRequiredError",
     "build_agent_graph",
 ]

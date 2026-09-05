@@ -158,6 +158,9 @@ tracked into language, and back. Items 10–17 are the tracking set; items 18–
     *SoT for:* `sign-language-translator` repository analysis
 29. **`STS`** — `doc/STS_sign_translator_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of `sign-language-translator`; defers to `STR`
+30. **`BCT`** — `doc/BCT_backend_comparison_test.md` · *Status:* Live
+    *Contents:* Comparison of the merged backend against `ARC` and `PLN`, with verification results
+    *SoT for:* Backend-versus-plan comparison at the review snapshot
 
 
 

@@ -1,0 +1,99 @@
+"""FastAPI application factory and command-line entry point."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from uuid import UUID
+
+import uvicorn
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+
+from simplynext import __version__
+from simplynext.api.middleware import RequestBodyLimitMiddleware
+from simplynext.api.routes import api_router, health_router, replay_router
+from simplynext.api.websocket import landmark_socket
+from simplynext.config import Settings, get_settings
+from simplynext.observability import MetricsRegistry, configure_logging
+from simplynext.orchestrator import TranslationEngine, build_translation_engine
+from simplynext.runtime import RuntimeServices
+from simplynext.sessions import EphemeralSessionStore
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    translation: TranslationEngine | None = None,
+) -> FastAPI:
+    runtime_settings = settings or get_settings()
+    configure_logging(runtime_settings.log_level)
+    metrics = translation.metrics if translation is not None else MetricsRegistry()
+    engine = translation or build_translation_engine(runtime_settings, metrics)
+    sessions = EphemeralSessionStore(
+        ttl_seconds=runtime_settings.session_ttl_seconds,
+        buffer_frames=runtime_settings.max_queued_frames,
+        max_batch_frames=runtime_settings.max_batch_frames,
+        target_fps=runtime_settings.target_fps,
+        max_sessions=runtime_settings.max_active_sessions,
+        websocket_path_template=(
+            f"{runtime_settings.api_prefix}/sessions/{{session_id}}/landmarks"
+        ),
+    )
+    services = RuntimeServices(
+        settings=runtime_settings,
+        sessions=sessions,
+        translation=engine,
+        metrics=metrics,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.services = services
+        yield
+        await sessions.purge_expired()
+
+    application = FastAPI(
+        title="SimplyNext Backend",
+        version=__version__,
+        summary="Uncertainty-aware sign-landmark translation service",
+        lifespan=lifespan,
+    )
+    application.state.services = services
+    application.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=runtime_settings.http_max_body_bytes,
+    )
+    if runtime_settings.allowed_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(runtime_settings.allowed_origins),
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+    application.include_router(health_router)
+    application.include_router(api_router, prefix=runtime_settings.api_prefix)
+    if runtime_settings.enable_hypothesis_replay_endpoint:
+        application.include_router(replay_router, prefix=runtime_settings.api_prefix)
+
+    @application.websocket(f"{runtime_settings.api_prefix}/sessions/{{session_id}}/landmarks")
+    async def stream_landmarks(websocket: WebSocket, session_id: UUID) -> None:
+        await landmark_socket(websocket, session_id)
+
+    return application
+
+
+app = create_app()
+
+
+def run() -> None:
+    settings = get_settings()
+    uvicorn.run(
+        "simplynext.main:app",
+        host=settings.host,
+        port=settings.port,
+        log_config=None,
+        ws_max_size=settings.websocket_max_message_bytes,
+        workers=1,
+    )

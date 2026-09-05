@@ -12,7 +12,7 @@
 | :---------------------- | :-------------------------------------------- |
 | **Code**                | `RDM`                                         |
 | **Status**              | Live                                          |
-| **Last reviewed**       | 2026-08-30                                    |
+| **Last reviewed**       | 2026-09-05                                    |
 | **Source of truth for** | Onboarding, environment setup, project status |
 | **Related**             | [`RIX`](ref_index.md) · [`CLD`](CLAUDE.md)    |
 
@@ -21,8 +21,8 @@ wearables. Built for the SimplifyNext Agentic AI Hackathon 2026.
 
 **For the team.** This is the human entry point. [`RIX`](ref_index.md) records where every document
 lives and how to cite any section of it; read it before this file. Sections
-[`RDM_S3`](#3-product-summary), [`RDM_S6`](#6-environment-and-installation) and
-[`RDM_S7`](#7-aws-setup) carry placeholders marking unfinished work.
+[`RDM_S3`](#3-product-summary) and [`RDM_S7`](#7-aws-setup) carry placeholders marking unfinished
+work.
 
 **For the assistant.** This file must let a judge run the code from a clean clone (`D3_p42`).
 Update [`RDM_S9`](#9-project-status) whenever a component changes state, and replace each
@@ -43,7 +43,7 @@ placeholder as its update trigger fires.
 4.  [**Repository layout**](#4-repository-layout) — directory tree and document codes
 5.  [**Reading order**](#5-reading-order) — full onboarding sequence with time estimates
 6.  [**Environment and installation**](#6-environment-and-installation) — prerequisites, setup,
-    required project structure
+    API flow and project structure
 7.  [**AWS setup**](#7-aws-setup) — account registration, sandbox lease, budget cap
 8.  [**Working conventions**](#8-working-conventions) — document, addressing and git conventions
 9.  [**Project status**](#9-project-status) — what exists, what does not, what is blocked
@@ -110,9 +110,12 @@ breaks the flow of conversation.
 
 ## 3.2. The Product
 SimplyNext reads sign language from an ordinary camera and produces conversational text or audio.
-Perception runs locally — subject tracking, landmark extraction, segmentation and recognition — and
-an agentic layer on AWS Bedrock assembles, critiques and, **where confidence is low, refuses to
-guess and requests a repair instead**.
+In the intended end-to-end system, the Flutter client performs camera capture and MediaPipe
+landmark extraction. A nearby Python backend receives only canonical landmark coordinates, then
+performs body-relative normalization, utterance segmentation, closed-vocabulary recognition and
+confidence gating. An optional AWS Bedrock layer receives only compact accepted gloss evidence for
+bounded caption assembly and critique. **Where confidence is low, the backend refuses to guess and
+requests a repair instead.**
 
 That last property is the design invariant. For an assistive tool, a fluent wrong sentence
 attributed to a deaf person is worse than no sentence at all.
@@ -144,7 +147,7 @@ SimplyNext/
 │   ├── JCR_judging_criteria.md      how the submission is scored
 │   ├── ARC_architecture.md          technical direction, sourced
 │   ├── RSK_risk_register.md         136 catalogued risks
-│   └── PLN_plan.md                  execution plan: 9 packages, 50 tasks
+|   └── PLN_plan.md                  execution plan: 9 packages, 50 tasks
 │
 ├── doc/                             reference material and syntheses
 │   ├── [D1..D6]*.pdf                training decks (read-only originals)
@@ -152,27 +155,33 @@ SimplyNext/
 │   ├── APS_apple_synthesis.md       Apple HandPose, in short
 │   ├── MPS_mediapipe_synthesis.md   MediaPipe, in short  ← the dependency
 │   ├── DHS_depthai_synthesis.md     DepthAI hand tracker, in short
-│   ├── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
-│   ├── SLS_slrt_synthesis.md        SLRT, in short  ← the published numbers
-│   ├── SAS_sam_slr_synthesis.md     SAM-SLR, in short
-│   ├── SPS_sign_pose_synthesis.md   pose-format, in short  ← a candidate dependency
-│   ├── SSS_spoken_to_signed_synthesis.md      the reverse direction, in short
-│   ├── LTS_signlang_literature_synthesis.md   the field survey, in short
-│   └── STS_sign_translator_synthesis.md       sign-language-translator, in short
+│   └── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
 │
-└── ref_repo/                        ten third-party clones. THE CLONES ARE GIT-IGNORED
-    ├── tracking/                    perception — finding and following the body
-    │   ├── apple/APR_apple_report.md                  tracked — Apple, in full
-    │   ├── google-mediapipe/MPR_mediapipe_report.md   tracked — MediaPipe, in full
-    │   ├── depthai-hand-tracker/DHR_depthai_report.md tracked — DepthAI, in full
-    │   └── openpose/OPR_openpose_report.md            tracked — OpenPose, in full
-    └── translation/                 language — sign to spoken, and back
-        ├── slrt/SLR_slrt_report.md                    tracked — SLRT, in full
-        ├── sam-slr/SAR_sam_slr_report.md              tracked — SAM-SLR, in full
-        ├── sign-pose/SPR_sign_pose_report.md          tracked — pose-format, in full
-        ├── spoken-to-signed/SSR_spoken_to_signed_report.md      tracked
-        ├── signlang-literature/LTR_signlang_literature_report.md tracked
-        └── sign-translator/STR_sign_translator_report.md        tracked
+└── ref_repo/                        four third-party clones. THE CLONES ARE GIT-IGNORED
+    ├── apple/APR_apple_report.md            tracked — Apple, in full
+    ├── google-mediapipe/MPR_mediapipe_report.md      tracked — MediaPipe, in full
+    ├── depthai-hand-tracker/DHR_depthai_report.md    tracked — DepthAI, in full
+    └── openpose/OPR_openpose_report.md               tracked — OpenPose, in full
+```
+From backend branch:
+|-- pyproject.toml                   package, dependencies and tool configuration
+|-- requirements.txt                 compatible pip runtime install entry point
+|-- .env.example                     non-secret runtime configuration
+|-- main.py                          clean-clone compatibility entry point
+|-- src/simplynext/
+|   |-- contracts/                   strict HTTP and WebSocket schemas
+|   |-- sessions/                    bounded ephemeral session state
+|   |-- pipeline/                    normalization and segmentation
+|   |-- recognition/                 calibrated closed-vocabulary recognition
+|   |-- agent/                       deterministic or bounded Bedrock assembly
+|   |-- api/                         HTTP, WebSocket and body-size controls
+|   `-- observability/               payload-free JSON logs and metrics
+|-- tests/                           unit and end-to-end protocol tests
+|-- data/                            local model bundles and consent-controlled data
+|-- docs/                            generated developer documentation
+|-- plan/                            what the team is building; source of truth
+|-- doc/                             reference material and syntheses
+`-- ref_repo/                        third-party clones; clones are git-ignored
 ```
 
 `src/`, `tests/` and `data/` do not exist yet — see [`RDM_S9`](#9-project-status).
@@ -229,20 +238,21 @@ Deep dives, as needed: the ten full reports in `ref_repo/`, each beside the clon
 
 
 # 6. ENVIRONMENT AND INSTALLATION
-> **Note:** implementation has not started. This section records the environment the competition
-> requires (`D3_p42`, `D3_p23`) so that the first commit lands correctly.
+> **Note:** a runnable first-draft Python backend now exists. The current Flutter prototype still
+> emits demonstration landmarks; real camera capture and on-device MediaPipe extraction remain to
+> be connected to this API.
 
 
 
 
 ## 6.1. Prerequisites
-| Tool                               | Purpose                                        |
-| :--------------------------------- | :--------------------------------------------- |
-| **Git**                            | Version control — https://git-scm.com/install/ |
-| **Python 3.11+**                   | `D3_p42`: *"Python is strongly recommended"*   |
-| **`uv`**                           | The package manager used by the training labs  |
-| A webcam                           | The entire input modality                      |
-| An AWS account with Bedrock access | [`RDM_S7`](#7-aws-setup)                       |
+| Tool                               | Purpose                                         |
+| :--------------------------------- | :---------------------------------------------- |
+| **Git**                            | Version control — https://git-scm.com/install/  |
+| **Python 3.11–3.13**               | Backend runtime and bundled `pip`               |
+| **`uv`** *(optional)*              | Used only by the separate training labs         |
+| A Flutter landmark integration     | Required only for live end-to-end use; still pending |
+| An AWS account with Bedrock access | Optional bounded caption assembly               |
 
 Installing `uv`:
 
@@ -323,36 +333,87 @@ not used until Session 2.
 
 
 ## 6.4. Project Environment
-> **Placeholder — run instructions.**
-> **Missing:** the real entry point, dependency manifest and `.env.example` contents. The commands
-> below are the intended shape, not a working sequence.
-> **Update trigger:** the first commit under `src/`.
-> **Owner:** assistant, on the commit that creates `src/`.
+Linux or macOS:
 
 ```bash
-uv sync                       # install dependencies from pyproject/requirements
-cp .env.example .env          # then fill in local keys
-uv run python -m src.main     # entry point does not exist yet
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+cp .env.example .env
+python main.py
 ```
 
-> **Warning:** secrets go in `.env`, which is git-ignored. Never commit a key, and never commit the
-> 2FA secret from `D6`.
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+python main.py
+```
+
+The API is then available at `http://127.0.0.1:8000`; interactive contract documentation is at
+`http://127.0.0.1:8000/docs`. A clean install is verified with:
+
+```bash
+python -m pytest
+python -m ruff check src tests main.py
+python -m mypy src
+```
+
+`GET /healthz` returns `200` when the process is healthy. `GET /readyz` intentionally returns `503`
+until both a calibrated recognition bundle and a caption assembler are configured; this means
+captions are disabled, not that the server failed to start. Readiness validates local configuration
+and does not make a paid Bedrock call or prove that AWS credentials and model access work. The
+deterministic caption file shape is demonstrated in `data/caption_templates.example.json`.
+
+> **Warning:** secrets go in `.env`, which is git-ignored. Bedrock uses the standard AWS credential
+> provider chain; credentials are never fields in the application configuration. Never commit a key
+> or the 2FA secret from `D6`.
 
 
 
 
 ## 6.5. Required Project Structure
-`D3_p23` states that judges expect a legible hierarchy. The first code to land should produce:
+`D3_p23` states that judges expect a legible hierarchy. The first draft provides:
 
 ```text
-src/          implementation; module names must match the architecture slide
-docs/         generated or developer documentation
-data/         datasets and recordings  (check consent — RSK HUM-15)
-tests/        automated tests
-requirements.txt  or  pyproject.toml
-.env.example      committed;  .env  is not
-README.md         must let a judge run the code from a clean clone
+src/          installable SimplyNext backend package
+docs/         generated or developer documentation placeholder
+data/         local bundles and consent-controlled recordings
+tests/        unit, safety and transport integration tests
+pyproject.toml dependency and tool configuration
+requirements.txt pip runtime installation entry point
+.env.example  committed non-secret settings; .env is ignored
+README.md     clean-clone runbook and project status
 ```
+
+
+
+
+
+## 6.6. First Draft API
+1. `POST /v1/sessions` negotiates the canonical landmark layout, batch limit, target frame rate,
+   short-lived session identifier and one bearer token. One deployment serves the language selected
+   by `SIMPLYNEXT_RECOGNITION_LANGUAGE`, which defaults to ASL.
+2. The Flutter client opens the returned WebSocket path with that bearer token. Only one active
+   landmark stream may own a session.
+3. Each `landmark_batch` carries ordered frames up to the limit negotiated for that session. The
+   server acknowledges sequence numbers and reports aggregate client-reported plus server-evicted
+   frame loss.
+4. The backend detects signing activity, retains a bounded utterance window, normalizes landmarks
+   relative to the signer, resamples time and asks the configured recognizer for calibrated top-k
+   gloss candidates.
+5. Confidence, margin, coverage, duration, frame loss, vocabulary and calibration gates run before
+   caption assembly. Accepted evidence produces `utterance_result`; anything else produces
+   `repair_required` with a concrete action such as repeat, reposition or fingerspell.
+6. `control` messages support `start`, `pause`, `resume`, `commit`, `clear_live_data`, `ping` and
+   `end`. Invalid or replayed sequence numbers produce typed errors.
+
+Raw camera frames are never accepted by this backend and landmarks are never sent to Bedrock. The
+classified-hypothesis replay endpoint is disabled by default and exists only for authenticated
+development evaluation when `SIMPLYNEXT_ENABLE_HYPOTHESIS_REPLAY_ENDPOINT=true`.
 
 ---
 
@@ -469,9 +530,11 @@ D3_p39       doc/[D3]_..., slide 39
     ratified; thirty-one of its fifty tasks proceed regardless —
     [`PLN_S2.3`](plan/PLN_plan.md#23-the-lane-that-proceeds-regardless)
 8.  **Implementation (`src/`)**
-    🔴 Not started
+    🟡 Runnable first-draft backend: contracts, bounded sessions, WebSocket ingestion, signer-relative
+    normalization, segmentation, template recognition, confidence policy, caption assembly,
+    observability and automated tests
 9.  **Dataset**
-    🔴 Not collected. The largest open question
+    🔴 Not collected; no calibrated recognition template bundle exists yet
 10. **AWS lease**
     ⬜ Unconfirmed — see the placeholder in [`RDM_S7.2`](#72-the-budget)
 

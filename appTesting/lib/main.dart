@@ -1,13 +1,19 @@
 import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_controller.dart';
+import 'models/hand_tracking_models.dart';
 import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
+import 'services/api_client.dart';
+import 'services/sign_analysis_service.dart';
+import 'services/web_tracking_service.dart';
 import 'services/tracking_service.dart';
+import 'ui/web_camera_preview.dart';
 
 const _background = Color(0xFF07111F);
 const _surface = Color(0xFF102235);
@@ -22,12 +28,17 @@ const _subtle = Color(0xFF657B8D);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
+  final backendUrl = const String.fromEnvironment('SIGNBRIDGE_API_URL');
+  final apiClient = backendUrl.isEmpty
+      ? null
+      : SignSequenceApiClient(baseUri: Uri.parse(backendUrl));
   runApp(
     SignBridgeApp(
       controller: AppController(
         LocalStateService(preferences),
-        DemoTrackingService(),
+        kIsWeb ? WebTrackingService() : DemoTrackingService(),
         DeviceAccessService(),
+        apiClient: apiClient,
       ),
     ),
   );
@@ -563,8 +574,10 @@ class OnboardingScreen extends StatelessWidget {
     final alignment = controller.alignment;
     final canContinue =
         isCameraReady &&
-        alignment.isAligned &&
-        (step < 2 || controller.latestFrame?.armsVisible == true) &&
+        (alignment.isAligned || controller.latestFrame?.handsVisible == true) &&
+        (step < 2 ||
+            controller.latestFrame?.armsVisible == true ||
+            controller.latestFrame?.handsVisible == true) &&
         (step < 3 || controller.latestFrame?.handsVisible == true);
     final steps = <({String label, String detail})>[
       (
@@ -635,23 +648,25 @@ class OnboardingScreen extends StatelessWidget {
               ),
               const SizedBox(height: 7),
               DropdownButtonFormField<String>(
-                initialValue: 'SgSL · Singapore Sign Language',
+                initialValue: controller.selectedLanguage,
                 isExpanded: true,
                 items: const <DropdownMenuItem<String>>[
                   DropdownMenuItem(
-                    value: 'SgSL · Singapore Sign Language',
-                    child: Text('SgSL · Singapore Sign Language'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'ASL · American Sign Language',
+                    value: 'ASL',
                     child: Text('ASL · American Sign Language'),
                   ),
                   DropdownMenuItem(
-                    value: 'BSL · British Sign Language',
+                    value: 'SgSL',
+                    child: Text('SgSL · Singapore Sign Language'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'BSL',
                     child: Text('BSL · British Sign Language'),
                   ),
                 ],
-                onChanged: (_) {},
+                onChanged: (value) {
+                  if (value != null) controller.setLanguage(value);
+                },
                 icon: const Icon(Icons.keyboard_arrow_down, color: _cyan),
                 decoration: const InputDecoration(
                   contentPadding: EdgeInsets.symmetric(
@@ -801,11 +816,15 @@ class TrackingPreview extends StatelessWidget {
         fit: StackFit.expand,
         children: <Widget>[
           if (controller.devices.cameraReady)
-            CameraPreview(controller.devices.cameraController!)
+            kIsWeb
+                ? WebCameraPreview()
+                : CameraPreview(controller.devices.cameraController!)
           else
             const CustomPaint(painter: _PreviewBackgroundPainter()),
           if (controller.viewMode != ViewMode.raw)
             CustomPaint(painter: LandmarkPainter(controller.latestFrame)),
+          if (controller.viewMode == ViewMode.wireframe)
+            CustomPaint(painter: HandSkeletonPainter(controller.latestFrame)),
           if (showLabels)
             const Positioned(
               left: 15,
@@ -943,9 +962,54 @@ class LandmarkPainter extends CustomPainter {
   }
 
   Offset _offset(NormalizedPoint point, Size size) =>
-      Offset(point.x * size.width, point.y * size.height);
+      Offset((1 - point.x) * size.width, point.y * size.height);
   @override
   bool shouldRepaint(covariant LandmarkPainter oldDelegate) =>
+      oldDelegate.frame != frame;
+}
+
+class HandSkeletonPainter extends CustomPainter {
+  HandSkeletonPainter(this.frame);
+  final LandmarkFrame? frame;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final hands = frame?.hands ?? const <TrackedHand>[];
+    for (final hand in hands) {
+      final color = hand.handedness == Handedness.left ? _mint : _cyan;
+      final linePaint = Paint()
+        ..color = color.withValues(alpha: .8)
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke;
+      final pointPaint = Paint()..color = color;
+      for (final edge in handLandmarkEdges) {
+        if (edge.any((index) => index >= hand.landmarks.length)) continue;
+        canvas.drawLine(
+          _project(hand.landmarks[edge[0]], size),
+          _project(hand.landmarks[edge[1]], size),
+          linePaint,
+        );
+      }
+      for (final landmark in hand.landmarks) {
+        final point = _project(landmark, size);
+        final radius = (4.5 - landmark.z.abs() * 8).clamp(2.5, 5.5);
+        canvas.drawCircle(point, radius, pointPaint);
+        canvas.drawCircle(
+          point,
+          radius + 4,
+          Paint()..color = color.withValues(alpha: .12),
+        );
+      }
+    }
+  }
+
+  Offset _project(HandLandmark landmark, Size size) => Offset(
+    (1 - landmark.x - landmark.z * .12) * size.width,
+    (landmark.y - landmark.z * .08) * size.height,
+  );
+
+  @override
+  bool shouldRepaint(covariant HandSkeletonPainter oldDelegate) =>
       oldDelegate.frame != frame;
 }
 
@@ -992,7 +1056,12 @@ class LiveTranslatorScreen extends StatelessWidget {
       action: Wrap(
         spacing: 10,
         children: <Widget>[
-          const _StatusPill(label: 'System ready', color: _mint),
+          _StatusPill(
+            label: controller.trackingStatus,
+            color: controller.trackingStatus.contains('MediaPipe')
+                ? _mint
+                : _yellow,
+          ),
           OutlineButton(
             label: 'Practice mode',
             icon: Icons.open_in_new,
@@ -1013,37 +1082,52 @@ class LiveTranslatorScreen extends StatelessWidget {
                     horizontal: 6,
                     vertical: 5,
                   ),
-                  child: Row(
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 10,
                     children: <Widget>[
-                      const Icon(Icons.circle, color: _mint, size: 10),
-                      const SizedBox(width: 9),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
-                          const Text(
-                            'Tracking ready',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          Text(
-                            'Pose + hands · ${controller.confidence == 0 ? 'Starting' : '${(controller.confidence * 100).round()}% confidence'}',
-                            style: const TextStyle(
-                              color: _subtle,
-                              fontSize: 10,
-                            ),
+                          const Icon(Icons.circle, color: _mint, size: 10),
+                          const SizedBox(width: 9),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              const Text(
+                                'Tracking ready',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                'Pose + hands + face · ${controller.confidence == 0 ? 'Starting' : '${(controller.confidence * 100).round()}% confidence'}',
+                                style: const TextStyle(
+                                  color: _subtle,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      const Spacer(),
-                      const _FpsBadge(),
-                      const SizedBox(width: 12),
-                      _ViewToggle(controller: controller),
+                      Wrap(
+                        spacing: 12,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: <Widget>[
+                          const _FpsBadge(),
+                          _ViewToggle(controller: controller),
+                        ],
+                      ),
                     ],
                   ),
                 ),
                 TrackingPreview(controller: controller, height: 410),
+                const SizedBox(height: 12),
+                _HandAnalysisCard(controller: controller),
                 const SizedBox(height: 12),
                 _CaptionCard(controller: controller),
               ],
@@ -1057,6 +1141,158 @@ class LiveTranslatorScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HandAnalysisCard extends StatelessWidget {
+  const _HandAnalysisCard({required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final frame = controller.latestFrame;
+    final motion = frame?.handMotion;
+    final face = frame?.faceExpression;
+    final analysis = controller.latestAnalysis;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 13),
+      decoration: BoxDecoration(
+        color: _mint.withValues(alpha: .045),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: _mint.withValues(alpha: .18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.pan_tool_outlined, color: _mint, size: 17),
+              const SizedBox(width: 8),
+              const _Eyebrow('Hand signal'),
+              const Spacer(),
+              Text(
+                '${frame?.hands.length ?? 0} / 2 hands · ${frame?.hands.isNotEmpty == true ? '21 points each' : 'waiting'}',
+                style: const TextStyle(
+                  color: _subtle,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Row(
+            children: <Widget>[
+              _Metric(
+                label: 'Shape',
+                value: analysis?.gestureLabel ?? 'Not read',
+              ),
+              _Metric(label: 'Motion', value: motion?.direction ?? 'Still'),
+              _Metric(
+                label: 'Open',
+                value: '${((motion?.averageOpenness ?? 0) * 100).round()}%',
+              ),
+              const Spacer(),
+              PrimaryButton(
+                label: controller.analysisInFlight
+                    ? 'Sending…'
+                    : 'Analyse sign',
+                icon: Icons.insights_outlined,
+                onPressed: controller.analysisInFlight
+                    ? null
+                    : controller.analyzeSign,
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Text(
+            analysis?.detail ?? 'The front end keeps a short 3D-normalised hand sequence ready for analysis.',
+            style: const TextStyle(color: _muted, fontSize: 10, height: 1.35),
+          ),
+          const SizedBox(height: 9),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _cyan.withValues(alpha: .045),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: _cyan.withValues(alpha: .12)),
+            ),
+            child: Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.face_retouching_natural,
+                  color: _cyan,
+                  size: 16,
+                ),
+                const SizedBox(width: 7),
+                const Text(
+                  'Face signal',
+                  style: TextStyle(
+                    color: _subtle,
+                    fontSize: 9,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  face == null
+                      ? 'waiting'
+                      : '${face.label} · ${(face.confidence * 100).round()}%',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            controller.backendStatus,
+            style: const TextStyle(
+              color: _subtle,
+              fontSize: 9,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 22),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            color: _subtle,
+            fontSize: 8,
+            fontFamily: 'monospace',
+            letterSpacing: .6,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _StatusPill extends StatelessWidget {
@@ -1539,8 +1775,38 @@ class DictionaryScreen extends StatelessWidget {
             runSpacing: 14,
             children: controller.customSigns
                 .map(
-                  (sign) => SizedBox(width: 250, child: _SignCard(sign: sign)),
+                  (sign) => SizedBox(
+                    width: 250,
+                    child: _SignCard(
+                      sign: sign,
+                      onDelete: () => controller.deleteCustomSign(sign),
+                    ),
+                  ),
                 )
+                .toList(),
+          ),
+        const SizedBox(height: 30),
+        const _Eyebrow('Reference vocabulary'),
+        const SizedBox(height: 8),
+        Text(
+          'Use these language-specific references when naming a personal sign. The browser records your examples; it does not claim that ASL, BSL, and SgSL are interchangeable.',
+          style: const TextStyle(color: _muted, fontSize: 12, height: 1.5),
+        ),
+        const SizedBox(height: 14),
+        if (SignLexicon.entriesFor(controller.selectedLanguage).isEmpty)
+          GlassCard(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              '${controller.selectedLanguage} is available as a language profile. Add community-approved examples before using it as a training lexicon.',
+              style: const TextStyle(color: _muted, fontSize: 12, height: 1.5),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: SignLexicon.entriesFor(controller.selectedLanguage)
+                .map((entry) => _ReferenceSignCard(entry: entry))
                 .toList(),
           ),
       ],
@@ -1569,8 +1835,9 @@ class DictionaryScreen extends StatelessWidget {
 }
 
 class _SignCard extends StatelessWidget {
-  const _SignCard({required this.sign});
+  const _SignCard({required this.sign, required this.onDelete});
   final CustomSign sign;
+  final VoidCallback onDelete;
   @override
   Widget build(BuildContext context) => GlassCard(
     child: Column(
@@ -1591,21 +1858,83 @@ class _SignCard extends StatelessWidget {
           sign.label,
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         ),
-        const SizedBox(height: 6),
-        Text(
-          sign.hasEnoughSamples
-              ? 'Recognition-ready personal sign'
-              : '${sign.samples.length} / 5 valid samples',
-          style: const TextStyle(color: _muted, fontSize: 11),
+        const SizedBox(height: 8),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                '${sign.language} · ${sign.samples.length}/5 samples',
+                style: const TextStyle(color: _muted, fontSize: 11),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Delete personal sign',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline, size: 17),
+              color: _subtle,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ],
         ),
         const SizedBox(height: 9),
         Text(
           sign.hasEnoughSamples
-              ? 'Stored landmark sequences are available to the model.'
-              : 'More landmark samples are needed before recognition.',
+              ? 'Hand coordinates + face signal stored for matching.'
+              : 'More live samples are needed before recognition.',
           style: const TextStyle(color: _subtle, fontSize: 10, height: 1.4),
         ),
+        const SizedBox(height: 7),
+        Text(
+          'Face: ${sign.faceSignal} · ${sign.coordinateSpace}',
+          style: const TextStyle(color: _subtle, fontSize: 9, height: 1.35),
+        ),
       ],
+    ),
+  );
+}
+
+class _ReferenceSignCard extends StatelessWidget {
+  const _ReferenceSignCard({required this.entry});
+  final SignLexiconEntry entry;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 210,
+    child: GlassCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.menu_book_outlined, color: _cyan, size: 17),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  entry.label,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            entry.parameters.join(' · '),
+            style: const TextStyle(color: _muted, fontSize: 10, height: 1.4),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Reference: ${entry.sourceUrl}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _subtle, fontSize: 9, height: 1.3),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -1629,8 +1958,8 @@ class _CustomSignFlowScreenState extends State<CustomSignFlowScreen> {
       controller.devices.cameraReady &&
       controller.alignment.isAligned &&
       controller.latestFrame?.shouldersVisible == true &&
-      controller.latestFrame?.armsVisible == true &&
-      controller.latestFrame?.handsVisible == true;
+      controller.latestFrame?.handsVisible == true &&
+      (controller.latestFrame?.trackingConfidence ?? 0) >= .70;
 
   @override
   void dispose() {
@@ -1834,10 +2163,8 @@ class _CustomSignFlowScreenState extends State<CustomSignFlowScreen> {
       _error = null;
     });
     await Future<void>.delayed(const Duration(seconds: 1));
-    final frame = controller.latestFrame;
-    if (frame == null ||
-        frame.trackingConfidence < .70 ||
-        frame.featureVector.isEmpty) {
+    final sample = controller.captureCurrentSignSample();
+    if (sample == null) {
       setState(() {
         _recording = false;
         _error = 'This sample was not clear enough. Reposition yourself and repeat it.';
@@ -1845,7 +2172,7 @@ class _CustomSignFlowScreenState extends State<CustomSignFlowScreen> {
       return;
     }
     setState(() {
-      _samples.add(List<double>.from(frame.featureVector));
+      _samples.add(sample);
       _recording = false;
     });
   }
@@ -1959,6 +2286,7 @@ class SettingsScreen extends StatelessWidget {
         );
         return stack
             ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[left, const SizedBox(height: 15), right],
               )
             : Row(

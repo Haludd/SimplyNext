@@ -1,5 +1,9 @@
 import 'dart:math' as math;
 
+import 'hand_coordinate_analysis.dart';
+import 'hand_tracking_models.dart';
+import 'face_tracking_models.dart';
+
 class NormalizedPoint {
   const NormalizedPoint({
     required this.x,
@@ -28,6 +32,10 @@ class LandmarkFrame {
     this.lightingScore = 0.9,
     this.trackingConfidence = 0.98,
     this.featureVector = const <double>[],
+    this.hands = const <TrackedHand>[],
+    this.handCoordinateAnalysis = const <HandCoordinateAnalysis>[],
+    this.faceExpression,
+    this.handMotion,
   });
 
   final DateTime timestamp;
@@ -40,12 +48,40 @@ class LandmarkFrame {
   final double lightingScore;
   final double trackingConfidence;
   final List<double> featureVector;
+  final List<TrackedHand> hands;
+  final List<HandCoordinateAnalysis> handCoordinateAnalysis;
+  final FaceExpressionFeatures? faceExpression;
+  final HandMotionFeatures? handMotion;
 
   bool get shouldersVisible =>
       leftShoulder?.isVisible == true && rightShoulder?.isVisible == true;
   bool get armsVisible =>
       leftWrist?.isVisible == true && rightWrist?.isVisible == true;
-  bool get handsVisible => leftHandVisible && rightHandVisible;
+  bool get handsVisible =>
+      hands.isNotEmpty || (leftHandVisible && rightHandVisible);
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'timestamp': timestamp.toUtc().toIso8601String(),
+    'tracking_confidence': trackingConfidence,
+    'left_shoulder': leftShoulder?.toJson(),
+    'right_shoulder': rightShoulder?.toJson(),
+    'hands': hands.map((hand) => hand.toJson()).toList(),
+    'hand_coordinate_analysis': handCoordinateAnalysis
+        .map((analysis) => analysis.toJson())
+        .toList(),
+    'face_expression': faceExpression?.toJson(),
+    'hand_motion': handMotion?.toJson(),
+    'feature_vector': featureVector,
+  };
+}
+
+extension on NormalizedPoint {
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'x': x,
+    'y': y,
+    'z': z,
+    'visibility': visibility,
+  };
 }
 
 class AlignmentConfig {
@@ -208,11 +244,19 @@ class CustomSign {
     required this.label,
     required this.samples,
     required this.createdAt,
+    this.language = 'ASL',
+    this.vectorSize = 0,
+    this.coordinateSpace = 'normalized_3d',
+    this.faceSignal = 'not captured',
   });
 
   final String label;
   final List<List<double>> samples;
   final DateTime createdAt;
+  final String language;
+  final int vectorSize;
+  final String coordinateSpace;
+  final String faceSignal;
 
   bool get hasEnoughSamples => samples.length >= 5;
 
@@ -220,6 +264,10 @@ class CustomSign {
     'label': label,
     'samples': samples,
     'createdAt': createdAt.toIso8601String(),
+    'language': language,
+    'vector_size': vectorSize,
+    'coordinate_space': coordinateSpace,
+    'face_signal': faceSignal,
   };
 
   factory CustomSign.fromJson(Map<String, dynamic> json) => CustomSign(
@@ -232,5 +280,9 @@ class CustomSign {
         )
         .toList(),
     createdAt: DateTime.parse(json['createdAt'] as String),
+    language: json['language'] as String? ?? 'ASL',
+    vectorSize: (json['vector_size'] as num?)?.toInt() ?? 0,
+    coordinateSpace: json['coordinate_space'] as String? ?? 'normalized_3d',
+    faceSignal: json['face_signal'] as String? ?? 'not captured',
   );
 }

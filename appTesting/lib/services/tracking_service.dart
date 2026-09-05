@@ -6,6 +6,9 @@ abstract class TrackingService {
   Stream<LandmarkFrame> get frames;
   LandmarkFrame? get latestFrame;
   TrackingSampleBuffer get confidenceWindow;
+  List<LandmarkFrame> get recentFrames;
+  String get status;
+  Future<void> start();
   void ingest(LandmarkFrame frame);
   void dispose();
 }
@@ -44,6 +47,7 @@ class DemoTrackingService implements TrackingService {
   final StreamController<LandmarkFrame> _controller =
       StreamController<LandmarkFrame>.broadcast();
   final TrackingSampleBuffer _confidenceWindow = TrackingSampleBuffer();
+  final List<LandmarkFrame> _recentFrames = <LandmarkFrame>[];
   LandmarkFrame? _latestFrame;
   late final Timer _timer;
 
@@ -57,8 +61,20 @@ class DemoTrackingService implements TrackingService {
   TrackingSampleBuffer get confidenceWindow => _confidenceWindow;
 
   @override
+  List<LandmarkFrame> get recentFrames =>
+      List<LandmarkFrame>.unmodifiable(_recentFrames);
+
+  @override
+  String get status => 'Demo tracking';
+
+  @override
+  Future<void> start() async {}
+
+  @override
   void ingest(LandmarkFrame frame) {
     _latestFrame = frame;
+    _recentFrames.add(frame);
+    if (_recentFrames.length > 180) _recentFrames.removeAt(0);
     _confidenceWindow.add(frame.trackingConfidence, frame.timestamp);
     if (!_controller.isClosed) _controller.add(frame);
   }

@@ -18,6 +18,7 @@ dependencies:
   shared_preferences: ^2.0.0
   speech_to_text: ^7.0.0
   vector_math: ^2.1.4
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -26,3 +27,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/sign_lexicon.json

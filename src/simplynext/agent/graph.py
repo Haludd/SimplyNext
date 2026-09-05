@@ -21,6 +21,7 @@ from uuid import UUID
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Overwrite
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
 from simplynext.agent.state import (
@@ -43,6 +44,7 @@ MAX_GRAPH_LOOP_CAP: Final[int] = 1
 
 _JSON_OBJECT_ADAPTER: TypeAdapter[GraphPayload] = TypeAdapter(dict[str, JsonValue])
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_IDENTIFIERS_ADAPTER: TypeAdapter[tuple[Identifier, ...]] = TypeAdapter(tuple[Identifier, ...])
 
 
 class _GraphValue(BaseModel):
@@ -92,6 +94,9 @@ class AgentRunRecord(_GraphValue):
     loop_count: int = Field(strict=True, ge=0)
     loop_cap: int = Field(strict=True, ge=0)
     node_path: tuple[GraphNodeName, ...]
+    adaptation_request_ids: tuple[Identifier, ...] = ()
+    memory_upserts_applied: int = Field(default=0, strict=True, ge=0)
+    memory_deletions_applied: int = Field(default=0, strict=True, ge=0)
 
 
 class ConfidentResult(_GraphValue):
@@ -130,10 +135,20 @@ class AgentGraphState(AgentState):
 
 
 class AdapterUpdate(TypedDict, total=False):
-    """Only the reducer-backed values that stage 10 may persist."""
+    """Persistent values and graph-consumed audit metadata from stage ⑩."""
 
     conversation_history: ConversationHistory
     signer_memory: SignerMemory
+    signer_memory_deletions: tuple[Identifier, ...]
+    processed_adaptation_request_ids: tuple[Identifier, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedAdapterUpdate:
+    state_update: dict[str, object]
+    request_ids: tuple[str, ...]
+    upserts_applied: int
+    deletions_applied: int
 
 
 class AgentToolDefinition(_GraphValue):
@@ -463,10 +478,10 @@ def build_agent_graph(
     def adapter(state: AgentGraphState) -> dict[str, object]:
         if state["outcome"] is None or state["result"] is None:
             raise RuntimeError("adapter requires a terminal outcome and result")
-        update = _validated_adapter_update(
-            nodes.adapter(state, tool_executor), signer_id=state["signer_id"]
-        )
+        validated = _validated_adapter_update(nodes.adapter(state, tool_executor), state=state)
+        update = validated.state_update
         node_path = (*state["node_path"], GraphNodeName.ADAPTER)
+        update["adaptation_requests"] = ()
         update["node_path"] = node_path
         update["run_record"] = AgentRunRecord(
             session_id=state["lattice"].session_id,
@@ -476,6 +491,9 @@ def build_agent_graph(
             loop_count=state["loop_count"],
             loop_cap=state["loop_cap"],
             node_path=node_path,
+            adaptation_request_ids=validated.request_ids,
+            memory_upserts_applied=validated.upserts_applied,
+            memory_deletions_applied=validated.deletions_applied,
         )
         return update
 
@@ -516,6 +534,7 @@ def _initial_graph_state(state: AgentState) -> AgentGraphState:
         signer_id = state["signer_id"]
         history = state["conversation_history"]
         memory = state["signer_memory"]
+        adaptations = state["adaptation_requests"]
         loop_cap = state["loop_cap"]
     except KeyError as exc:
         raise ValueError(f"agent state is missing required key: {exc.args[0]}") from exc
@@ -527,6 +546,7 @@ def _initial_graph_state(state: AgentState) -> AgentGraphState:
         signer_id=signer_id,
         conversation_history=history,
         signer_memory=memory,
+        adaptation_requests=adaptations,
         loop_cap=loop_cap,
     )
     if base["loop_cap"] > MAX_GRAPH_LOOP_CAP:
@@ -576,9 +596,13 @@ def _validate_thread_scope(state: AgentGraphState, prior_values: Mapping[str, ob
         raise ThreadScopeError("thread_id is already scoped to a different conversation session")
 
 
-def _validated_adapter_update(value: AdapterUpdate | None, *, signer_id: str) -> dict[str, object]:
+def _validated_adapter_update(
+    value: AdapterUpdate | None,
+    *,
+    state: AgentGraphState,
+) -> _ValidatedAdapterUpdate:
     if value is None:
-        return {}
+        return _ValidatedAdapterUpdate({}, (), 0, 0)
     if not isinstance(value, Mapping):
         raise TypeError("adapter node must return a mapping or None")
     update: dict[str, object] = dict(value)
@@ -589,13 +613,61 @@ def _validated_adapter_update(value: AdapterUpdate | None, *, signer_id: str) ->
     history = value.get("conversation_history")
     if history is not None:
         update["conversation_history"] = reduce_conversation_history((), history)
+
     memory = value.get("signer_memory")
+    normalized_memory: SignerMemory = ()
     if memory is not None:
         normalized_memory = reduce_signer_memory((), memory)
-        if any(entry.signer_id != signer_id for entry in normalized_memory):
+        if any(entry.signer_id != state["signer_id"] for entry in normalized_memory):
             raise ValueError("adapter returned memory outside the current signer scope")
         update["signer_memory"] = normalized_memory
-    return update
+
+    deletion_ids = _validated_identifiers(
+        value.get("signer_memory_deletions", ()),
+        name="signer_memory_deletions",
+    )
+    if set(deletion_ids).intersection(entry.memory_id for entry in normalized_memory):
+        raise ValueError("adapter cannot upsert and delete the same memory_id")
+
+    request_ids = _validated_identifiers(
+        value.get("processed_adaptation_request_ids", ()),
+        name="processed_adaptation_request_ids",
+    )
+    allowed_request_ids = {request.request_id for request in state["adaptation_requests"]}
+    if not set(request_ids).issubset(allowed_request_ids):
+        raise ValueError("adapter reported an unknown adaptation request_id")
+
+    current_by_id = {entry.memory_id: entry for entry in state["signer_memory"]}
+    merged_memory = reduce_signer_memory(state["signer_memory"], normalized_memory)
+    merged_by_id = {entry.memory_id: entry for entry in merged_memory}
+    upserts_applied = sum(
+        current_by_id.get(entry.memory_id) != merged_by_id[entry.memory_id]
+        for entry in normalized_memory
+    )
+    deletion_set = set(deletion_ids)
+    deletions_applied = len(deletion_set.intersection(merged_by_id))
+    if deletion_ids:
+        retained = tuple(entry for entry in merged_memory if entry.memory_id not in deletion_set)
+        update["signer_memory"] = Overwrite(value=retained)
+
+    update.pop("signer_memory_deletions", None)
+    update.pop("processed_adaptation_request_ids", None)
+    return _ValidatedAdapterUpdate(
+        state_update=update,
+        request_ids=request_ids,
+        upserts_applied=upserts_applied,
+        deletions_applied=deletions_applied,
+    )
+
+
+def _validated_identifiers(value: object, *, name: str) -> tuple[str, ...]:
+    try:
+        identifiers = _IDENTIFIERS_ADAPTER.validate_python(value, strict=True)
+    except Exception as exc:
+        raise ValueError(f"adapter returned invalid {name}") from exc
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError(f"adapter returned duplicate {name}")
+    return identifiers
 
 
 def _require_completed_run(state: AgentGraphState) -> None:

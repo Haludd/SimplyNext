@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Annotated, Final, Literal, TypedDict
+from typing import Annotated, Final, Literal, TypeAlias, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
@@ -21,6 +21,7 @@ from simplynext.contracts.common import Identifier
 from simplynext.contracts.gloss_lattice import GlossLattice
 
 DEFAULT_LOOP_CAP: Final[int] = 1
+MAX_ADAPTATION_REQUESTS: Final[int] = 16
 MAX_CONVERSATION_CONTENT_CHARACTERS: Final[int] = 4_000
 MAX_CONVERSATION_HISTORY_MESSAGES: Final[int] = 64
 MAX_MEMORY_KEY_CHARACTERS: Final[int] = 256
@@ -103,6 +104,41 @@ class SignerMemoryEntry(_StateValue):
         return True
 
 
+class MemoryAdaptationOperation(StrEnum):
+    """Explicit application-owned memory mutation requested by the signer."""
+
+    UPSERT = "upsert"
+    DELETE = "delete"
+
+
+class ConfirmedMemoryUpsert(_StateValue):
+    """One signer-confirmed memory value offered to the stage ⑩ adapter."""
+
+    operation: Literal["upsert"] = "upsert"
+    request_id: Identifier
+    entry: SignerMemoryEntry
+
+
+class ConfirmedMemoryDeletion(_StateValue):
+    """One signer-confirmed request to remove an episodic-memory value."""
+
+    operation: Literal["delete"] = "delete"
+    request_id: Identifier
+    signer_id: Identifier
+    memory_id: Identifier
+    confirmed_by_signer: Literal[True]
+    confirmation_utterance_id: Identifier
+
+    @field_validator("confirmed_by_signer", mode="before")
+    @classmethod
+    def confirmation_must_be_explicit_boolean_true(cls, value: object) -> Literal[True]:
+        if value is not True:
+            raise ValueError("confirmed_by_signer must be the boolean true")
+        return True
+
+
+MemoryAdaptationRequest: TypeAlias = ConfirmedMemoryUpsert | ConfirmedMemoryDeletion
+AdaptationRequests = tuple[MemoryAdaptationRequest, ...]
 ConversationHistory = tuple[ConversationMessage, ...]
 SignerMemory = tuple[SignerMemoryEntry, ...]
 
@@ -169,14 +205,17 @@ class AgentState(TypedDict):
     """Single source of truth shared by the stage 6-10 graph.
 
     ``conversation_history`` and ``signer_memory`` may receive concurrent partial
-    updates and therefore declare reducers.  The lattice, signer scope, and loop cap
-    are invocation-owned values and use ordinary replacement semantics.  ``loop_count``
-    is also replaced explicitly: each refine node computes the next absolute value,
-    which avoids accidental double-counting during replay.
+    updates and therefore declare reducers.  ``adaptation_requests`` is an ephemeral,
+    application-authenticated input consumed by stage ⑩; it is never inferred by a
+    model.  The lattice, signer scope, and loop cap are invocation-owned values and use
+    ordinary replacement semantics.  ``loop_count`` is also replaced explicitly: each
+    refine node computes the next absolute value, which avoids accidental double-counting
+    during replay.
     """
 
     lattice: GlossLattice
     signer_id: Identifier
+    adaptation_requests: AdaptationRequests
     conversation_history: Annotated[ConversationHistory, reduce_conversation_history]
     signer_memory: Annotated[SignerMemory, reduce_signer_memory]
     loop_count: int
@@ -206,13 +245,16 @@ def create_agent_state(
     signer_id: str,
     conversation_history: ConversationMessage | Sequence[ConversationMessage] | None = None,
     signer_memory: SignerMemoryEntry | Sequence[SignerMemoryEntry] | None = None,
+    adaptation_requests: MemoryAdaptationRequest | Sequence[MemoryAdaptationRequest] | None = None,
     loop_cap: int = DEFAULT_LOOP_CAP,
 ) -> AgentState:
     """Create a valid graph invocation from trusted context and a wire lattice.
 
     ``signer_id`` is intentionally not read from the frontend lattice.  The caller must
-    resolve it from authenticated server-side session context.  Memory for another
-    signer is rejected instead of leaking it into this invocation.
+    resolve it from authenticated server-side session context.  Memory or adaptation
+    requests for another signer are rejected instead of leaking them into this
+    invocation.  Adaptation requests must come from an application flow that obtained
+    explicit signer confirmation.
     """
 
     if not isinstance(lattice, GlossLattice):
@@ -220,15 +262,23 @@ def create_agent_state(
     context = _StateInitialization(signer_id=signer_id, loop_cap=loop_cap)
     history = reduce_conversation_history((), conversation_history)
     memory = reduce_signer_memory((), signer_memory)
+    adaptations = _memory_adaptation_requests(adaptation_requests)
     foreign_signers = sorted(
         {entry.signer_id for entry in memory if entry.signer_id != context.signer_id}
     )
+    adaptation_signers = {_adaptation_signer_id(request) for request in adaptations}
+    foreign_signers.extend(
+        sorted(signer for signer in adaptation_signers if signer != context.signer_id)
+    )
     if foreign_signers:
-        raise ValueError("signer_memory contains entries outside the current signer scope")
+        raise ValueError(
+            "signer memory or adaptation contains entries outside the current signer scope"
+        )
 
     return AgentState(
         lattice=lattice,
         signer_id=context.signer_id,
+        adaptation_requests=adaptations,
         conversation_history=history,
         signer_memory=memory,
         loop_count=0,
@@ -278,6 +328,35 @@ def _memory_entries(
     return entries
 
 
+def _memory_adaptation_requests(
+    value: MemoryAdaptationRequest | Sequence[MemoryAdaptationRequest] | None,
+) -> AdaptationRequests:
+    if value is None:
+        return ()
+    requests: AdaptationRequests
+    if isinstance(value, (ConfirmedMemoryUpsert, ConfirmedMemoryDeletion)):
+        requests = (value,)
+    else:
+        requests = tuple(value)
+    if not all(
+        isinstance(request, (ConfirmedMemoryUpsert, ConfirmedMemoryDeletion))
+        for request in requests
+    ):
+        raise TypeError("adaptation requests must be confirmed memory mutations")
+    if len(requests) > MAX_ADAPTATION_REQUESTS:
+        raise ValueError(f"adaptation requests cannot exceed {MAX_ADAPTATION_REQUESTS}")
+    request_ids = [request.request_id for request in requests]
+    if len(request_ids) != len(set(request_ids)):
+        raise ValueError("adaptation request_id values must be unique")
+    return requests
+
+
+def _adaptation_signer_id(request: MemoryAdaptationRequest) -> str:
+    if isinstance(request, ConfirmedMemoryUpsert):
+        return request.entry.signer_id
+    return request.signer_id
+
+
 def _validated_loop_values(state: AgentState) -> tuple[int, int]:
     loop_count = state["loop_count"]
     loop_cap = state["loop_cap"]
@@ -292,13 +371,19 @@ def _validated_loop_values(state: AgentState) -> tuple[int, int]:
 
 __all__ = [
     "DEFAULT_LOOP_CAP",
+    "MAX_ADAPTATION_REQUESTS",
     "MAX_CONVERSATION_HISTORY_MESSAGES",
+    "AdaptationRequests",
     "AgentState",
     "AgentStateUpdate",
+    "ConfirmedMemoryDeletion",
+    "ConfirmedMemoryUpsert",
     "ConversationHistory",
     "ConversationMessage",
     "ConversationRole",
     "LoopLimitReached",
+    "MemoryAdaptationOperation",
+    "MemoryAdaptationRequest",
     "SignerMemory",
     "SignerMemoryEntry",
     "SignerMemoryKind",

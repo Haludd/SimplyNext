@@ -12,7 +12,7 @@
 | :---------------------- | :--------------------------------------------------------- |
 | **Code**                | `RIX`                                                      |
 | **Status**              | Live                                                       |
-| **Last reviewed**       | 2026-09-04                                                 |
+| **Last reviewed**       | 2026-09-06                                                 |
 | **Source of truth for** | Document locations, addressing scheme, markdown formatting |
 | **Related**             | [`CLD`](CLAUDE.md) · [`RDM`](README.md)                    |
 
@@ -161,6 +161,9 @@ tracked into language, and back. Items 10–17 are the tracking set; items 18–
 30. **`BCT`** — `doc/BCT_backend_comparison_test.md` · *Status:* Live
     *Contents:* Comparison of the merged backend against `ARC` and `PLN`, with verification results
     *SoT for:* Backend-versus-plan comparison at the review snapshot
+31. **`CTR`** — `plan/CTR_contracts.md` · *Status:* Frozen
+    *Contents:* Version 1.0 `GlossLattice` stage ⑤ → ⑥ wire contract and integration rules
+    *SoT for:* **The `GlossLattice` wire contract**
 
 
 
@@ -615,7 +618,8 @@ SimplyNext/
 │   ├── JCR_judging_criteria.md           JCR
 │   ├── ARC_architecture.md               ARC
 │   ├── RSK_risk_register.md              RSK
-│   └── PLN_plan.md                       PLN — execution plan
+│   ├── PLN_plan.md                       PLN — execution plan
+│   └── CTR_contracts.md                  CTR — GlossLattice wire contract
 │
 ├── doc/                                  reference material and syntheses
 │   ├── [D1..D6]*.pdf                     original training decks (read-only)
@@ -767,4 +771,8 @@ The consequences, in order of how often they bite:
    is unchanged. Removed `PLN` from [`RIX_S2.2`](#22-planned-documents) and restated what now
    blocks `TDO`, `EVL` and `DEC`: `EVL` is unblocked and is task `T8.1`, and `DEC` waits on the
    named person rather than on `PLN`. Added `PLN` to the directory map in
+   [`RIX_S5`](#5-directory-map).
+7. **2026-09-06** · *Author:* Codex (GPT-5)
+   *Change:* Registered [`CTR`](plan/CTR_contracts.md) as the frozen source of truth for the
+   `GlossLattice` version 1.0 wire contract and added it to the directory map in
    [`RIX_S5`](#5-directory-map).

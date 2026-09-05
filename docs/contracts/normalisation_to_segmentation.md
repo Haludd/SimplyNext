@@ -693,9 +693,8 @@ Esther can use this checklist when integrating segmentation:
    but the current implementation and explicit producer requirement forbid
    fabricating missing landmarks. Current non-wrist output leaves them null;
    the only exception is the explicitly sourced, measured pose-wrist
-   substitution. If
-   interpolation is later approved, it needs explicit provenance and a
-   contract revision.
+   substitution. If interpolation is later approved, it needs explicit
+   provenance and a contract revision.
 5. **Filter implementation.** PLN cites a zero-phase fourth-order Butterworth
    filter as a reference. A live zero-phase filter requires future samples;
    the current producer uses a causal first-order `6 Hz` low-pass filter. This

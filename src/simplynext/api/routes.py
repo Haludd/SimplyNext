@@ -103,12 +103,24 @@ async def create_session(
             detail=f"this deployment is configured for {model_language.value}",
         )
     try:
-        session = await services.sessions.create(payload)
+        session = await services.sessions.create(
+            payload,
+            signer_id=_trusted_signer_id(request),
+        )
     except TooManySessions as exc:
         raise _http_session_error(exc) from exc
     response.headers["Cache-Control"] = "no-store"
     services.metrics.increment("sessions_created")
     return session
+
+
+def _trusted_signer_id(request: Request) -> str | None:
+    """Read identity established by server authentication middleware, if present."""
+
+    value = getattr(request.state, "signer_id", None)
+    if value is not None and not isinstance(value, str):
+        raise RuntimeError("request.state.signer_id must be a string when configured")
+    return value
 
 
 @api_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

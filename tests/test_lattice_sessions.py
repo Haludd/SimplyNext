@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from simplynext.contracts import (
-    ClassifierDescriptor,
     ClientDescriptor,
     ClientPlatform,
     ControlAction,
@@ -16,8 +15,8 @@ from simplynext.contracts import (
     GlossCandidate,
     GlossLattice,
     GlossLatticeProducer,
-    GlossLatticeSlot,
     GlossProvenance,
+    GlossSlot,
     LatticeEvidenceTrace,
     LatticeRepairRequiredEvent,
     LatticeResultEvent,
@@ -40,9 +39,10 @@ from simplynext.sessions import (
 
 SESSION_ID = UUID("12345678-1234-5678-1234-567812345678")
 TOKEN = "lattice-test-token-at-least-thirty-two-characters"
-PROFILE = ClassifierDescriptor(
-    name="simplynext-temporal",
-    model_version="sgsl-v3",
+PRODUCER = GlossLatticeProducer(
+    classifier_id="simplynext-temporal",
+    classifier_version="sgsl-v3",
+    confidence_kind="calibrated_probability",
     calibration_version="temperature-v2",
     vocabulary_version="informal-v1",
 )
@@ -62,14 +62,14 @@ class FakeClock:
 def _session_request(
     *,
     stream_kind: StreamKind = StreamKind.GLOSS_LATTICE,
-    classifier: ClassifierDescriptor | None = PROFILE,
+    producer: GlossLatticeProducer | None = PRODUCER,
 ) -> SessionCreateRequest:
     return SessionCreateRequest(
         language=SignLanguage.SGSL,
         stream_kind=stream_kind,
         client=ClientDescriptor(platform=ClientPlatform.TEST, app_version="lattice-test"),
         detector=DetectorDescriptor(name="frontend-landmarker", version="1"),
-        classifier=classifier,
+        producer=producer,
     )
 
 
@@ -96,38 +96,31 @@ def _lattice(
     *,
     lattice_seq: int = 0,
     utterance_id: str = "utt-0",
-    revision: int = 0,
-    classifier: ClassifierDescriptor = PROFILE,
-    subject_id: str = "signer-a",
+    producer: GlossLatticeProducer = PRODUCER,
 ) -> GlossLattice:
     candidates = (
-        GlossCandidate(rank=1, gloss="HELLO", confidence=0.95),
-        GlossCandidate(rank=2, gloss="WELCOME", confidence=0.03),
+        GlossCandidate(gloss_id="HELLO", rank=1, confidence=0.95),
+        GlossCandidate(gloss_id="WELCOME", rank=2, confidence=0.03),
     )
     return GlossLattice(
+        type="gloss_lattice",
+        schema_version="1.0",
         session_id=SESSION_ID,
         lattice_seq=lattice_seq,
         utterance_id=utterance_id,
-        revision=revision,
         language=SignLanguage.SGSL,
-        subject_id=subject_id,
-        is_final=True,
-        capture_start_ms=1_000,
-        capture_end_ms=1_200,
-        produced_ms=1_250,
-        producer=GlossLatticeProducer(
-            classifier=classifier,
-            segmenter_version="segmenter-v1",
-            top_k=2,
-        ),
+        timebase="session_monotonic_ms",
+        started_at_ms=1_000,
+        ended_at_ms=1_200,
+        producer=producer,
         slots=(
-            GlossLatticeSlot(
+            GlossSlot(
+                slot_index=0,
                 slot_id="s0",
                 start_ms=1_000,
                 end_ms=1_200,
                 candidates=candidates,
-                resolved_gloss="HELLO",
-                selected_rank=1,
+                resolved_gloss_id="HELLO",
                 provenance=GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE,
             ),
         ),
@@ -145,8 +138,8 @@ def _trace(lattice: GlossLattice) -> tuple[LatticeEvidenceTrace, ...]:
             slot_id=slot.slot_id,
             start_ms=slot.start_ms,
             end_ms=slot.end_ms,
-            resolved_gloss=slot.resolved_gloss,
-            confidence=slot.selected_candidate.confidence if slot.selected_candidate else None,
+            resolved_gloss_id=slot.resolved_gloss_id,
+            confidence=slot.resolved_candidate.confidence if slot.resolved_candidate else None,
             provenance=slot.provenance,
             candidates=slot.candidates,
         ),
@@ -157,14 +150,13 @@ def _repair(lattice: GlossLattice) -> LatticeRepairRequiredEvent:
     return LatticeRepairRequiredEvent(
         lattice_seq=lattice.lattice_seq,
         utterance_id=lattice.utterance_id,
-        revision=lattice.revision,
         action=RepairAction.REPEAT,
         message="Please repeat the sign.",
         confidence=0.40,
         target_slot_ids=(lattice.slots[0].slot_id,),
         reason_codes=("critic_rejected_caption",),
         evidence_trace=_trace(lattice),
-        classifier_model_version=PROFILE.model_version,
+        classifier_version=PRODUCER.classifier_version,
         agent_source="test-agent",
     )
 
@@ -173,23 +165,27 @@ def _confident(lattice: GlossLattice) -> LatticeResultEvent:
     return LatticeResultEvent(
         lattice_seq=lattice.lattice_seq,
         utterance_id=lattice.utterance_id,
-        revision=lattice.revision,
         caption="Hello.",
         tts_text="Hello.",
         confidence=0.95,
-        gloss_trace=("HELLO",),
+        gloss_id_trace=("HELLO",),
         evidence_trace=_trace(lattice),
-        classifier_model_version=PROFILE.model_version,
+        classifier_version=PRODUCER.classifier_version,
         agent_source="test-agent",
     )
 
 
+def test_ctr_v1_store_rejects_a_deployment_specific_message_limit() -> None:
+    with pytest.raises(ValueError, match="exactly 32768"):
+        EphemeralSessionStore(max_lattice_message_bytes=32_767)
+
+
 @pytest.mark.asyncio
-async def test_lattice_session_negotiates_path_and_profile() -> None:
+async def test_lattice_session_negotiates_path_and_producer() -> None:
     clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
     store = _store(clock)
 
-    created = await store.create(_session_request())
+    created = await store.create(_session_request(), signer_id="account-signer-7")
     snapshot = await store.authenticate(SESSION_ID, TOKEN)
 
     expected_path = f"/v1/sessions/{SESSION_ID}/lattices"
@@ -198,7 +194,8 @@ async def test_lattice_session_negotiates_path_and_profile() -> None:
     assert created.lattice_websocket_path == expected_path
     assert created.lattice_schema_version == "1.0"
     assert snapshot.stream_kind is StreamKind.GLOSS_LATTICE
-    assert snapshot.classifier == PROFILE
+    assert snapshot.producer == PRODUCER
+    assert snapshot.signer_id == "account-signer-7"
 
 
 @pytest.mark.asyncio
@@ -224,12 +221,12 @@ async def test_exact_completed_lattice_replays_cached_terminal_event() -> None:
 
 
 @pytest.mark.asyncio
-async def test_same_utterance_revision_with_changed_content_conflicts() -> None:
+async def test_same_lattice_sequence_with_changed_content_conflicts() -> None:
     clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
     store = _store(clock)
     await store.create(_session_request())
     original = _lattice()
-    changed = _lattice(subject_id="signer-b")
+    changed = original.model_copy(update={"ended_at_ms": 1_300})
 
     await store.reserve_lattice(original, TOKEN, _digest(original))
     with pytest.raises(LatticeConflict, match="different content"):
@@ -252,6 +249,8 @@ async def test_lattice_sequence_is_strictly_monotonic_per_session() -> None:
     await store.reserve_lattice(first, TOKEN, _digest(first))
     await store.complete_lattice(first, TOKEN, _digest(first), _confident(first))
     with pytest.raises(NonMonotonicSequence):
+        await store.find_lattice_replay(stale, TOKEN, _digest(stale))
+    with pytest.raises(NonMonotonicSequence):
         await store.reserve_lattice(stale, TOKEN, _digest(stale))
     accepted = await store.reserve_lattice(next_lattice, TOKEN, _digest(next_lattice))
 
@@ -262,38 +261,37 @@ async def test_lattice_sequence_is_strictly_monotonic_per_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_revision_is_allowed_only_after_a_completed_repair() -> None:
+async def test_later_message_for_utterance_is_allowed_only_after_a_completed_repair() -> None:
     clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
     store = _store(clock)
     await store.create(_session_request())
     original = _lattice()
-    revision = _lattice(lattice_seq=1, revision=1)
+    repaired = _lattice(lattice_seq=1)
 
     await store.reserve_lattice(original, TOKEN, _digest(original))
     with pytest.raises(LatticeInProgress, match="still being processed"):
-        await store.reserve_lattice(revision, TOKEN, _digest(revision))
+        await store.reserve_lattice(repaired, TOKEN, _digest(repaired))
 
     await store.complete_lattice(original, TOKEN, _digest(original), _repair(original))
-    accepted = await store.reserve_lattice(revision, TOKEN, _digest(revision))
+    accepted = await store.reserve_lattice(repaired, TOKEN, _digest(repaired))
 
     assert accepted.disposition is LatticeReservationDisposition.ACCEPTED
-    assert accepted.revision == 1
 
 
 @pytest.mark.asyncio
-async def test_confident_terminal_result_cannot_be_revised() -> None:
+async def test_confident_terminal_result_cannot_have_a_later_utterance_message() -> None:
     clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
     store = _store(clock)
     await store.create(_session_request())
     original = _lattice()
-    revision = _lattice(lattice_seq=1, revision=1)
+    later = _lattice(lattice_seq=1)
     digest = _digest(original)
 
     await store.reserve_lattice(original, TOKEN, digest)
     await store.complete_lattice(original, TOKEN, digest, _confident(original))
 
-    with pytest.raises(LatticeConflict, match="only a repair response"):
-        await store.reserve_lattice(revision, TOKEN, _digest(revision))
+    with pytest.raises(LatticeConflict, match="preceding repair response"):
+        await store.reserve_lattice(later, TOKEN, _digest(later))
     assert (await store.authenticate(SESSION_ID, TOKEN)).lattice_count == 1
 
 
@@ -383,19 +381,20 @@ async def test_per_session_lattice_quota_is_permanent_for_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_classifier_profile_mismatch_does_not_consume_sequence() -> None:
+async def test_producer_profile_mismatch_does_not_consume_sequence() -> None:
     clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
     store = _store(clock)
     await store.create(_session_request())
-    mismatched_profile = ClassifierDescriptor(
-        name=PROFILE.name,
-        model_version="sgsl-v4",
-        calibration_version=PROFILE.calibration_version,
-        vocabulary_version=PROFILE.vocabulary_version,
+    mismatched_producer = GlossLatticeProducer(
+        classifier_id=PRODUCER.classifier_id,
+        classifier_version="sgsl-v4",
+        confidence_kind=PRODUCER.confidence_kind,
+        calibration_version=PRODUCER.calibration_version,
+        vocabulary_version=PRODUCER.vocabulary_version,
     )
-    mismatched = _lattice(classifier=mismatched_profile)
+    mismatched = _lattice(producer=mismatched_producer)
 
-    with pytest.raises(LatticeConflict, match="classifier profile"):
+    with pytest.raises(LatticeConflict, match="producer profile"):
         await store.reserve_lattice(mismatched, TOKEN, _digest(mismatched))
     rejected = await store.authenticate(SESSION_ID, TOKEN)
     assert rejected.last_lattice_seq is None

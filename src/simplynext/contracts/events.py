@@ -8,7 +8,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import Field, model_validator
 
 from .common import Confidence, ContractModel, Identifier
-from .lattices import GlossCandidate, GlossProvenance
+from .gloss_lattice import GlossCandidate, GlossProvenance
 from .utterances import GlossHypothesis, RepairAction
 
 
@@ -68,7 +68,6 @@ class LatticeAckEvent(ContractModel):
     type: Literal["lattice_ack"] = "lattice_ack"
     lattice_seq: int = Field(ge=0)
     utterance_id: Identifier
-    revision: int = Field(ge=0, le=32)
     disposition: Literal["accepted", "cached"]
     server_ms: int = Field(ge=0)
 
@@ -79,7 +78,7 @@ class LatticeEvidenceTrace(ContractModel):
     slot_id: Identifier
     start_ms: int = Field(ge=0)
     end_ms: int = Field(ge=0)
-    resolved_gloss: str | None = Field(default=None, min_length=1, max_length=128)
+    resolved_gloss_id: Identifier | None = None
     confidence: Confidence | None = None
     provenance: GlossProvenance
     candidates: tuple[GlossCandidate, ...] = ()
@@ -88,10 +87,10 @@ class LatticeEvidenceTrace(ContractModel):
     def validate_time_range(self) -> LatticeEvidenceTrace:
         if self.end_ms <= self.start_ms:
             raise ValueError("end_ms must be greater than start_ms")
-        if self.provenance is GlossProvenance.UNRESOLVED and self.resolved_gloss is not None:
-            raise ValueError("an unresolved trace cannot contain resolved_gloss")
-        if self.provenance is not GlossProvenance.UNRESOLVED and self.resolved_gloss is None:
-            raise ValueError("a resolved trace requires resolved_gloss")
+        if self.provenance is GlossProvenance.UNRESOLVED and self.resolved_gloss_id is not None:
+            raise ValueError("an unresolved trace cannot contain resolved_gloss_id")
+        if self.provenance is not GlossProvenance.UNRESOLVED and self.resolved_gloss_id is None:
+            raise ValueError("a resolved trace requires resolved_gloss_id")
         return self
 
 
@@ -100,24 +99,23 @@ class LatticeChoice(ContractModel):
 
     slot_id: Identifier
     rank: int = Field(ge=1, le=5)
-    gloss: str = Field(min_length=1, max_length=128)
+    gloss_id: Identifier
     confidence: Confidence
 
 
 class LatticeResultEvent(ContractModel):
-    """Confident terminal event for one lattice revision."""
+    """Confident terminal event for one accepted lattice submission."""
 
     type: Literal["lattice_result"] = "lattice_result"
     lattice_seq: int = Field(ge=0)
     utterance_id: Identifier
-    revision: int = Field(ge=0, le=32)
     status: Literal["confident"] = "confident"
     caption: str = Field(min_length=1, max_length=500)
     tts_text: str | None = Field(default=None, min_length=1, max_length=500)
     confidence: Confidence
-    gloss_trace: tuple[str, ...]
+    gloss_id_trace: tuple[Identifier, ...]
     evidence_trace: tuple[LatticeEvidenceTrace, ...]
-    classifier_model_version: Identifier
+    classifier_version: Identifier
     agent_source: Identifier
     latency_ms: dict[str, int] = Field(default_factory=dict)
 
@@ -133,12 +131,11 @@ class LatticeResultEvent(ContractModel):
 
 
 class LatticeRepairRequiredEvent(ContractModel):
-    """Fail-closed terminal event for one lattice revision."""
+    """Fail-closed terminal event for one accepted lattice submission."""
 
     type: Literal["lattice_repair_required"] = "lattice_repair_required"
     lattice_seq: int = Field(ge=0)
     utterance_id: Identifier
-    revision: int = Field(ge=0, le=32)
     status: Literal["uncertain"] = "uncertain"
     action: RepairAction
     message: str = Field(min_length=1, max_length=500)
@@ -147,7 +144,7 @@ class LatticeRepairRequiredEvent(ContractModel):
     choices: tuple[LatticeChoice, ...] = ()
     reason_codes: tuple[str, ...] = ()
     evidence_trace: tuple[LatticeEvidenceTrace, ...]
-    classifier_model_version: Identifier
+    classifier_version: Identifier
     agent_source: Identifier | None = None
     latency_ms: dict[str, int] = Field(default_factory=dict)
 

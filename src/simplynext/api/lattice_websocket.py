@@ -184,12 +184,12 @@ async def lattice_socket(websocket: WebSocket, session_id: UUID) -> None:
                 return
 
             assert isinstance(message, GlossLattice)
-            if session.classifier != message.producer.classifier:
+            if session.producer != message.producer:
                 invalid_messages += 1
                 await _send_error(
                     websocket,
                     ErrorCode.INVALID_SESSION_STATE,
-                    "Lattice classifier profile does not match session negotiation.",
+                    "Lattice producer profile does not match session negotiation.",
                     retryable=False,
                 )
                 if invalid_messages >= 3:
@@ -206,6 +206,7 @@ async def lattice_socket(websocket: WebSocket, session_id: UUID) -> None:
                 payload_digest=payload_digest,
                 byte_count=byte_count,
                 validation_started=validation_started,
+                signer_id=session.signer_id,
             )
             if not keep_open:
                 return
@@ -224,6 +225,8 @@ async def lattice_socket(websocket: WebSocket, session_id: UUID) -> None:
                 "The lattice stream failed safely. No uncached caption was emitted.",
                 retryable=True,
             )
+        with suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.close(code=1011, reason="Lattice stream internal error")
     finally:
         with suppress(SessionStoreError):
             await services.sessions.release_stream(session_id, token, stream_id)
@@ -238,6 +241,7 @@ async def _handle_lattice(
     payload_digest: bytes,
     byte_count: int,
     validation_started: float,
+    signer_id: str | None = None,
 ) -> bool:
     """Reserve and execute one lattice while holding a real Agent capacity slot."""
 
@@ -297,7 +301,6 @@ async def _handle_lattice(
                 LatticeAckEvent(
                     lattice_seq=lattice.lattice_seq,
                     utterance_id=lattice.utterance_id,
-                    revision=lattice.revision,
                     disposition=reservation.disposition.value,
                     server_ms=_server_ms(),
                 ),
@@ -326,11 +329,13 @@ async def _handle_lattice(
                 ActivityEvent(
                     state=ActivityState.PROCESSING,
                     utterance_id=lattice.utterance_id,
-                    capture_ms=lattice.capture_end_ms,
+                    capture_ms=lattice.ended_at_ms,
                 ),
             )
 
-            agent_task = asyncio.create_task(services.translation.process_lattice(lattice))
+            agent_task = asyncio.create_task(
+                services.translation.process_lattice(lattice, signer_id=signer_id)
+            )
             cancellation_requested = False
             terminal_event: LatticeTerminalEvent
             while True:
@@ -339,10 +344,13 @@ async def _handle_lattice(
                     break
                 except asyncio.CancelledError:
                     if agent_task.done():
-                        terminal_event = _safe_failure_event(
-                            lattice,
-                            "agent_execution_cancelled",
-                        )
+                        try:
+                            terminal_event = agent_task.result()
+                        except (Exception, asyncio.CancelledError):
+                            terminal_event = _safe_failure_event(
+                                lattice,
+                                "agent_execution_cancelled",
+                            )
                         break
                     cancellation_requested = True
                 except Exception as exc:
@@ -406,7 +414,6 @@ async def _send_lattice_replay(
             LatticeAckEvent(
                 lattice_seq=lattice.lattice_seq,
                 utterance_id=lattice.utterance_id,
-                revision=lattice.revision,
                 disposition=LatticeReservationDisposition.CACHED.value,
                 server_ms=_server_ms(),
             ),
@@ -466,7 +473,6 @@ def _safe_failure_event(lattice: GlossLattice, reason_code: str) -> LatticeRepai
     return LatticeRepairRequiredEvent(
         lattice_seq=lattice.lattice_seq,
         utterance_id=lattice.utterance_id,
-        revision=lattice.revision,
         action=RepairAction.ESCALATE,
         message=(
             "The language service could not safely process this utterance. "
@@ -480,10 +486,10 @@ def _safe_failure_event(lattice: GlossLattice, reason_code: str) -> LatticeRepai
                 slot_id=slot.slot_id,
                 start_ms=slot.start_ms,
                 end_ms=slot.end_ms,
-                resolved_gloss=slot.resolved_gloss,
+                resolved_gloss_id=slot.resolved_gloss_id,
                 confidence=(
-                    slot.selected_candidate.confidence
-                    if slot.selected_candidate is not None
+                    slot.resolved_candidate.confidence
+                    if slot.resolved_candidate is not None
                     else None
                 ),
                 provenance=slot.provenance,
@@ -491,7 +497,7 @@ def _safe_failure_event(lattice: GlossLattice, reason_code: str) -> LatticeRepai
             )
             for slot in lattice.slots
         ),
-        classifier_model_version=lattice.producer.classifier.model_version,
+        classifier_version=lattice.producer.classifier_version,
         latency_ms={"total": 0},
     )
 

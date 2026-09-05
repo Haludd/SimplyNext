@@ -343,32 +343,34 @@ README.md     clean-clone runbook and project status
 
 
 ## 6.6. GlossLattice API
-1. `POST /v1/sessions` with `stream_kind: "gloss_lattice"` and versioned `classifier` metadata
+1. `POST /v1/sessions` with `stream_kind: "gloss_lattice"` and the versioned `producer` metadata
+   frozen by [`CTR`](CTR_contracts.md)
    returns a short-lived session, bearer token, `/v1/sessions/{id}/lattices` path and negotiated
    limits. One deployment serves the language selected by `SIMPLYNEXT_RECOGNITION_LANGUAGE`.
 2. The Flutter client opens that path with `Authorization: Bearer <stream_token>`. Only one active
    WebSocket may own a session.
 3. Each `gloss_lattice` is one complete utterance: ordered slots, top-k calibrated candidates,
    capture timestamps and exactly one provenance rung per slot. The strict schema has no raw-media,
-   landmark, coordinate or feature-tensor field and the transport enforces a 64 KiB ceiling.
+   landmark, coordinate or feature-tensor field and the transport enforces a 32 KiB ceiling.
 4. A new lattice receives `lattice_ack`, `activity: processing`, then exactly one `lattice_result`
    or `lattice_repair_required`, followed by `activity: idle`. The terminal event carries a
    structured per-slot evidence/provenance trace.
-5. Any incomplete or unresolved slot is stopped before the Agent. Server-configured confidence,
-   margin, duration and optional aggregate quality gates are applied to client evidence.
-   Signer-confirmed top-k and
-   fingerspelled revisions retain their provenance.
-6. `lattice_seq` is strictly increasing. Exact semantic retries return the cached terminal event
-   without another Agent call; changed duplicates are rejected. A higher `revision` of the same
-   utterance is accepted only after a repair result.
+5. Any unresolved slot is stopped before the Agent. Server-configured confidence, margin and
+   duration gates are applied to the compact evidence. Signer-confirmed top-k and fingerspelled
+   resolutions retain their provenance.
+6. `lattice_seq` is strictly increasing for new messages. An exact retry of the same
+   `(session_id, lattice_seq)` returns the cached terminal event without another Agent call;
+   changed reuse is rejected. `revision` is not a v1 wire field: a later repair keeps the same
+   `utterance_id`, uses a new sequence, and remains subject to backend revision policy.
 7. This socket accepts only `ping` and `end` controls because each lattice is already a committed
    utterance. Per-minute, per-session and process-wide Agent concurrency bounds limit accidental
    spend.
 
 The legacy `/landmarks` WebSocket remains available when a session uses the default
 `stream_kind: "landmarks"`; its original controls and backend perception pipeline are unchanged.
-The classified-hypothesis replay endpoint remains disabled by default. Full frontend examples and
-the wire schema are in [`docs/GLOSS_LATTICE_WEBSOCKET.md`](docs/GLOSS_LATTICE_WEBSOCKET.md).
+The classified-hypothesis replay endpoint remains disabled by default. [`CTR_contracts.md`](CTR_contracts.md)
+is the single source of truth for the v1 input contract; the secondary integration walkthrough is
+[`docs/GLOSS_LATTICE_WEBSOCKET.md`](docs/GLOSS_LATTICE_WEBSOCKET.md).
 The in-memory replay store and limits are process-local, so this MVP deliberately runs as one
 application worker; see the protocol guide before deploying multiple containers or accepting
 sessions from untrusted clients.

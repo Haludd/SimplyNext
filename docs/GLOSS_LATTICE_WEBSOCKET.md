@@ -1,9 +1,14 @@
 # GlossLattice WebSocket v1
 
-This is the frontend-to-backend contract for the architecture in which the frontend performs
-camera capture through classification and the backend begins at the Agent loop. The schema is
-implemented by `src/simplynext/contracts/lattices.py`; examples below are illustrative JSON, while
-the Pydantic models are authoritative.
+This guide explains how a frontend sends classifier output to the SimplyNext Agent backend. It is
+an integration walkthrough, not a second contract definition. [`CTR_contracts.md`](../CTR_contracts.md)
+is the single source of truth for the version 1.0 `GlossLattice` input. If this guide and CTR ever
+disagree, CTR wins.
+
+The frontend owns camera capture, subject tracking, MediaPipe, normalization, segmentation and
+closed-vocabulary classification. The backend receives only compact symbolic evidence, validates
+it, runs the bounded Agent/critic workflow and returns either a supported caption or an explicit
+repair request.
 
 ## 1. Create a lattice session
 
@@ -27,30 +32,43 @@ Content-Type: application/json
     "version": "0.10.22",
     "delegate": "gpu"
   },
-  "classifier": {
-    "name": "simplynext-temporal",
-    "model_version": "asl-demo-v3",
-    "calibration_version": "temperature-v2",
-    "vocabulary_version": "demo-v1"
+  "producer": {
+    "classifier_id": "simplynext_temporal",
+    "classifier_version": "asl_demo_v3",
+    "confidence_kind": "calibrated_probability",
+    "calibration_version": "temperature_v2",
+    "vocabulary_version": "demo_v1"
   }
 }
 ```
 
-The response contains `stream_token`, the mode-selected `websocket_path`, and the negotiated
-limits. For this mode the path is `/v1/sessions/{session_id}/lattices`. Open it with:
+`producer` is required for a `gloss_lattice` session and uses the same five fields as the CTR
+lattice producer. The lattice sent later must repeat that exact producer profile. The identifiers
+provide reproducibility and prevent an accidental mid-session model switch; they are not remote
+attestation that an untrusted client really ran the named artifacts.
+
+The response contains a `stream_token`, the mode-selected `websocket_path`, and the negotiated
+limits. In lattice mode the path is `/v1/sessions/{session_id}/lattices`,
+`max_lattice_message_bytes` is exactly 32,768 for v1, `max_lattice_slots` is 64, and
+`max_candidates_per_slot` is 5.
+
+Open the returned path with:
 
 ```text
 Authorization: Bearer <stream_token>
 ```
 
-The token is returned once, stored only as a SHA-256 digest on the server, and expires with the
-ephemeral session. Native Flutter clients can set this header. Standard browser WebSocket APIs
-cannot; a web deployment needs a short-lived WebSocket ticket or an equivalent secure handshake
-before using this endpoint. Do not put the bearer token in a URL query string.
-When a browser sends an `Origin` header, it must match `SIMPLYNEXT_ALLOWED_ORIGINS`; native clients
-that do not send `Origin` remain supported.
+The server stores only a SHA-256 digest of the token, and the token expires with its ephemeral
+session. Native Flutter clients can set the header. Standard browser WebSocket APIs cannot set an
+arbitrary `Authorization` header, so a browser deployment needs a short-lived WebSocket ticket or
+an equivalent secure handshake. Never put the bearer token in a URL query string. If a browser
+sends `Origin`, it must match `SIMPLYNEXT_ALLOWED_ORIGINS`; native clients may omit it.
 
-## 2. Send one final lattice per utterance
+## 2. Send one committed lattice
+
+One WebSocket text frame contains one UTF-8 JSON object. This valid example uses two of the four
+provenance states; the golden fixture in
+[`tests/fixtures/gloss_lattice_v1.json`](../tests/fixtures/gloss_lattice_v1.json) contains all four.
 
 ```json
 {
@@ -59,152 +77,197 @@ that do not send `Origin` remain supported.
   "session_id": "3dd5e15d-991a-4c27-9a11-af4a1a3bb2e8",
   "lattice_seq": 7,
   "utterance_id": "utt-019",
-  "revision": 0,
   "language": "asl",
-  "subject_id": "track-4",
-  "is_final": true,
-  "capture_start_ms": 1788600000100,
-  "capture_end_ms": 1788600001920,
-  "produced_ms": 1788600001970,
+  "timebase": "session_monotonic_ms",
+  "started_at_ms": 1000,
+  "ended_at_ms": 1920,
   "producer": {
-    "classifier": {
-      "name": "simplynext-temporal",
-      "model_version": "asl-demo-v3",
-      "calibration_version": "temperature-v2",
-      "vocabulary_version": "demo-v1"
-    },
-    "segmenter_version": "geometry-v2",
-    "top_k": 5
-  },
-  "quality": {
-    "observed_frames": 46,
-    "dropped_frames": 1,
-    "landmark_coverage": 0.94,
-    "classifier_latency_ms": 31
+    "classifier_id": "simplynext_temporal",
+    "classifier_version": "asl_demo_v3",
+    "confidence_kind": "calibrated_probability",
+    "calibration_version": "temperature_v2",
+    "vocabulary_version": "demo_v1"
   },
   "slots": [
     {
+      "slot_index": 0,
       "slot_id": "s0",
-      "start_ms": 1788600000100,
-      "end_ms": 1788600000780,
+      "start_ms": 1000,
+      "end_ms": 1380,
       "candidates": [
-        {"rank": 1, "gloss": "HELLO", "confidence": 0.94},
-        {"rank": 2, "gloss": "WELCOME", "confidence": 0.04}
+        {"gloss_id": "HELLO", "rank": 1, "confidence": 0.94},
+        {"gloss_id": "WELCOME", "rank": 2, "confidence": 0.04}
       ],
-      "resolved_gloss": "HELLO",
-      "selected_rank": 1,
-      "provenance": "classifier_high_confidence",
-      "confirmed_at_ms": null,
-      "reason_codes": []
+      "resolved_gloss_id": "HELLO",
+      "provenance": "classifier_high_confidence"
     },
     {
+      "slot_index": 1,
       "slot_id": "s1",
-      "start_ms": 1788600000900,
-      "end_ms": 1788600001920,
+      "start_ms": 1450,
+      "end_ms": 1920,
       "candidates": [
-        {"rank": 1, "gloss": "WATER", "confidence": 0.54},
-        {"rank": 2, "gloss": "DRINK", "confidence": 0.49}
+        {"gloss_id": "WATER", "rank": 1, "confidence": 0.54},
+        {"gloss_id": "DRINK", "rank": 2, "confidence": 0.49}
       ],
-      "resolved_gloss": null,
-      "selected_rank": null,
-      "provenance": "unresolved",
-      "confirmed_at_ms": null,
-      "reason_codes": ["ambiguous_top_k"]
+      "resolved_gloss_id": null,
+      "provenance": "unresolved"
     }
   ]
 }
 ```
 
-The profile under `producer.classifier` must exactly match session negotiation. These version
-identifiers provide lineage and prevent a mid-session profile switch; they are not cryptographic
-proof that a client model was calibrated. Production deployments should distribute an approved
-classifier bundle and validate its identifiers as deployment configuration.
+Every CTR envelope property is required, including `type`, `schema_version`, `timebase`, and a
+nullable `resolved_gloss_id`. Do not omit a required property merely because its only valid value
+is a literal or `null`.
 
-## 3. Slot rules
+### Time semantics
 
-Every slot has exactly one of these provenance values:
+`started_at_ms`, `ended_at_ms`, `start_ms`, and `end_ms` are elapsed monotonic milliseconds from
+the capture-clock origin established for the session. They are not Unix timestamps and must not be
+created with `Date.now()`. Intervals are half-open: the start is included and the end is excluded.
+Every slot must lie inside the utterance interval.
 
-- `classifier_high_confidence`: selects rank 1; the backend rechecks confidence and margin.
-- `top_k_signer_confirmed`: selects one transmitted rank and requires `confirmed_at_ms`.
-- `fingerspelled`: has standalone `resolved_gloss`, no selected classifier rank, and requires
-  `confirmed_at_ms`.
-- `unresolved`: has no resolution and at least one `reason_code`; it can retain top-k choices.
+### Slot and candidate semantics
 
-Candidate ranks start at 1, remain contiguous, have unique glosses, and are ordered by
-non-increasing confidence. Slot times must lie inside the utterance capture interval. Slots are
-ordered by `start_ms`; overlap is allowed so sliding-window classifiers are representable.
+- `slots` contains 1–64 entries. `slot_index` starts at zero, is contiguous, and equals array order.
+- Slot IDs are unique. Slots are chronological and may have gaps, but they must not overlap.
+- `candidates` is required and contains 0–5 entries.
+- Candidate ranks start at one, are contiguous, and equal array order.
+- Candidate confidence is a finite calibrated probability from 0.0 through 1.0. Values are
+  non-increasing and need not sum to one.
+- Candidate `gloss_id` values are unique within a slot. They are opaque, case-sensitive lexicon
+  keys—not display text or natural-language instructions.
+- Identifiers are 1–128 ASCII characters, begin with a letter or digit, and thereafter use only
+  letters, digits, `_`, `.`, `:`, or `-`.
 
-The v1 bounds are 32 slots, five candidates per slot, eight reason codes per slot and 64 KiB of
-UTF-8 JSON per message. Sequence and millisecond integers stay within JavaScript's safe-integer
-range. Unknown fields are rejected. Because there are no frame, landmark, image, coordinate or
-tensor fields, such data fails schema validation rather than reaching the Agent.
+Every slot has exactly one provenance value:
 
-## 4. Response sequence
+- `classifier_high_confidence`: at least one candidate is present and `resolved_gloss_id` equals
+  the rank-1 candidate.
+- `top_k_signer_confirmed`: `resolved_gloss_id` exactly equals one retained candidate.
+- `fingerspelled`: `resolved_gloss_id` is present but need not occur in `candidates`.
+- `unresolved`: `resolved_gloss_id` is `null`; low-confidence choices may remain in `candidates`.
 
-A new valid lattice produces:
+The receiver rejects unknown properties at every level, numeric strings or booleans used as
+numbers, non-finite confidence, invalid identifier whitespace, overlapping slots, and unsupported
+schema versions. It also rejects media, landmarks, coordinates, feature arrays, embeddings,
+prompts, signer identity, memory, and Agent-loop state because none is a CTR field.
+
+Legacy fields such as `revision`, `subject_id`, `is_final`, `capture_start_ms`, `capture_end_ms`,
+`produced_ms`, `quality`, `selected_rank`, `confirmed_at_ms`, and slot `reason_codes` are not aliases;
+their presence makes a v1 lattice invalid.
+
+## 3. Response sequence
+
+After connection, the server sends `activity` with `state: "idle"`. A new valid lattice then
+produces:
 
 ```text
-activity(idle)
 lattice_ack(disposition=accepted)
-activity(processing)
+activity(state=processing)
 lattice_result | lattice_repair_required
-activity(idle)
+activity(state=idle)
 ```
 
-`lattice_result` includes caption/TTS plus `evidence_trace`, containing every slot's selected gloss,
-timestamps, full candidate list and provenance. `lattice_repair_required` never contains caption or
-TTS; it includes target slot IDs and slot-scoped choices when the action is `choose_candidate`.
+The response event contract is backend-owned rather than part of CTR. Its gloss-related names are
+deliberately aligned with CTR: `gloss_id`, `resolved_gloss_id`, `gloss_id_trace`, and
+`classifier_version`. Lattice output events do not contain a `revision` field.
 
-An exact semantic retry—same sequence, utterance revision and validated content—returns
-`lattice_ack(disposition=cached)`, the cached terminal event, then idle. It never calls the Agent a
-second time. Reusing an ID or sequence with changed content is rejected.
+A successful result has this shape:
 
-If repair succeeds on the frontend, send a new, strictly greater `lattice_seq`, retain the same
-`utterance_id`, increment `revision` by exactly one, and update the repaired slot's provenance. A
-revision is accepted only when the preceding revision ended in `lattice_repair_required`; a
-confident result is terminal.
+```json
+{
+  "type": "lattice_result",
+  "lattice_seq": 7,
+  "utterance_id": "utt-019",
+  "status": "confident",
+  "caption": "Hello",
+  "tts_text": "Hello",
+  "confidence": 0.94,
+  "gloss_id_trace": ["HELLO"],
+  "evidence_trace": [
+    {
+      "slot_id": "s0",
+      "start_ms": 1000,
+      "end_ms": 1380,
+      "resolved_gloss_id": "HELLO",
+      "confidence": 0.94,
+      "provenance": "classifier_high_confidence",
+      "candidates": [
+        {"gloss_id": "HELLO", "rank": 1, "confidence": 0.94},
+        {"gloss_id": "WELCOME", "rank": 2, "confidence": 0.04}
+      ]
+    }
+  ],
+  "classifier_version": "asl_demo_v3",
+  "agent_source": "exact_template",
+  "latency_ms": {"assemble": 1, "total": 2}
+}
+```
+
+`lattice_repair_required` never contains caption or TTS text. It includes an `action`, a safe
+human-facing `message`, machine-readable `reason_codes`, `target_slot_ids`, and, for
+`choose_candidate`, slot-scoped `choices`. Each choice uses `slot_id`, `rank`, `gloss_id`, and
+`confidence`. Both terminal event kinds include the complete `evidence_trace` and
+`classifier_version`.
+
+## 4. Sequencing, retries, and later repairs
+
+For a new message, `lattice_seq` must be strictly greater than every previously accepted sequence
+in the session; gaps are valid. The immutable idempotency identity is
+`(session_id, lattice_seq)`.
+
+An exact semantic retransmission of an accepted pair returns
+`lattice_ack(disposition=cached)` and the cached terminal event. It does not start the Agent again
+or consume another new-lattice quota. Reusing the pair with different validated content is a
+protocol error.
+
+`utterance_id` is the stable identity of the logical utterance. CTR v1 intentionally has no
+`revision` property. A frontend repair therefore uses the same `utterance_id` and a new, greater
+`lattice_seq`; whether that later representation is accepted is backend policy. Do not add a local
+revision counter to the v1 JSON.
 
 ## 5. Controls and failure behavior
 
-The lattice socket accepts only `control` messages with `ping` or `end`. It does not accept
-`commit`: a lattice is already one committed utterance. The third malformed schema message closes
-with `1008`; a message beyond the negotiated byte ceiling closes with `1009`. Authentication and
-session close codes are `4401` (token/mismatch), `4404` (missing), `4408` (expired), and `4409`
-(wrong mode or another active stream).
+The lattice socket accepts `control` messages with only `ping` or `end`. It does not accept
+`commit`, because every lattice message is already a committed utterance.
 
-Incomplete lattices, unresolved slots, confidence/quality failures, Agent exceptions and critic
-rejection all fail closed as repair events. The service limits new lattices per minute and per
-session, applies a process-wide lattice rate ceiling, and bounds simultaneous Agent executions.
-Waiting for an Agent slot has a deadline; a busy service returns a retryable `rate_limited` error
-without consuming `lattice_seq`. An idle socket is closed with `1001`. Exact cached retries do not
-consume lattice rate or session-quota capacity.
+- Three consecutive invalid schema/control/profile messages close the socket with `1008`.
+- A raw text message over 32,768 UTF-8 bytes is rejected before JSON parsing and closes with `1009`.
+- Authentication/session close codes are `4401` (invalid token or mismatch), `4404` (missing
+  session), `4408` (expired), and `4409` (wrong mode or competing stream).
+- A socket idle timeout closes with `1001`.
+- Rate and Agent-capacity limits fail without silently producing a caption.
 
-Once a new lattice is acknowledged, its terminal result is finalized in the idempotency cache even
-if delivery is interrupted. HTTP deletion and TTL cleanup cannot erase a session during that Agent
-run. If the client disconnects, reconnect with the same session/token and resend the exact lattice
-to retrieve the cached result. HTTP deletion returns `409` while a WebSocket or Agent run owns the
-session.
+Unresolved evidence, duration/confidence failures, Agent exceptions, and critic rejection fail
+closed as repair events. Once a new lattice is acknowledged, the backend finalizes a terminal
+event in its replay cache even if delivery is interrupted. Reconnect with the same session/token
+and retransmit the exact lattice to recover that result.
 
-## 6. Deployment scope and trust boundary
+## 6. Trust and deployment scope
 
-The session store, replay cache, rate counters and Agent semaphore are process-local. Run this MVP
-with one application worker, as the included CLI does. Horizontal deployment needs a shared atomic
-store/queue (for example DynamoDB or Redis), sticky routing alone is not sufficient for global
-exactly-once and spend limits.
+The payload `session_id` must equal the authenticated WebSocket route and token session. A valid
+UUID in JSON does not grant access. CTR requires signer identity to come from trusted backend
+session/auth context and never from the lattice payload. Server authentication middleware may set
+the verified `request.state.signer_id` while creating a session; the backend stores it separately
+and passes it to the Agent. Without that middleware this MVP creates an anonymous bearer session
+and deliberately passes `signer_id=None`. Enable per-signer memory only when that verified binding
+exists; do not fill the gap by adding a client-controlled signer field to `GlossLattice`.
 
-Bedrock transport uses explicit connect/read timeouts and bounded standard retries configured by
-`SIMPLYNEXT_BEDROCK_CONNECT_TIMEOUT_SECONDS`, `SIMPLYNEXT_BEDROCK_READ_TIMEOUT_SECONDS` and
-`SIMPLYNEXT_BEDROCK_TOTAL_MAX_ATTEMPTS`. One Agent workflow may make several bounded Converse calls
-because it includes assembly, critique and at most one revision. `/readyz` checks configuration; it
-does not spend money on a live AWS preflight.
+The frontend must establish one monotonic capture-clock origin when it creates the session and use
+that origin for every CTR timestamp. The server validates interval order and bounds, but an
+anonymous remote server cannot independently attest which client clock produced those values.
 
-Classifier metadata is version lineage, not remote attestation. The current service verifies that
-the lattice repeats the profile negotiated by the same client; it does not yet load a server-owned
-classifier/vocabulary allow-list. Only issue session tokens to the trusted SimplyNext frontend, and
-add that allow-list before exposing session creation to untrusted callers. The process-wide lattice
-rate is an abuse/backpressure control, not a cumulative Bedrock currency budget.
+Classifier metadata is reproducibility lineage, not proof. Before accepting untrusted session
+creation, use a server-owned allow-list of approved classifier, calibration, and vocabulary
+versions.
 
-The optional Bedrock critic is a bounded model-based check, not a formal proof that every caption
-concept is grounded. The deterministic caption-template assembler is the stricter demo path. Before
-using generated Bedrock captions in a production assistive setting, add a server-owned gloss lexicon
-or alignment verifier and run adversarial grounding/refusal evaluations.
+The session store, replay cache, rate counters and Agent semaphore are process-local. This MVP runs
+with one application worker. Horizontal deployment requires a shared atomic store/queue such as
+DynamoDB or Redis; sticky routing alone does not provide global idempotency or spend limits.
+
+Bedrock uses bounded connect/read timeouts and SDK retries. Its internal assembler/critic revision
+loop is separate from the CTR wire contract and never adds a `revision` property to a lattice. The
+MVP has no process-level kill mechanism for a locally hung assembler thread; production isolation
+should run Agent work in a cancellable worker with a hard execution deadline.

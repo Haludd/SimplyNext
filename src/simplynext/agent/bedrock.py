@@ -33,7 +33,7 @@ _ASSEMBLER_SYSTEM: Final[str] = (
     "fill a missing slot from conversational likelihood. "
     "Do not add an event, object, person, intent, or certainty that is not supported by "
     "that evidence. Return only JSON with keys caption, tts_text, used_evidence_ids, "
-    "and used_glosses. The two text fields must be identical."
+    "and used_gloss_ids. The two text fields must be identical."
 )
 _CRITIC_SYSTEM: Final[str] = (
     "Mechanically check whether every proposed caption token is supported by the ordered "
@@ -44,7 +44,7 @@ _CRITIC_SYSTEM: Final[str] = (
 _REVISION_SYSTEM: Final[str] = (
     "Revise the proposed caption once, using only the ordered gloss evidence and the "
     "listed failure reason. Return only JSON with keys caption, tts_text, "
-    "used_evidence_ids, and used_glosses. The two text fields must be identical."
+    "used_evidence_ids, and used_gloss_ids. The two text fields must be identical."
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class _Draft:
     caption: str
     tts_text: str
     used_evidence_ids: tuple[str, ...]
-    used_glosses: tuple[str, ...]
+    used_gloss_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,28 +337,27 @@ def _evidence_payload(request: AssemblyRequest) -> dict[str, Any]:
     return {
         "utterance_id": request.utterance_id,
         "language": request.language,
-        "subject_id": request.subject_id,
+        "signer_id": request.signer_id,
         "lattice_seq": request.lattice_seq,
-        "revision": request.revision,
-        "classifier_model_version": request.classifier_model_version,
+        "classifier_version": request.classifier_version,
         "calibration_version": request.calibration_version,
         "vocabulary_version": request.vocabulary_version,
         "evidence": [
             {
                 "evidence_id": item.evidence_id,
                 "slot_id": item.slot_id,
-                "gloss": item.gloss,
+                "gloss_id": item.gloss_id,
                 "confidence": round(item.confidence, 6),
-                "provenance": item.source,
+                "provenance": item.provenance,
                 "start_ms": item.start_ms,
                 "end_ms": item.end_ms,
-                "alternatives": [
+                "candidates": [
                     {
                         "rank": alternative.rank,
-                        "gloss": alternative.gloss,
+                        "gloss_id": alternative.gloss_id,
                         "confidence": round(alternative.confidence, 6),
                     }
-                    for alternative in item.alternatives
+                    for alternative in item.candidates
                 ],
             }
             for item in request.evidence
@@ -371,7 +370,7 @@ def _draft_payload(draft: _Draft) -> dict[str, Any]:
         "caption": draft.caption,
         "tts_text": draft.tts_text,
         "used_evidence_ids": list(draft.used_evidence_ids),
-        "used_glosses": list(draft.used_glosses),
+        "used_gloss_ids": list(draft.used_gloss_ids),
     }
 
 
@@ -388,35 +387,35 @@ def _parse_and_check_draft(
     if not isinstance(value, Mapping):
         return None, ("assembler_response_is_not_an_object",)
 
-    expected_keys = {"caption", "tts_text", "used_evidence_ids", "used_glosses"}
+    expected_keys = {"caption", "tts_text", "used_evidence_ids", "used_gloss_ids"}
     if set(value) != expected_keys:
         return None, ("assembler_response_schema_mismatch",)
     caption = value.get("caption")
     tts_text = value.get("tts_text")
     ids = value.get("used_evidence_ids")
-    glosses = value.get("used_glosses")
+    gloss_ids = value.get("used_gloss_ids")
     if (
         not isinstance(caption, str)
         or not isinstance(tts_text, str)
         or not isinstance(ids, list)
         or not all(isinstance(item, str) for item in ids)
-        or not isinstance(glosses, list)
-        or not all(isinstance(item, str) for item in glosses)
+        or not isinstance(gloss_ids, list)
+        or not all(isinstance(item, str) for item in gloss_ids)
     ):
         return None, ("assembler_response_schema_mismatch",)
 
-    draft = _Draft(caption, tts_text, tuple(ids), tuple(glosses))
+    draft = _Draft(caption, tts_text, tuple(ids), tuple(gloss_ids))
     errors: list[str] = []
     if not caption.strip() or len(caption) > max_characters:
         errors.append("caption_length_invalid")
     if caption != tts_text:
         errors.append("tts_text_must_equal_caption")
     expected_ids = tuple(item.evidence_id for item in request.evidence)
-    expected_glosses = tuple(item.gloss for item in request.evidence)
+    expected_gloss_ids = tuple(item.gloss_id for item in request.evidence)
     if draft.used_evidence_ids != expected_ids:
         errors.append("evidence_ids_do_not_match")
-    if draft.used_glosses != expected_glosses:
-        errors.append("gloss_trace_does_not_match")
+    if draft.used_gloss_ids != expected_gloss_ids:
+        errors.append("gloss_id_trace_does_not_match")
     return draft, tuple(errors)
 
 

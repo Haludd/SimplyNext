@@ -14,9 +14,9 @@ from threading import RLock
 from uuid import UUID, uuid4
 
 from simplynext.contracts import (
-    ClassifierDescriptor,
     ControlAction,
     GlossLattice,
+    GlossLatticeProducer,
     LandmarkBatch,
     LandmarkFrame,
     LatticeRepairRequiredEvent,
@@ -27,7 +27,7 @@ from simplynext.contracts import (
     StreamControlMessage,
     StreamKind,
 )
-from simplynext.contracts.lattices import MAX_GLOSS_LATTICE_BYTES
+from simplynext.contracts.gloss_lattice import MAX_GLOSS_LATTICE_BYTES
 
 
 class SessionState(StrEnum):
@@ -99,6 +99,7 @@ class LatticeReservationDisposition(StrEnum):
 @dataclass(frozen=True, slots=True)
 class SessionSnapshot:
     session_id: UUID
+    signer_id: str | None
     language: SignLanguage
     state: SessionState
     created_at: datetime
@@ -113,7 +114,7 @@ class SessionSnapshot:
     client_dropped_frames: int
     server_evicted_frames: int
     stream_kind: StreamKind
-    classifier: ClassifierDescriptor | None
+    producer: GlossLatticeProducer | None
     last_lattice_seq: int | None
     lattice_count: int
 
@@ -138,7 +139,6 @@ class LatticeReservation:
     session_id: UUID
     lattice_seq: int
     utterance_id: str
-    revision: int
     disposition: LatticeReservationDisposition
     cached_event: LatticeTerminalEvent | None = None
 
@@ -147,7 +147,6 @@ class LatticeReservation:
 class _LatticeRecord:
     lattice_seq: int
     utterance_id: str
-    revision: int
     payload_digest: bytes
     terminal_event: LatticeTerminalEvent | None = None
 
@@ -155,6 +154,7 @@ class _LatticeRecord:
 @dataclass(slots=True)
 class _SessionRecord:
     session_id: UUID
+    signer_id: str | None
     token_digest: bytes
     request: SessionCreateRequest
     state: SessionState
@@ -173,8 +173,7 @@ class _SessionRecord:
     active_lattice_seq: int | None = None
     last_lattice_seq: int = -1
     lattice_records: dict[int, _LatticeRecord] = field(default_factory=dict)
-    lattice_keys: dict[tuple[str, int], int] = field(default_factory=dict)
-    last_lattice_revision: dict[str, int] = field(default_factory=dict)
+    latest_lattice_seq_by_utterance: dict[str, int] = field(default_factory=dict)
     lattice_received_at: deque[datetime] = field(default_factory=deque)
 
 
@@ -218,8 +217,8 @@ class EphemeralSessionStore:
             raise ValueError("websocket_path_template must contain {session_id}")
         if "{session_id}" not in lattice_websocket_path_template:
             raise ValueError("lattice_websocket_path_template must contain {session_id}")
-        if not 4_096 <= max_lattice_message_bytes <= MAX_GLOSS_LATTICE_BYTES:
-            raise ValueError("max_lattice_message_bytes must be between 4096 and 65536")
+        if max_lattice_message_bytes != MAX_GLOSS_LATTICE_BYTES:
+            raise ValueError("CTR v1 max_lattice_message_bytes must be exactly 32768")
         if max_lattices_per_session < 1:
             raise ValueError("max_lattices_per_session must be positive")
         if max_lattices_per_minute < 1:
@@ -234,7 +233,7 @@ class EphemeralSessionStore:
         self._max_sessions = max_sessions
         self._websocket_path_template = websocket_path_template
         self._lattice_websocket_path_template = lattice_websocket_path_template
-        self._max_lattice_message_bytes = max_lattice_message_bytes
+        self._max_lattice_message_bytes = MAX_GLOSS_LATTICE_BYTES
         self._max_lattices_per_session = max_lattices_per_session
         self._max_lattices_per_minute = max_lattices_per_minute
         self._max_lattices_per_minute_global = max_lattices_per_minute_global
@@ -245,8 +244,20 @@ class EphemeralSessionStore:
         self._global_lattice_received_at: deque[datetime] = deque()
         self._lock = RLock()
 
-    async def create(self, request: SessionCreateRequest) -> SessionCreateResponse:
-        """Create a session and return its token exactly once."""
+    async def create(
+        self,
+        request: SessionCreateRequest,
+        *,
+        signer_id: str | None = None,
+    ) -> SessionCreateResponse:
+        """Create a session and return its token exactly once.
+
+        ``signer_id`` is server-owned authentication context. It is deliberately
+        not a field on ``SessionCreateRequest`` or ``GlossLattice``.
+        """
+
+        if signer_id is not None and (not isinstance(signer_id, str) or not signer_id.strip()):
+            raise ValueError("signer_id must be omitted or a non-empty trusted identifier")
 
         now = self._now()
         session_id = self._id_factory()
@@ -255,6 +266,7 @@ class EphemeralSessionStore:
             raise ValueError("token_factory must return at least 32 characters")
         record = _SessionRecord(
             session_id=session_id,
+            signer_id=signer_id,
             token_digest=self._token_digest(token),
             request=request,
             state=SessionState.READY,
@@ -290,10 +302,15 @@ class EphemeralSessionStore:
             max_lattice_message_bytes=self._max_lattice_message_bytes,
         )
 
-    async def create_session(self, request: SessionCreateRequest) -> SessionCreateResponse:
+    async def create_session(
+        self,
+        request: SessionCreateRequest,
+        *,
+        signer_id: str | None = None,
+    ) -> SessionCreateResponse:
         """Explicit alias used by route modules."""
 
-        return await self.create(request)
+        return await self.create(request, signer_id=signer_id)
 
     async def authenticate(
         self,
@@ -405,7 +422,7 @@ class EphemeralSessionStore:
         token: str,
         payload_digest: bytes,
     ) -> LatticeReservation:
-        """Atomically apply profile, replay, revision, quota, and rate guards."""
+        """Atomically apply profile, replay, repair, quota, and rate guards."""
 
         if len(payload_digest) != hashlib.sha256().digest_size:
             raise ValueError("payload_digest must be a SHA-256 digest")
@@ -416,65 +433,21 @@ class EphemeralSessionStore:
                 raise InvalidSessionState("session was not negotiated for gloss lattices")
             if lattice.language is not record.request.language:
                 raise LatticeConflict("lattice language does not match the session")
-            if lattice.producer.classifier != record.request.classifier:
-                raise LatticeConflict("lattice classifier profile does not match the session")
+            if lattice.producer != record.request.producer:
+                raise LatticeConflict("lattice producer profile does not match the session")
 
             cached = self._existing_lattice_reservation(record, lattice, payload_digest)
             if cached is not None:
                 return cached
-            if record.active_lattice_seq is not None:
-                raise LatticeInProgress(
-                    f"lattice_seq {record.active_lattice_seq} is still being processed"
-                )
-            if lattice.lattice_seq <= record.last_lattice_seq:
-                raise NonMonotonicSequence(
-                    f"lattice_seq must be greater than {record.last_lattice_seq}"
-                )
-
-            last_revision = record.last_lattice_revision.get(lattice.utterance_id)
-            if last_revision is None:
-                if lattice.revision != 0:
-                    raise LatticeConflict("the first utterance revision must be 0")
-            else:
-                if lattice.revision != last_revision + 1:
-                    raise LatticeConflict(
-                        f"revision must be exactly {last_revision + 1} for this utterance"
-                    )
-                previous_seq = record.lattice_keys[(lattice.utterance_id, last_revision)]
-                previous = record.lattice_records[previous_seq]
-                if not isinstance(previous.terminal_event, LatticeRepairRequiredEvent):
-                    raise LatticeConflict("only a repair response can be revised")
-
-            if record.state is SessionState.PAUSED:
-                raise InvalidSessionState("cannot submit a lattice while session is paused")
-            if record.state is SessionState.ENDED:
-                raise InvalidSessionState("cannot submit a lattice after session end")
-            if len(record.lattice_records) >= self._max_lattices_per_session:
-                raise LatticeQuotaExceeded("session lattice quota has been reached")
-
-            minute_ago = now - timedelta(minutes=1)
-            while record.lattice_received_at and record.lattice_received_at[0] <= minute_ago:
-                record.lattice_received_at.popleft()
-            if len(record.lattice_received_at) >= self._max_lattices_per_minute:
-                raise LatticeRateLimited("too many new lattices in the last minute")
-            while (
-                self._global_lattice_received_at
-                and self._global_lattice_received_at[0] <= minute_ago
-            ):
-                self._global_lattice_received_at.popleft()
-            if len(self._global_lattice_received_at) >= self._max_lattices_per_minute_global:
-                raise LatticeRateLimited("global lattice rate limit reached")
+            self._validate_new_lattice_submission(record, lattice, now)
 
             lattice_record = _LatticeRecord(
                 lattice_seq=lattice.lattice_seq,
                 utterance_id=lattice.utterance_id,
-                revision=lattice.revision,
                 payload_digest=payload_digest,
             )
-            key = (lattice.utterance_id, lattice.revision)
             record.lattice_records[lattice.lattice_seq] = lattice_record
-            record.lattice_keys[key] = lattice.lattice_seq
-            record.last_lattice_revision[lattice.utterance_id] = lattice.revision
+            record.latest_lattice_seq_by_utterance[lattice.utterance_id] = lattice.lattice_seq
             record.last_lattice_seq = lattice.lattice_seq
             record.lattice_received_at.append(now)
             self._global_lattice_received_at.append(now)
@@ -485,7 +458,6 @@ class EphemeralSessionStore:
                 session_id=record.session_id,
                 lattice_seq=lattice.lattice_seq,
                 utterance_id=lattice.utterance_id,
-                revision=lattice.revision,
                 disposition=LatticeReservationDisposition.ACCEPTED,
             )
 
@@ -506,9 +478,15 @@ class EphemeralSessionStore:
                 raise InvalidSessionState("session was not negotiated for gloss lattices")
             if lattice.language is not record.request.language:
                 raise LatticeConflict("lattice language does not match the session")
-            if lattice.producer.classifier != record.request.classifier:
-                raise LatticeConflict("lattice classifier profile does not match the session")
-            return self._existing_lattice_reservation(record, lattice, payload_digest)
+            if lattice.producer != record.request.producer:
+                raise LatticeConflict("lattice producer profile does not match the session")
+            replay = self._existing_lattice_reservation(record, lattice, payload_digest)
+            if replay is not None:
+                return replay
+            # Perform every non-mutating admission check before the caller waits
+            # for Agent capacity. reserve_lattice repeats these checks atomically.
+            self._validate_new_lattice_submission(record, lattice, now)
+            return None
 
     async def complete_lattice(
         self,
@@ -525,16 +503,13 @@ class EphemeralSessionStore:
             lattice_record = record.lattice_records.get(lattice.lattice_seq)
             if lattice_record is None:
                 raise LatticeConflict("lattice was not reserved")
-            if (
-                lattice_record.utterance_id != lattice.utterance_id
-                or lattice_record.revision != lattice.revision
-                or not hmac.compare_digest(lattice_record.payload_digest, payload_digest)
+            if lattice_record.utterance_id != lattice.utterance_id or not hmac.compare_digest(
+                lattice_record.payload_digest, payload_digest
             ):
                 raise LatticeConflict("lattice completion does not match its reservation")
             if (
                 terminal_event.lattice_seq != lattice.lattice_seq
                 or terminal_event.utterance_id != lattice.utterance_id
-                or terminal_event.revision != lattice.revision
             ):
                 raise LatticeConflict("terminal event does not match its lattice")
             if lattice_record.terminal_event is not None:
@@ -626,8 +601,7 @@ class EphemeralSessionStore:
                 raise InvalidSessionState("cannot delete a session during Agent processing")
             record.frames.clear()
             record.lattice_records.clear()
-            record.lattice_keys.clear()
-            record.last_lattice_revision.clear()
+            record.latest_lattice_seq_by_utterance.clear()
             record.lattice_received_at.clear()
             del self._records[record.session_id]
 
@@ -657,8 +631,7 @@ class EphemeralSessionStore:
         if now >= record.expires_at and record.active_lattice_seq is None:
             record.frames.clear()
             record.lattice_records.clear()
-            record.lattice_keys.clear()
-            record.last_lattice_revision.clear()
+            record.latest_lattice_seq_by_utterance.clear()
             record.lattice_received_at.clear()
             del self._records[canonical_id]
             raise SessionExpired("session has expired")
@@ -682,8 +655,7 @@ class EphemeralSessionStore:
             record = self._records[session_id]
             record.frames.clear()
             record.lattice_records.clear()
-            record.lattice_keys.clear()
-            record.last_lattice_revision.clear()
+            record.latest_lattice_seq_by_utterance.clear()
             record.lattice_received_at.clear()
             del self._records[session_id]
         return len(expired_ids)
@@ -715,34 +687,73 @@ class EphemeralSessionStore:
         lattice: GlossLattice,
         payload_digest: bytes,
     ) -> LatticeReservation | None:
-        key = (lattice.utterance_id, lattice.revision)
-        existing_key_seq = record.lattice_keys.get(key)
-        if existing_key_seq is not None:
-            existing = record.lattice_records[existing_key_seq]
-            if existing.lattice_seq != lattice.lattice_seq or not hmac.compare_digest(
-                existing.payload_digest, payload_digest
-            ):
-                raise LatticeConflict(
-                    "utterance revision was already submitted with different content"
-                )
-            if existing.terminal_event is None:
-                raise LatticeInProgress("this lattice is already being processed")
-            return LatticeReservation(
-                session_id=record.session_id,
-                lattice_seq=lattice.lattice_seq,
-                utterance_id=lattice.utterance_id,
-                revision=lattice.revision,
-                disposition=LatticeReservationDisposition.CACHED,
-                cached_event=existing.terminal_event,
+        existing = record.lattice_records.get(lattice.lattice_seq)
+        if existing is None:
+            return None
+        if existing.utterance_id != lattice.utterance_id or not hmac.compare_digest(
+            existing.payload_digest,
+            payload_digest,
+        ):
+            raise LatticeConflict("lattice_seq was already used with different content")
+        if existing.terminal_event is None:
+            raise LatticeInProgress("this lattice is already being processed")
+        return LatticeReservation(
+            session_id=record.session_id,
+            lattice_seq=lattice.lattice_seq,
+            utterance_id=lattice.utterance_id,
+            disposition=LatticeReservationDisposition.CACHED,
+            cached_event=existing.terminal_event,
+        )
+
+    def _validate_new_lattice_submission(
+        self,
+        record: _SessionRecord,
+        lattice: GlossLattice,
+        now: datetime,
+    ) -> None:
+        """Check a new submission without consuming its sequence or quota."""
+
+        if record.active_lattice_seq is not None:
+            raise LatticeInProgress(
+                f"lattice_seq {record.active_lattice_seq} is still being processed"
             )
-        if lattice.lattice_seq in record.lattice_records:
-            raise LatticeConflict("lattice_seq was already used by another utterance")
-        return None
+        if lattice.lattice_seq <= record.last_lattice_seq:
+            raise NonMonotonicSequence(
+                f"lattice_seq must be greater than {record.last_lattice_seq}"
+            )
+
+        previous_seq = record.latest_lattice_seq_by_utterance.get(lattice.utterance_id)
+        if previous_seq is not None:
+            previous = record.lattice_records[previous_seq]
+            if not isinstance(previous.terminal_event, LatticeRepairRequiredEvent):
+                raise LatticeConflict(
+                    "a later message for an utterance requires a preceding repair response"
+                )
+
+        if record.state is SessionState.PAUSED:
+            raise InvalidSessionState("cannot submit a lattice while session is paused")
+        if record.state is SessionState.ENDED:
+            raise InvalidSessionState("cannot submit a lattice after session end")
+        if len(record.lattice_records) >= self._max_lattices_per_session:
+            raise LatticeQuotaExceeded("session lattice quota has been reached")
+
+        minute_ago = now - timedelta(minutes=1)
+        while record.lattice_received_at and record.lattice_received_at[0] <= minute_ago:
+            record.lattice_received_at.popleft()
+        if len(record.lattice_received_at) >= self._max_lattices_per_minute:
+            raise LatticeRateLimited("too many new lattices in the last minute")
+        while (
+            self._global_lattice_received_at and self._global_lattice_received_at[0] <= minute_ago
+        ):
+            self._global_lattice_received_at.popleft()
+        if len(self._global_lattice_received_at) >= self._max_lattices_per_minute_global:
+            raise LatticeRateLimited("global lattice rate limit reached")
 
     @staticmethod
     def _snapshot(record: _SessionRecord) -> SessionSnapshot:
         return SessionSnapshot(
             session_id=record.session_id,
+            signer_id=record.signer_id,
             language=record.request.language,
             state=record.state,
             created_at=record.created_at,
@@ -757,7 +768,7 @@ class EphemeralSessionStore:
             client_dropped_frames=record.client_dropped_frames,
             server_evicted_frames=record.server_evicted_frames,
             stream_kind=record.request.stream_kind,
-            classifier=record.request.classifier,
+            producer=record.request.producer,
             last_lattice_seq=(None if record.last_lattice_seq < 0 else record.last_lattice_seq),
             lattice_count=len(record.lattice_records),
         )

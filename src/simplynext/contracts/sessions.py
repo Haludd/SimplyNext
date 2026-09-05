@@ -9,14 +9,14 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, model_validator
 
 from .common import ContractModel, SignLanguage
-from .landmarks import LANDMARK_SCHEMA_VERSION, LandmarkLayout
-from .lattices import (
+from .gloss_lattice import (
     GLOSS_LATTICE_SCHEMA_VERSION,
     MAX_GLOSS_CANDIDATES_PER_SLOT,
     MAX_GLOSS_LATTICE_BYTES,
     MAX_GLOSS_LATTICE_SLOTS,
-    ClassifierDescriptor,
+    GlossLatticeProducer,
 )
+from .landmarks import LANDMARK_SCHEMA_VERSION, LandmarkLayout
 
 
 class ClientPlatform(StrEnum):
@@ -60,12 +60,12 @@ class SessionCreateRequest(ContractModel):
     stream_kind: StreamKind = StreamKind.LANDMARKS
     client: ClientDescriptor
     detector: DetectorDescriptor
-    classifier: ClassifierDescriptor | None = None
+    producer: GlossLatticeProducer | None = None
 
     @model_validator(mode="after")
-    def require_classifier_for_lattice_stream(self) -> SessionCreateRequest:
-        if self.stream_kind is StreamKind.GLOSS_LATTICE and self.classifier is None:
-            raise ValueError("gloss_lattice sessions require classifier metadata")
+    def require_producer_for_lattice_stream(self) -> SessionCreateRequest:
+        if self.stream_kind is StreamKind.GLOSS_LATTICE and self.producer is None:
+            raise ValueError("gloss_lattice sessions require producer metadata")
         return self
 
 
@@ -84,21 +84,9 @@ class SessionCreateResponse(ContractModel):
     max_batch_frames: int = Field(ge=1, le=32)
     target_fps: int = Field(default=20, ge=1, le=60)
     lattice_schema_version: Literal["1.0"] = GLOSS_LATTICE_SCHEMA_VERSION
-    max_lattice_message_bytes: int = Field(
-        default=MAX_GLOSS_LATTICE_BYTES,
-        ge=4_096,
-        le=MAX_GLOSS_LATTICE_BYTES,
-    )
-    max_lattice_slots: int = Field(
-        default=MAX_GLOSS_LATTICE_SLOTS,
-        ge=1,
-        le=MAX_GLOSS_LATTICE_SLOTS,
-    )
-    max_candidates_per_slot: int = Field(
-        default=MAX_GLOSS_CANDIDATES_PER_SLOT,
-        ge=1,
-        le=MAX_GLOSS_CANDIDATES_PER_SLOT,
-    )
+    max_lattice_message_bytes: Literal[32_768] = MAX_GLOSS_LATTICE_BYTES
+    max_lattice_slots: Literal[64] = MAX_GLOSS_LATTICE_SLOTS
+    max_candidates_per_slot: Literal[5] = MAX_GLOSS_CANDIDATES_PER_SLOT
 
 
 class ControlAction(StrEnum):

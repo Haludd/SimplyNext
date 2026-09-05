@@ -51,11 +51,9 @@ class Settings(BaseSettings):
         ge=16_384,
         le=16_777_216,
     )
-    gloss_lattice_max_message_bytes: int = Field(
-        default=65_536,
-        ge=4_096,
-        le=65_536,
-    )
+    # CTR v1 freezes this transport ceiling. A different value requires a new
+    # schema version rather than a stricter deployment-specific dialect.
+    gloss_lattice_max_message_bytes: Literal[32_768] = 32_768
     max_lattices_per_session: int = Field(default=100, ge=1, le=10_000)
     max_lattices_per_minute: int = Field(default=30, ge=1, le=600)
     max_lattices_per_minute_global: int = Field(default=120, ge=1, le=10_000)

@@ -27,8 +27,8 @@ from simplynext.contracts import (
     GlossCandidate,
     GlossHypothesis,
     GlossLattice,
-    GlossLatticeSlot,
     GlossProvenance,
+    GlossSlot,
     LandmarkFrame,
     LatticeChoice,
     LatticeEvidenceTrace,
@@ -121,18 +121,21 @@ class TranslationEngine:
     async def process_lattice(
         self,
         lattice: GlossLattice,
+        *,
+        signer_id: str | None = None,
     ) -> LatticeResultEvent | LatticeRepairRequiredEvent:
         """Run one already-classified lattice through the bounded Agent seam."""
 
-        return await asyncio.to_thread(self._process_lattice, lattice)
+        return await asyncio.to_thread(self._process_lattice, lattice, signer_id)
 
     def _process_lattice(
         self,
         lattice: GlossLattice,
+        signer_id: str | None,
     ) -> LatticeResultEvent | LatticeRepairRequiredEvent:
         started = perf_counter()
         evidence_trace = _lattice_evidence_trace(lattice)
-        model_version = lattice.producer.classifier.model_version
+        classifier_version = lattice.producer.classifier_version
         for slot in lattice.slots:
             self.metrics.increment(f"lattice_provenance_{slot.provenance.value}")
 
@@ -145,18 +148,8 @@ class TranslationEngine:
                 evidence_trace=evidence_trace,
                 started=started,
             )
-        if not lattice.is_final:
-            return self._lattice_repair_event(
-                lattice=lattice,
-                action=ContractRepairAction.REPEAT,
-                confidence=0.0,
-                reason_codes=("lattice_not_final",),
-                evidence_trace=evidence_trace,
-                started=started,
-            )
-
         thresholds = self.policy.thresholds
-        duration_ms = lattice.capture_end_ms - lattice.capture_start_ms
+        duration_ms = lattice.ended_at_ms - lattice.started_at_ms
         if duration_ms < thresholds.min_duration_ms:
             return self._lattice_repair_event(
                 lattice=lattice,
@@ -175,26 +168,6 @@ class TranslationEngine:
                 evidence_trace=evidence_trace,
                 started=started,
             )
-        if lattice.quality is not None:
-            if lattice.quality.landmark_coverage < thresholds.min_coverage:
-                return self._lattice_repair_event(
-                    lattice=lattice,
-                    action=ContractRepairAction.REPOSITION,
-                    confidence=0.0,
-                    reason_codes=("insufficient_landmark_coverage",),
-                    evidence_trace=evidence_trace,
-                    started=started,
-                )
-            if lattice.quality.dropped_fraction > thresholds.max_dropped_fraction:
-                return self._lattice_repair_event(
-                    lattice=lattice,
-                    action=ContractRepairAction.RECONNECT,
-                    confidence=0.0,
-                    reason_codes=("too_many_dropped_frames",),
-                    evidence_trace=evidence_trace,
-                    started=started,
-                )
-
         unresolved = tuple(
             slot for slot in lattice.slots if slot.provenance is GlossProvenance.UNRESOLVED
         )
@@ -223,9 +196,8 @@ class TranslationEngine:
         for slot in lattice.slots:
             if slot.provenance is not GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE:
                 continue
-            selected = slot.selected_candidate
-            assert selected is not None
-            canonical = _canonical_gloss(selected.gloss)
+            selected = slot.candidates[0]
+            canonical = _canonical_gloss(selected.gloss_id)
             if canonical in rejected_glosses:
                 action = (
                     ContractRepairAction.FINGERSPELL
@@ -282,12 +254,11 @@ class TranslationEngine:
             utterance_id=lattice.utterance_id,
             language=str(lattice.language),
             evidence=tuple(_assembly_evidence(slot) for slot in lattice.slots),
-            subject_id=lattice.subject_id,
+            signer_id=signer_id,
             lattice_seq=lattice.lattice_seq,
-            revision=lattice.revision,
-            classifier_model_version=model_version,
-            calibration_version=lattice.producer.classifier.calibration_version,
-            vocabulary_version=lattice.producer.classifier.vocabulary_version,
+            classifier_version=classifier_version,
+            calibration_version=lattice.producer.calibration_version,
+            vocabulary_version=lattice.producer.vocabulary_version,
             lattice=lattice,
         )
         assemble_started = perf_counter()
@@ -343,13 +314,12 @@ class TranslationEngine:
         event = LatticeResultEvent(
             lattice_seq=lattice.lattice_seq,
             utterance_id=lattice.utterance_id,
-            revision=lattice.revision,
             caption=assembly.caption,
             tts_text=assembly.tts_text,
             confidence=assembly.confidence,
-            gloss_trace=tuple(item.gloss for item in assembly.gloss_trace),
+            gloss_id_trace=tuple(item.gloss_id for item in assembly.gloss_trace),
             evidence_trace=evidence_trace,
-            classifier_model_version=model_version,
+            classifier_version=classifier_version,
             agent_source=assembly.source,
             latency_ms=latency,
         )
@@ -512,7 +482,7 @@ class TranslationEngine:
             caption=assembly.caption,
             tts_text=assembly.tts_text,
             confidence=assembly.confidence,
-            gloss_trace=tuple(item.gloss for item in assembly.gloss_trace),
+            gloss_trace=tuple(item.gloss_id for item in assembly.gloss_trace),
             hypotheses=_contract_hypotheses(result.candidates),
             model_version=result.metadata.model_version or "unknown",
             latency_ms=latency,
@@ -643,7 +613,7 @@ class TranslationEngine:
             status=TranslationStatus.CONFIDENT,
             caption=assembly.caption,
             tts_text=assembly.tts_text,
-            gloss_trace=tuple(item.gloss for item in assembly.gloss_trace),
+            gloss_trace=tuple(item.gloss_id for item in assembly.gloss_trace),
             confidence=assembly.confidence,
             model_version=model_version,
         )
@@ -671,7 +641,6 @@ class TranslationEngine:
         return LatticeRepairRequiredEvent(
             lattice_seq=lattice.lattice_seq,
             utterance_id=lattice.utterance_id,
-            revision=lattice.revision,
             action=action,
             message=_ACTION_MESSAGES[action],
             confidence=max(0.0, min(1.0, confidence)),
@@ -679,7 +648,7 @@ class TranslationEngine:
             choices=choices,
             reason_codes=reason_codes,
             evidence_trace=evidence_trace,
-            classifier_model_version=lattice.producer.classifier.model_version,
+            classifier_version=lattice.producer.classifier_version,
             agent_source=agent_source,
             latency_ms=latency,
         )
@@ -814,23 +783,23 @@ def _contract_hypotheses(
     )
 
 
-def _assembly_evidence(slot: GlossLatticeSlot) -> GlossEvidence:
-    if slot.resolved_gloss is None:
+def _assembly_evidence(slot: GlossSlot) -> GlossEvidence:
+    if slot.resolved_gloss_id is None:
         raise ValueError("unresolved lattice slots cannot enter caption assembly")
-    selected = slot.selected_candidate
-    confidence = selected.confidence if selected is not None else 1.0
+    resolved = slot.resolved_candidate
+    confidence = resolved.confidence if resolved is not None else 1.0
     return GlossEvidence(
         evidence_id=slot.slot_id,
-        gloss=slot.resolved_gloss,
+        gloss_id=slot.resolved_gloss_id,
         confidence=confidence,
-        source=slot.provenance.value,
+        provenance=slot.provenance.value,
         slot_id=slot.slot_id,
         start_ms=slot.start_ms,
         end_ms=slot.end_ms,
-        alternatives=tuple(
+        candidates=tuple(
             GlossAlternativeEvidence(
                 rank=item.rank,
-                gloss=item.gloss,
+                gloss_id=item.gloss_id,
                 confidence=item.confidence,
             )
             for item in slot.candidates
@@ -841,14 +810,14 @@ def _assembly_evidence(slot: GlossLatticeSlot) -> GlossEvidence:
 def _lattice_evidence_trace(lattice: GlossLattice) -> tuple[LatticeEvidenceTrace, ...]:
     trace: list[LatticeEvidenceTrace] = []
     for slot in lattice.slots:
-        selected = slot.selected_candidate
+        resolved = slot.resolved_candidate
         trace.append(
             LatticeEvidenceTrace(
                 slot_id=slot.slot_id,
                 start_ms=slot.start_ms,
                 end_ms=slot.end_ms,
-                resolved_gloss=slot.resolved_gloss,
-                confidence=selected.confidence if selected is not None else None,
+                resolved_gloss_id=slot.resolved_gloss_id,
+                confidence=resolved.confidence if resolved is not None else None,
                 provenance=slot.provenance,
                 candidates=slot.candidates,
             )
@@ -857,14 +826,14 @@ def _lattice_evidence_trace(lattice: GlossLattice) -> tuple[LatticeEvidenceTrace
 
 
 def _lattice_choices(
-    slot: GlossLatticeSlot,
+    slot: GlossSlot,
     candidates: Sequence[GlossCandidate],
 ) -> tuple[LatticeChoice, ...]:
     return tuple(
         LatticeChoice(
             slot_id=slot.slot_id,
             rank=item.rank,
-            gloss=item.gloss,
+            gloss_id=item.gloss_id,
             confidence=item.confidence,
         )
         for item in candidates
@@ -873,9 +842,9 @@ def _lattice_choices(
 
 def _minimum_lattice_confidence(lattice: GlossLattice) -> float:
     confidences = tuple(
-        slot.selected_candidate.confidence
+        slot.resolved_candidate.confidence
         for slot in lattice.slots
-        if slot.selected_candidate is not None
+        if slot.resolved_candidate is not None
     )
     return min(confidences, default=1.0)
 

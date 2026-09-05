@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from uuid import UUID
 
 from simplynext.agent import (
     AssemblyRequest,
@@ -14,12 +15,12 @@ from simplynext.agent import (
     GlossEvidence,
 )
 from simplynext.contracts import (
-    ClassifierDescriptor,
     GlossCandidate,
     GlossLattice,
     GlossLatticeProducer,
-    GlossLatticeSlot,
     GlossProvenance,
+    GlossSlot,
+    SignLanguage,
 )
 
 
@@ -49,13 +50,13 @@ def _draft(
     caption: str = "Water, please.",
     *,
     ids: list[str] | None = None,
-    glosses: list[str] | None = None,
+    gloss_ids: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "caption": caption,
         "tts_text": caption,
         "used_evidence_ids": ids or ["evidence-0", "evidence-1"],
-        "used_glosses": glosses or ["WATER", "PLEASE"],
+        "used_gloss_ids": gloss_ids or ["WATER", "PLEASE"],
     }
 
 
@@ -117,51 +118,44 @@ def test_bedrock_assembler_uses_typed_evidence_and_logs_every_call(caplog) -> No
 
 
 def test_bedrock_prompt_retains_full_lattice_slot_evidence() -> None:
-    profile = ClassifierDescriptor(
-        name="temporal-classifier",
-        model_version="asl-v3",
+    producer = GlossLatticeProducer(
+        classifier_id="temporal-classifier",
+        classifier_version="asl-v3",
+        confidence_kind="calibrated_probability",
         calibration_version="temperature-v2",
         vocabulary_version="demo-v1",
     )
     lattice = GlossLattice(
-        session_id="12345678-1234-5678-1234-567812345678",
+        type="gloss_lattice",
+        schema_version="1.0",
+        session_id=UUID("12345678-1234-5678-1234-567812345678"),
         lattice_seq=7,
         utterance_id="utt-lattice-1",
-        revision=1,
-        language="asl",
-        subject_id="signer-a",
-        is_final=True,
-        capture_start_ms=1_000,
-        capture_end_ms=1_450,
-        produced_ms=1_500,
-        producer=GlossLatticeProducer(
-            classifier=profile,
-            segmenter_version="segmenter-v2",
-            top_k=2,
-        ),
+        language=SignLanguage.ASL,
+        timebase="session_monotonic_ms",
+        started_at_ms=1_000,
+        ended_at_ms=1_450,
+        producer=producer,
         slots=(
-            GlossLatticeSlot(
+            GlossSlot(
+                slot_index=0,
                 slot_id="slot-0",
                 start_ms=1_000,
                 end_ms=1_450,
                 candidates=(
-                    GlossCandidate(rank=1, gloss="DRINK", confidence=0.55),
-                    GlossCandidate(rank=2, gloss="WATER", confidence=0.45),
+                    GlossCandidate(gloss_id="DRINK", rank=1, confidence=0.55),
+                    GlossCandidate(gloss_id="WATER", rank=2, confidence=0.45),
                 ),
-                resolved_gloss="WATER",
-                selected_rank=2,
+                resolved_gloss_id="WATER",
                 provenance=GlossProvenance.TOP_K_SIGNER_CONFIRMED,
-                confirmed_at_ms=1_480,
             ),
         ),
     )
     request = AssemblyRequest(
         utterance_id="utt-lattice-1",
         language="asl",
-        subject_id="signer-a",
         lattice_seq=7,
-        revision=1,
-        classifier_model_version="asl-v3",
+        classifier_version="asl-v3",
         calibration_version="temperature-v2",
         vocabulary_version="demo-v1",
         lattice=lattice,
@@ -169,12 +163,12 @@ def test_bedrock_prompt_retains_full_lattice_slot_evidence() -> None:
             GlossEvidence(
                 evidence_id="slot-0",
                 slot_id="slot-0",
-                gloss="WATER",
+                gloss_id="WATER",
                 confidence=0.45,
-                source="top_k_signer_confirmed",
+                provenance="top_k_signer_confirmed",
                 start_ms=1_000,
                 end_ms=1_450,
-                alternatives=(
+                candidates=(
                     GlossAlternativeEvidence(1, "DRINK", 0.55),
                     GlossAlternativeEvidence(2, "WATER", 0.45),
                 ),
@@ -186,7 +180,7 @@ def test_bedrock_prompt_retains_full_lattice_slot_evidence() -> None:
             _draft(
                 "Water.",
                 ids=["slot-0"],
-                glosses=["WATER"],
+                gloss_ids=["WATER"],
             )
         ),
         _model_response({"supported": True, "reason": "supported"}),
@@ -203,13 +197,12 @@ def test_bedrock_prompt_retains_full_lattice_slot_evidence() -> None:
     prompt = json.loads(prompt_text)
     serialized_request = prompt["request"]
     assert serialized_request["lattice_seq"] == 7
-    assert serialized_request["revision"] == 1
-    assert serialized_request["producer"]["classifier"]["calibration_version"] == ("temperature-v2")
+    assert serialized_request["producer"]["calibration_version"] == "temperature-v2"
     assert serialized_request["slots"][0]["provenance"] == "top_k_signer_confirmed"
-    assert serialized_request["slots"][0]["confirmed_at_ms"] == 1_480
+    assert serialized_request["slots"][0]["resolved_gloss_id"] == "WATER"
     assert serialized_request["slots"][0]["candidates"] == [
-        {"rank": 1, "gloss": "DRINK", "confidence": 0.55},
-        {"rank": 2, "gloss": "WATER", "confidence": 0.45},
+        {"gloss_id": "DRINK", "rank": 1, "confidence": 0.55},
+        {"gloss_id": "WATER", "rank": 2, "confidence": 0.45},
     ]
     assert "landmarks" not in json.dumps(serialized_request).lower()
 

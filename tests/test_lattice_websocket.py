@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Iterator
 from time import perf_counter
 from typing import Any
@@ -9,6 +10,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from simplynext.agent import AssemblyRequest, AssemblyResult, AssemblyStatus
@@ -32,9 +34,10 @@ from simplynext.sessions import (
     LatticeReservationDisposition,
 )
 
-CLASSIFIER = {
-    "name": "frontend-temporal-classifier",
-    "model_version": "classifier-v7",
+PRODUCER = {
+    "classifier_id": "frontend-temporal-classifier",
+    "classifier_version": "classifier-v7",
+    "confidence_kind": "calibrated_probability",
     "calibration_version": "temperature-v3",
     "vocabulary_version": "demo-v2",
 }
@@ -81,7 +84,13 @@ class ControlledTranslation:
         self.started = asyncio.Event()
         self.finish = asyncio.Event()
 
-    async def process_lattice(self, lattice: GlossLattice) -> LatticeRepairRequiredEvent:
+    async def process_lattice(
+        self,
+        lattice: GlossLattice,
+        *,
+        signer_id: str | None = None,
+    ) -> LatticeRepairRequiredEvent:
+        assert signer_id is None
         self.started.set()
         await self.finish.wait()
         return _safe_failure_event(lattice, "controlled_agent_result")
@@ -133,7 +142,7 @@ def _session_request(*, stream_kind: str = "gloss_lattice") -> dict[str, Any]:
         },
     }
     if stream_kind == "gloss_lattice":
-        payload["classifier"] = dict(CLASSIFIER)
+        payload["producer"] = dict(PRODUCER)
     return payload
 
 
@@ -147,8 +156,8 @@ def _authorization(session: dict[str, Any]) -> dict[str, str]:
     return {"Authorization": f"Bearer {session['stream_token']}"}
 
 
-def _candidate(rank: int, gloss: str, confidence: float) -> dict[str, Any]:
-    return {"rank": rank, "gloss": gloss, "confidence": confidence}
+def _candidate(rank: int, gloss_id: str, confidence: float) -> dict[str, Any]:
+    return {"gloss_id": gloss_id, "rank": rank, "confidence": confidence}
 
 
 def _lattice(
@@ -156,12 +165,12 @@ def _lattice(
     *,
     lattice_seq: int = 0,
     utterance_id: str = "utt-lattice-0",
-    subject_id: str = "signer-a",
     unresolved: bool = False,
 ) -> dict[str, Any]:
     first_slot: dict[str, Any]
     if unresolved:
         first_slot = {
+            "slot_index": 0,
             "slot_id": "slot-0",
             "start_ms": 1_000,
             "end_ms": 1_300,
@@ -169,14 +178,12 @@ def _lattice(
                 _candidate(1, "HELLO", 0.62),
                 _candidate(2, "BYE", 0.58),
             ],
-            "resolved_gloss": None,
-            "selected_rank": None,
+            "resolved_gloss_id": None,
             "provenance": "unresolved",
-            "confirmed_at_ms": None,
-            "reason_codes": ["low_margin"],
         }
     else:
         first_slot = {
+            "slot_index": 0,
             "slot_id": "slot-0",
             "start_ms": 1_000,
             "end_ms": 1_300,
@@ -185,17 +192,15 @@ def _lattice(
                 _candidate(2, "BYE", 0.40),
                 _candidate(3, "THANK_YOU", 0.20),
             ],
-            "resolved_gloss": "HELLO",
-            "selected_rank": 1,
+            "resolved_gloss_id": "HELLO",
             "provenance": "classifier_high_confidence",
-            "confirmed_at_ms": None,
-            "reason_codes": [],
         }
 
     slots = [first_slot]
     if not unresolved:
         slots.append(
             {
+                "slot_index": 1,
                 "slot_id": "slot-1",
                 "start_ms": 1_400,
                 "end_ms": 1_750,
@@ -204,11 +209,8 @@ def _lattice(
                     _candidate(2, "WATER", 0.30),
                     _candidate(3, "HELP", 0.10),
                 ],
-                "resolved_gloss": "PLEASE",
-                "selected_rank": 1,
+                "resolved_gloss_id": "PLEASE",
                 "provenance": "classifier_high_confidence",
-                "confirmed_at_ms": None,
-                "reason_codes": [],
             }
         )
 
@@ -218,24 +220,11 @@ def _lattice(
         "session_id": session["session_id"],
         "lattice_seq": lattice_seq,
         "utterance_id": utterance_id,
-        "revision": 0,
         "language": "asl",
-        "subject_id": subject_id,
-        "is_final": True,
-        "capture_start_ms": 1_000,
-        "capture_end_ms": 1_800,
-        "produced_ms": 1_850,
-        "producer": {
-            "classifier": dict(CLASSIFIER),
-            "segmenter_version": "frontend-segmenter-v2",
-            "top_k": 3,
-        },
-        "quality": {
-            "observed_frames": 24,
-            "dropped_frames": 0,
-            "landmark_coverage": 0.97,
-            "classifier_latency_ms": 18,
-        },
+        "timebase": "session_monotonic_ms",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 1_800,
+        "producer": dict(PRODUCER),
         "slots": slots,
     }
 
@@ -275,7 +264,7 @@ async def _unit_lifecycle_setup(
     )
     created = await store.create(SessionCreateRequest.model_validate(_session_request()))
     session = created.model_dump(mode="json")
-    lattice = GlossLattice.model_validate(_lattice(session))
+    lattice = GlossLattice.model_validate_json(json.dumps(_lattice(session)))
     digest = hashlib.sha256(lattice.model_dump_json().encode("utf-8")).digest()
     services = RuntimeServices(
         settings=settings,
@@ -297,13 +286,13 @@ def test_lattice_mode_session_negotiates_endpoint_and_hard_limits(
     assert session["websocket_path"].endswith("/lattices")
     assert session["lattice_websocket_path"] == session["websocket_path"]
     assert session["lattice_schema_version"] == "1.0"
-    assert session["max_lattice_message_bytes"] == 65_536
-    assert session["max_lattice_slots"] == 32
+    assert session["max_lattice_message_bytes"] == 32_768
+    assert session["max_lattice_slots"] == 64
     assert session["max_candidates_per_slot"] == 5
 
-    missing_classifier = _session_request()
-    missing_classifier.pop("classifier")
-    response = client.post("/v1/sessions", json=missing_classifier)
+    missing_producer = _session_request()
+    missing_producer.pop("producer")
+    response = client.post("/v1/sessions", json=missing_producer)
     assert response.status_code == 422
 
 
@@ -448,33 +437,39 @@ def test_valid_lattice_event_order_and_complete_top_k_reach_agent(
 
     assert acknowledgement["lattice_seq"] == 0
     assert acknowledgement["utterance_id"] == "utt-lattice-0"
+    assert "revision" not in acknowledgement
     assert result["type"] == "lattice_result"
     assert result["status"] == "confident"
     assert result["caption"] == "Hello, please."
     assert result["tts_text"] == "Hello, please."
-    assert result["gloss_trace"] == ["HELLO", "PLEASE"]
+    assert result["gloss_id_trace"] == ["HELLO", "PLEASE"]
+    assert result["classifier_version"] == PRODUCER["classifier_version"]
+    assert "revision" not in result
     assert [item["slot_id"] for item in result["evidence_trace"]] == ["slot-0", "slot-1"]
+    assert [item["resolved_gloss_id"] for item in result["evidence_trace"]] == [
+        "HELLO",
+        "PLEASE",
+    ]
     assert [len(item["candidates"]) for item in result["evidence_trace"]] == [3, 3]
 
     assert len(assembler.requests) == 1
     request = assembler.requests[0]
     assert request.lattice_seq == 0
-    assert request.revision == 0
-    assert request.subject_id == "signer-a"
-    assert request.classifier_model_version == CLASSIFIER["model_version"]
-    assert request.calibration_version == CLASSIFIER["calibration_version"]
-    assert request.vocabulary_version == CLASSIFIER["vocabulary_version"]
-    assert tuple(item.gloss for item in request.evidence) == ("HELLO", "PLEASE")
-    assert tuple(item.source for item in request.evidence) == (
+    assert request.signer_id is None
+    assert request.classifier_version == PRODUCER["classifier_version"]
+    assert request.calibration_version == PRODUCER["calibration_version"]
+    assert request.vocabulary_version == PRODUCER["vocabulary_version"]
+    assert tuple(item.gloss_id for item in request.evidence) == ("HELLO", "PLEASE")
+    assert tuple(item.provenance for item in request.evidence) == (
         "classifier_high_confidence",
         "classifier_high_confidence",
     )
-    assert tuple(item.gloss for item in request.evidence[0].alternatives) == (
+    assert tuple(item.gloss_id for item in request.evidence[0].candidates) == (
         "HELLO",
         "BYE",
         "THANK_YOU",
     )
-    assert tuple(item.confidence for item in request.evidence[1].alternatives) == (
+    assert tuple(item.confidence for item in request.evidence[1].candidates) == (
         0.94,
         0.30,
         0.10,
@@ -499,7 +494,7 @@ def test_unresolved_slot_fails_closed_without_calling_agent(
     assert repair["action"] == "choose_candidate"
     assert repair["target_slot_ids"] == ["slot-0"]
     assert repair["reason_codes"] == ["unresolved_lattice_slot"]
-    assert [choice["gloss"] for choice in repair["choices"]] == ["HELLO", "BYE"]
+    assert [choice["gloss_id"] for choice in repair["choices"]] == ["HELLO", "BYE"]
     assert "caption" not in repair
     assert "tts_text" not in repair
     assert assembler.requests == []
@@ -549,9 +544,8 @@ def test_conflicting_retry_and_stale_sequence_are_rejected_without_agent_calls(
 
         conflict = _lattice(
             session,
-            lattice_seq=3,
-            utterance_id=first["utterance_id"],
-            subject_id="different-signer",
+            lattice_seq=2,
+            utterance_id="different-utterance",
         )
         socket.send_json(conflict)
         conflict_error = socket.receive_json()
@@ -721,7 +715,6 @@ def test_oversized_lattice_message_returns_error_then_closes_1009() -> None:
             bedrock_enabled=False,
             template_bundle_path=None,
             caption_templates_path=None,
-            gloss_lattice_max_message_bytes=4_096,
         ),
         translation=translation,
     )
@@ -732,7 +725,7 @@ def test_oversized_lattice_message_returns_error_then_closes_1009() -> None:
             session["websocket_path"], headers=_authorization(session)
         ) as socket:
             assert socket.receive_json()["state"] == "idle"
-            socket.send_text("x" * 4_097)
+            socket.send_text("x" * 32_769)
             error = socket.receive_json()
             assert error["type"] == "error"
             assert error["code"] == "invalid_message"
@@ -742,6 +735,49 @@ def test_oversized_lattice_message_returns_error_then_closes_1009() -> None:
                 socket.receive_json()
 
     assert closed.value.code == 1009
+    assert assembler.requests == []
+
+
+def test_ctr_v1_settings_reject_a_deployment_specific_message_limit() -> None:
+    with pytest.raises(ValidationError):
+        Settings(gloss_lattice_max_message_bytes=32_767)
+
+
+@pytest.mark.asyncio
+async def test_stale_sequence_is_rejected_before_waiting_for_agent_capacity() -> None:
+    translation, assembler = _translation_with_recording_assembler()
+    services, lattice, token, _ = await _unit_lifecycle_setup(translation)
+    accepted = lattice.model_copy(update={"lattice_seq": 2, "utterance_id": "utterance-2"})
+    accepted_digest = hashlib.sha256(accepted.model_dump_json().encode("utf-8")).digest()
+    await services.sessions.reserve_lattice(accepted, token, accepted_digest)
+    await services.sessions.complete_lattice(
+        accepted,
+        token,
+        accepted_digest,
+        _safe_failure_event(accepted, "test-complete"),
+    )
+    stale = lattice.model_copy(update={"lattice_seq": 1, "utterance_id": "utterance-1"})
+    stale_digest = hashlib.sha256(stale.model_dump_json().encode("utf-8")).digest()
+    websocket = MemoryWebSocket()
+    await services.agent_slots.acquire()
+
+    try:
+        keep_open = await _handle_lattice(
+            websocket=websocket,  # type: ignore[arg-type]
+            services=services,
+            lattice=stale,
+            token=token,
+            payload_digest=stale_digest,
+            byte_count=len(stale.model_dump_json().encode("utf-8")),
+            validation_started=perf_counter(),
+        )
+    finally:
+        services.agent_slots.release()
+
+    assert keep_open is True
+    assert websocket.events[-1]["type"] == "error"
+    assert websocket.events[-1]["code"] == "non_monotonic_sequence"
+    assert websocket.events[-1]["retryable"] is False
     assert assembler.requests == []
 
 

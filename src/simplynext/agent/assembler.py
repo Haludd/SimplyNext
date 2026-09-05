@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from simplynext.contracts.lattices import GlossLattice, GlossProvenance
+from simplynext.contracts.gloss_lattice import GlossLattice, GlossProvenance
 from simplynext.recognition import RecognitionCandidate
 
 
@@ -22,14 +22,14 @@ class GlossAlternativeEvidence:
     """One ranked alternative retained from a lattice slot."""
 
     rank: int
-    gloss: str
+    gloss_id: str
     confidence: float
 
     def __post_init__(self) -> None:
         if not 1 <= self.rank <= 5:
             raise ValueError("alternative rank must be between 1 and 5")
-        if not self.gloss.strip():
-            raise ValueError("alternative gloss must not be empty")
+        if not self.gloss_id.strip():
+            raise ValueError("alternative gloss_id must not be empty")
         if not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
             raise ValueError("alternative confidence must be between 0 and 1")
 
@@ -39,23 +39,23 @@ class GlossEvidence:
     """The compact, accepted classifier evidence available to an assembler."""
 
     evidence_id: str
-    gloss: str
+    gloss_id: str
     confidence: float
-    source: str = "classifier"
+    provenance: str = "classifier"
     slot_id: str | None = None
     start_ms: int | None = None
     end_ms: int | None = None
-    alternatives: tuple[GlossAlternativeEvidence, ...] = ()
+    candidates: tuple[GlossAlternativeEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.evidence_id.strip():
             raise ValueError("evidence_id must not be empty")
-        if not self.gloss.strip():
-            raise ValueError("gloss must not be empty")
+        if not self.gloss_id.strip():
+            raise ValueError("gloss_id must not be empty")
         if not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
-        if not self.source.strip():
-            raise ValueError("source must not be empty")
+        if not self.provenance.strip():
+            raise ValueError("provenance must not be empty")
         if (self.start_ms is None) != (self.end_ms is None):
             raise ValueError("start_ms and end_ms must be supplied together")
         if (
@@ -66,12 +66,12 @@ class GlossEvidence:
             raise ValueError("evidence timestamps are invalid")
         if self.slot_id is not None and not self.slot_id.strip():
             raise ValueError("slot_id must be omitted or non-empty")
-        ranks = tuple(item.rank for item in self.alternatives)
+        ranks = tuple(item.rank for item in self.candidates)
         if ranks and ranks != tuple(range(1, len(ranks) + 1)):
             raise ValueError("alternative ranks must be contiguous and start at 1")
-        alternative_glosses = tuple(_canonical_gloss(item.gloss) for item in self.alternatives)
-        if len(alternative_glosses) != len(set(alternative_glosses)):
-            raise ValueError("alternative glosses must be unique")
+        candidate_gloss_ids = tuple(item.gloss_id for item in self.candidates)
+        if len(candidate_gloss_ids) != len(set(candidate_gloss_ids)):
+            raise ValueError("candidate gloss_id values must be unique")
 
     @classmethod
     def from_candidate(
@@ -81,7 +81,7 @@ class GlossEvidence:
     ) -> GlossEvidence:
         return cls(
             evidence_id=evidence_id,
-            gloss=candidate.gloss,
+            gloss_id=candidate.gloss,
             confidence=candidate.confidence,
         )
 
@@ -93,10 +93,9 @@ class AssemblyRequest:
     utterance_id: str
     language: str
     evidence: tuple[GlossEvidence, ...]
-    subject_id: str | None = None
+    signer_id: str | None = None
     lattice_seq: int | None = None
-    revision: int | None = None
-    classifier_model_version: str | None = None
+    classifier_version: str | None = None
     calibration_version: str | None = None
     vocabulary_version: str | None = None
     lattice: GlossLattice | None = None
@@ -109,14 +108,12 @@ class AssemblyRequest:
         ids = tuple(item.evidence_id for item in self.evidence)
         if len(ids) != len(set(ids)):
             raise ValueError("evidence ids must be unique within an utterance")
-        if self.subject_id is not None and not self.subject_id.strip():
-            raise ValueError("subject_id must be omitted or non-empty")
+        if self.signer_id is not None and not self.signer_id.strip():
+            raise ValueError("signer_id must be omitted or non-empty")
         if self.lattice_seq is not None and self.lattice_seq < 0:
             raise ValueError("lattice_seq must be non-negative")
-        if self.revision is not None and self.revision < 0:
-            raise ValueError("revision must be non-negative")
         version_values = (
-            self.classifier_model_version,
+            self.classifier_version,
             self.calibration_version,
             self.vocabulary_version,
         )
@@ -127,29 +124,24 @@ class AssemblyRequest:
                 raise ValueError("lattice utterance_id must match the assembly request")
             if self.lattice.language.value != self.language:
                 raise ValueError("lattice language must match the assembly request")
-            profile = self.lattice.producer.classifier
             if (
-                self.subject_id != self.lattice.subject_id
-                or self.lattice_seq != self.lattice.lattice_seq
-                or self.revision != self.lattice.revision
-                or self.classifier_model_version != profile.model_version
-                or self.calibration_version != profile.calibration_version
-                or self.vocabulary_version != profile.vocabulary_version
+                self.lattice_seq != self.lattice.lattice_seq
+                or self.classifier_version != self.lattice.producer.classifier_version
+                or self.calibration_version != self.lattice.producer.calibration_version
+                or self.vocabulary_version != self.lattice.producer.vocabulary_version
             ):
                 raise ValueError("assembly metadata must exactly match the lattice")
-            if not self.lattice.is_final:
-                raise ValueError("an incomplete lattice cannot enter assembly")
             if any(slot.provenance is GlossProvenance.UNRESOLVED for slot in self.lattice.slots):
                 raise ValueError("an unresolved lattice cannot enter assembly")
             if len(self.evidence) != len(self.lattice.slots):
                 raise ValueError("assembly evidence must cover every lattice slot")
             for item, slot in zip(self.evidence, self.lattice.slots, strict=True):
-                selected = slot.selected_candidate
-                expected_confidence = selected.confidence if selected is not None else 1.0
-                expected_alternatives = tuple(
+                resolved = slot.resolved_candidate
+                expected_confidence = resolved.confidence if resolved is not None else 1.0
+                expected_candidates = tuple(
                     GlossAlternativeEvidence(
                         rank=candidate.rank,
-                        gloss=candidate.gloss,
+                        gloss_id=candidate.gloss_id,
                         confidence=candidate.confidence,
                     )
                     for candidate in slot.candidates
@@ -157,18 +149,18 @@ class AssemblyRequest:
                 if (
                     item.evidence_id != slot.slot_id
                     or item.slot_id != slot.slot_id
-                    or item.gloss != slot.resolved_gloss
+                    or item.gloss_id != slot.resolved_gloss_id
                     or item.confidence != expected_confidence
-                    or item.source != slot.provenance.value
+                    or item.provenance != slot.provenance.value
                     or item.start_ms != slot.start_ms
                     or item.end_ms != slot.end_ms
-                    or item.alternatives != expected_alternatives
+                    or item.candidates != expected_candidates
                 ):
                     raise ValueError("assembly evidence must exactly match the lattice")
 
     @property
-    def glosses(self) -> tuple[str, ...]:
-        return tuple(item.gloss for item in self.evidence)
+    def gloss_ids(self) -> tuple[str, ...]:
+        return tuple(item.gloss_id for item in self.evidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,7 +231,7 @@ class DeterministicTemplateAssembler:
         return len(self._templates)
 
     def assemble(self, request: AssemblyRequest) -> AssemblyResult:
-        key = tuple(_canonical_gloss(gloss) for gloss in request.glosses)
+        key = tuple(_canonical_gloss(gloss_id) for gloss_id in request.gloss_ids)
         template = self._templates.get(key)
         if template is None:
             reason = "no_gloss_evidence" if not key else "exact_caption_template_not_configured"

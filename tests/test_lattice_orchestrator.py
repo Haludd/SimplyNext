@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
 from simplynext.agent import AssemblyRequest, AssemblyResult, AssemblyStatus
 from simplynext.contracts import (
-    ClassifierDescriptor,
     GlossCandidate,
     GlossLattice,
     GlossLatticeProducer,
-    GlossLatticeQuality,
-    GlossLatticeSlot,
     GlossProvenance,
+    GlossSlot,
     LatticeRepairRequiredEvent,
     LatticeResultEvent,
     RepairAction,
@@ -21,65 +20,53 @@ from simplynext.orchestrator import TranslationEngine
 from simplynext.recognition import ConfidencePolicy, UnconfiguredRecognizer
 
 
-def classifier() -> ClassifierDescriptor:
-    return ClassifierDescriptor(
-        name="temporal-classifier",
-        model_version="asl-demo-v3",
+def producer() -> GlossLatticeProducer:
+    return GlossLatticeProducer(
+        classifier_id="temporal-classifier",
+        classifier_version="asl-demo-v3",
+        confidence_kind="calibrated_probability",
         calibration_version="temperature-v2",
         vocabulary_version="demo-v1",
     )
 
 
-def candidate(rank: int, gloss: str, confidence: float) -> GlossCandidate:
-    return GlossCandidate(rank=rank, gloss=gloss, confidence=confidence)
+def candidate(rank: int, gloss_id: str, confidence: float) -> GlossCandidate:
+    return GlossCandidate(gloss_id=gloss_id, rank=rank, confidence=confidence)
 
 
 def slot(
+    slot_index: int,
     slot_id: str,
     start_ms: int,
     end_ms: int,
     *,
     candidates: tuple[GlossCandidate, ...],
-    resolved_gloss: str | None,
-    selected_rank: int | None,
+    resolved_gloss_id: str | None,
     provenance: GlossProvenance,
-    confirmed_at_ms: int | None = None,
-    reason_codes: tuple[str, ...] = (),
-) -> GlossLatticeSlot:
-    return GlossLatticeSlot(
+) -> GlossSlot:
+    return GlossSlot(
+        slot_index=slot_index,
         slot_id=slot_id,
         start_ms=start_ms,
         end_ms=end_ms,
         candidates=candidates,
-        resolved_gloss=resolved_gloss,
-        selected_rank=selected_rank,
+        resolved_gloss_id=resolved_gloss_id,
         provenance=provenance,
-        confirmed_at_ms=confirmed_at_ms,
-        reason_codes=reason_codes,
     )
 
 
-def lattice(
-    *slots: GlossLatticeSlot,
-    is_final: bool = True,
-    quality: GlossLatticeQuality | None = None,
-) -> GlossLattice:
+def lattice(*slots: GlossSlot) -> GlossLattice:
     return GlossLattice(
-        session_id="12345678-1234-5678-1234-567812345678",
+        type="gloss_lattice",
+        schema_version="1.0",
+        session_id=UUID("12345678-1234-5678-1234-567812345678"),
         lattice_seq=4,
         utterance_id="utt-004",
         language=SignLanguage.ASL,
-        subject_id="signer-a",
-        is_final=is_final,
-        capture_start_ms=1_000,
-        capture_end_ms=1_800,
-        produced_ms=1_850,
-        producer=GlossLatticeProducer(
-            classifier=classifier(),
-            segmenter_version="segmenter-v2",
-            top_k=3,
-        ),
-        quality=quality,
+        timebase="session_monotonic_ms",
+        started_at_ms=1_000,
+        ended_at_ms=1_800,
+        producer=producer(),
         slots=slots,
     )
 
@@ -128,6 +115,7 @@ def engine(assembler) -> tuple[TranslationEngine, MetricsRegistry]:
 def resolved_lattice() -> GlossLattice:
     return lattice(
         slot(
+            0,
             "s0",
             1_000,
             1_300,
@@ -136,11 +124,11 @@ def resolved_lattice() -> GlossLattice:
                 candidate(2, "WELCOME", 0.20),
                 candidate(3, "BYE", 0.05),
             ),
-            resolved_gloss="HELLO",
-            selected_rank=1,
+            resolved_gloss_id="HELLO",
             provenance=GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE,
         ),
         slot(
+            1,
             "s1",
             1_350,
             1_800,
@@ -149,23 +137,23 @@ def resolved_lattice() -> GlossLattice:
                 candidate(2, "PLEASE", 0.42),
                 candidate(3, "SORRY", 0.03),
             ),
-            resolved_gloss="PLEASE",
-            selected_rank=2,
+            resolved_gloss_id="PLEASE",
             provenance=GlossProvenance.TOP_K_SIGNER_CONFIRMED,
-            confirmed_at_ms=1_840,
         ),
     )
 
 
-def test_complete_lattice_reaches_agent_without_top_k_collapse() -> None:
+def test_ctr_lattice_reaches_agent_without_candidate_collapse() -> None:
     assembler = SpyAssembler()
     translation, metrics = engine(assembler)
 
-    result = asyncio.run(translation.process_lattice(resolved_lattice()))
+    result = asyncio.run(
+        translation.process_lattice(resolved_lattice(), signer_id="account-signer-7")
+    )
 
     assert isinstance(result, LatticeResultEvent)
     assert result.caption == "Hello, please."
-    assert result.gloss_trace == ("HELLO", "PLEASE")
+    assert result.gloss_id_trace == ("HELLO", "PLEASE")
     assert [item.provenance for item in result.evidence_trace] == [
         GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE,
         GlossProvenance.TOP_K_SIGNER_CONFIRMED,
@@ -174,10 +162,10 @@ def test_complete_lattice_reaches_agent_without_top_k_collapse() -> None:
     request = assembler.requests[0]
     assert request.lattice == resolved_lattice()
     assert request.lattice_seq == 4
-    assert request.revision == 0
-    assert request.subject_id == "signer-a"
+    assert request.signer_id == "account-signer-7"
+    assert request.classifier_version == "asl-demo-v3"
     assert request.calibration_version == "temperature-v2"
-    assert [[item.gloss for item in evidence.alternatives] for evidence in request.evidence] == [
+    assert [[item.gloss_id for item in evidence.candidates] for evidence in request.evidence] == [
         ["HELLO", "WELCOME", "BYE"],
         ["THANK_YOU", "PLEASE", "SORRY"],
     ]
@@ -195,6 +183,7 @@ def test_unresolved_slot_returns_slot_scoped_choices_without_running_agent() -> 
     translation, _ = engine(MustNotRunAssembler())
     payload = lattice(
         slot(
+            0,
             "gap-1",
             1_000,
             1_800,
@@ -202,10 +191,8 @@ def test_unresolved_slot_returns_slot_scoped_choices_without_running_agent() -> 
                 candidate(1, "WATER", 0.54),
                 candidate(2, "DRINK", 0.49),
             ),
-            resolved_gloss=None,
-            selected_rank=None,
+            resolved_gloss_id=None,
             provenance=GlossProvenance.UNRESOLVED,
-            reason_codes=("ambiguous_top_k",),
         )
     )
 
@@ -214,30 +201,20 @@ def test_unresolved_slot_returns_slot_scoped_choices_without_running_agent() -> 
     assert isinstance(result, LatticeRepairRequiredEvent)
     assert result.action is RepairAction.CHOOSE_CANDIDATE
     assert result.target_slot_ids == ("gap-1",)
-    assert [(item.slot_id, item.gloss) for item in result.choices] == [
+    assert [(item.slot_id, item.gloss_id) for item in result.choices] == [
         ("gap-1", "WATER"),
         ("gap-1", "DRINK"),
     ]
-    assert result.evidence_trace[0].resolved_gloss is None
+    assert result.evidence_trace[0].resolved_gloss_id is None
     assert "caption" not in result.model_dump()
     assert "tts_text" not in result.model_dump()
-
-
-def test_partial_lattice_never_runs_agent() -> None:
-    translation, _ = engine(MustNotRunAssembler())
-    payload = resolved_lattice().model_copy(update={"is_final": False})
-
-    result = asyncio.run(translation.process_lattice(payload))
-
-    assert isinstance(result, LatticeRepairRequiredEvent)
-    assert result.action is RepairAction.REPEAT
-    assert result.reason_codes == ("lattice_not_final",)
 
 
 def test_false_high_confidence_provenance_is_rechecked_server_side() -> None:
     translation, _ = engine(MustNotRunAssembler())
     payload = lattice(
         slot(
+            0,
             "s0",
             1_000,
             1_800,
@@ -245,8 +222,7 @@ def test_false_high_confidence_provenance_is_rechecked_server_side() -> None:
                 candidate(1, "WATER", 0.74),
                 candidate(2, "DRINK", 0.60),
             ),
-            resolved_gloss="WATER",
-            selected_rank=1,
+            resolved_gloss_id="WATER",
             provenance=GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE,
         )
     )
@@ -258,25 +234,6 @@ def test_false_high_confidence_provenance_is_rechecked_server_side() -> None:
     assert result.reason_codes == ("classifier_provenance_below_threshold",)
 
 
-def test_aggregate_frontend_quality_remains_a_fail_closed_gate() -> None:
-    translation, _ = engine(MustNotRunAssembler())
-    payload = lattice(
-        *resolved_lattice().slots,
-        quality=GlossLatticeQuality(
-            observed_frames=20,
-            dropped_frames=0,
-            landmark_coverage=0.40,
-            classifier_latency_ms=18,
-        ),
-    )
-
-    result = asyncio.run(translation.process_lattice(payload))
-
-    assert isinstance(result, LatticeRepairRequiredEvent)
-    assert result.action is RepairAction.REPOSITION
-    assert result.reason_codes == ("insufficient_landmark_coverage",)
-
-
 def test_agent_exception_is_a_repair_and_never_model_text() -> None:
     translation, metrics = engine(RaisingAssembler())
 
@@ -286,5 +243,6 @@ def test_agent_exception_is_a_repair_and_never_model_text() -> None:
     assert result.action is RepairAction.ESCALATE
     assert result.reason_codes == ("assembly_failed",)
     assert result.agent_source is None
+    assert result.classifier_version == "asl-demo-v3"
     assert "caption" not in result.model_dump()
     assert metrics.snapshot()["counters"]["lattice_utterances_repair_required"] == 1

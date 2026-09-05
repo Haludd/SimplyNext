@@ -29,18 +29,19 @@ The overlay is a 3D-style skeleton projection. It is not pretending that a webca
 
 The current local analyzer intentionally reports a useful feature readout (`open hand`, `closed hand`, movement, confidence) instead of claiming that four dictionary entries are a complete ASL translator. The seed lexicon is in `assets/sign_lexicon.json`. It stores the ASL labels and Handspeak reference links for `hello`, `help`, `water`, and `please`, plus the sign parameters to compare: handshape, movement, location, and handedness. Add a licensed dataset and a trained temporal model before presenting a word-level result as reliable.
 
-Chrome also supports an optional DeepFace emotion signal. The Flutter web
+Chrome also supports an optional facial-expression signal. The Flutter web
 camera remains in the browser for hand and shoulder tracking. About once per
 second, `web/hand_tracking.js` sends a compressed still image to
-`POST /v1/emotions/analyze`; the Python service follows the OpenCV + DeepFace
-flow from the referenced GitHub project and returns the dominant emotion and
-class scores. If the local DeepFace service is unavailable, hand and shoulder
-tracking continue but the face emotion signal is left empty.
+`POST /v1/emotions/analyze`; the Python service uses HSEmotion's EfficientNet
+ONNX model and falls back to the OpenCV + DeepFace flow from the referenced
+GitHub project if HSEmotion is unavailable. It returns the dominant emotion
+and class scores. If the local service is unavailable, hand and shoulder
+tracking continue but the face signal is left empty.
 
 My signs uses the live tracker rather than placeholder samples. Each valid capture
 stores five examples of a fixed 136-value sample: 63 wrist-centred x/y/z values
 for the left hand, 63 for the right hand (zero-filled when that hand is absent),
-three motion values, and seven DeepFace emotion scores. The saved entry also
+three motion values, and seven facial-expression scores. The saved entry also
 keeps its selected language, coordinate-space label, and face signal for audit
 and later matching. One-handed signs are accepted; both hands are not required.
 The My signs page includes the ASL reference cards from the seed lexicon and
@@ -142,10 +143,9 @@ MediaPipe provides world landmarks; otherwise the app labels the summary
 `image_normalized_wrist_centered`. This distinction prevents the backend from
 treating webcam-relative depth as absolute physical measurements.
 
-The same frame can include `face_expression`. Chrome uses the local DeepFace
-endpoint for seven emotion scores: angry, disgust, fear, happy, sad, surprise,
-and neutral. DeepFace supplies the emotion result; it does not provide hand or
-shoulder landmarks. The backend receives these fields automatically because
+The same frame can include `face_expression`. Chrome uses the local combined
+endpoint for seven HSEmotion/DeepFace emotion scores—angry, disgust, fear,
+happy, sad, surprise, and neutral. The backend receives these fields automatically because
 `SignSequencePayload` serializes each `LandmarkFrame` before
 `SignSequenceApiClient` posts it.
 
@@ -162,7 +162,7 @@ The request path is:
 ```text
 camera frame
   → MediaPipe hand + pose landmarkers
-  → optional JPEG snapshot → /v1/emotions/analyze → DeepFace emotion
+  → optional JPEG snapshot → /v1/emotions/analyze → HSEmotion (DeepFace fallback)
   → HandTrackingFrame
   → HandPoseNormalizer
   → LandmarkFrame.toJson()

@@ -2,7 +2,9 @@
 
 This is the local backend for the Flutter tracking contract. The sign-sequence
 endpoint still uses only Python's standard library. The optional emotion
-endpoint adapts the OpenCV + DeepFace example used by the frontend.
+endpoint uses HSEmotion's EfficientNet ONNX model for fast facial-expression
+recognition, falls back to the OpenCV + DeepFace adapter if needed, and also
+runs the normal sign-sequence analysis endpoint.
 
 ## Run it
 
@@ -12,7 +14,7 @@ From the repository root:
 python3 backend/run.py
 ```
 
-To enable DeepFace emotion analysis, install the model dependencies first:
+To enable face-expression analysis, install the model dependencies first:
 
 ```bash
 python3 -m venv .venv
@@ -57,9 +59,13 @@ The emotion response looks like this:
   "dominant_emotion": "happy",
   "confidence": 0.86,
   "emotions": {"angry": 0.01, "happy": 0.86, "neutral": 0.08},
-  "model": "DeepFace"
+  "model": "HSEmotion EfficientNet-B2",
+  "source": "hsemotion"
 }
 ```
+
+HSEmotion estimates facial expressions. DeepFace remains available as a
+fallback if HSEmotion cannot load.
 
 Run the backend tests with:
 

@@ -26,6 +26,14 @@ def main() -> None:
     args = parser.parse_args()
 
     service = SignBridgeBackend(store=SequenceStore(args.store))
+    try:
+        service.warm_up_emotion_models()
+        print("HSEmotion face model ready")
+    except Exception as error:
+        # Keep /health and the hand-sign endpoint available if an optional
+        # emotion dependency/model is unavailable; the emotion endpoint will
+        # return a useful JSON error when the browser requests it.
+        print(f"Emotion model warm-up deferred: {error}")
     server = create_server(args.host, args.port, service)
     print(f"SignBridge backend listening at http://{args.host}:{args.port}")
     print("POST /v1/sign-sequences/analyze")

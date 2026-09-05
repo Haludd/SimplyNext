@@ -18,7 +18,7 @@ const DEEPFACE_API_URL =
   configuredDeepFaceUrl ||
   queryDeepFaceUrl ||
   'http://127.0.0.1:8000/v1/emotions/analyze';
-const DEEPFACE_INTERVAL_MS = 900;
+const DEEPFACE_INTERVAL_MS = 1200;
 
 let handLandmarker;
 let poseLandmarker;
@@ -32,6 +32,47 @@ let lastDeepFaceRequestAt = 0;
 let deepFaceWarningShown = false;
 let emotionCanvas;
 let emotionContext;
+
+function cameraElements() {
+  return Array.from(
+    document.querySelectorAll('[data-signbridge-camera]'),
+  );
+}
+
+function isVisibleCameraElement(element) {
+  const style = globalThis.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return (
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    style.opacity !== '0' &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+}
+
+function visibleCameraElement() {
+  const elements = cameraElements();
+  return (
+    elements.find((element) => isVisibleCameraElement(element)) ||
+    elements[0]
+  );
+}
+
+function syncVisibleCameraElement() {
+  if (!stream) return;
+  const nextVideo = visibleCameraElement();
+  if (!nextVideo || nextVideo === video) return;
+
+  if (video) video.srcObject = null;
+  video = nextVideo;
+  video.srcObject = stream;
+  video.muted = true;
+  video.playsInline = true;
+  void video.play().catch((error) => {
+    console.warn('Unable to resume the visible camera preview.', error);
+  });
+}
 
 function posePointToJson(point) {
   if (!point) return null;
@@ -65,7 +106,7 @@ async function requestDeepFaceEmotion() {
     }
     const sourceWidth = video.videoWidth || 640;
     const sourceHeight = video.videoHeight || 480;
-    const scale = Math.min(1, 640 / sourceWidth);
+    const scale = Math.min(1, 480 / sourceWidth);
     emotionCanvas.width = Math.max(1, Math.round(sourceWidth * scale));
     emotionCanvas.height = Math.max(1, Math.round(sourceHeight * scale));
     emotionContext.drawImage(
@@ -76,7 +117,7 @@ async function requestDeepFaceEmotion() {
       emotionCanvas.height,
     );
     const blob = await new Promise((resolve) =>
-      emotionCanvas.toBlob(resolve, 'image/jpeg', 0.72),
+      emotionCanvas.toBlob(resolve, 'image/jpeg', 0.68),
     );
     if (!blob) return;
 
@@ -92,10 +133,10 @@ async function requestDeepFaceEmotion() {
     deepFaceEmotion = payload.status === 'ok' ? payload : null;
   } catch (error) {
     // Hand and shoulder tracking remain available if the optional local
-    // DeepFace service is not running or its Python dependencies are missing.
+    // The local face-analysis service is not running or its dependencies are missing.
     if (!deepFaceWarningShown) {
       console.warn(
-        'DeepFace emotion API unavailable; face emotion will remain unavailable.',
+        'Face emotion API unavailable; face emotion will remain unavailable.',
         error,
       );
       deepFaceWarningShown = true;
@@ -114,7 +155,7 @@ function deepFaceToJson(result) {
     ]),
   );
   return {
-    source: 'deepface',
+    source: result.source ?? 'face-model',
     confidence: Number(result.confidence ?? 0),
     label: result.dominant_emotion ?? 'not detected',
     landmarks: [],
@@ -169,6 +210,7 @@ function dispatchFrame(result, poseResult) {
 
 function processFrame() {
   if (!started) return;
+  syncVisibleCameraElement();
   if (
     video?.readyState >= 2 &&
     handLandmarker &&
@@ -212,7 +254,7 @@ function waitForCameraElement(timeoutMs = 3000) {
   const startedAt = performance.now();
   return new Promise((resolve, reject) => {
     const findElement = () => {
-      const element = document.getElementById('signbridge-web-camera');
+      const element = visibleCameraElement();
       if (element) {
         resolve(element);
         return;

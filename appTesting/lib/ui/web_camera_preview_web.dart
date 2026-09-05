@@ -15,7 +15,7 @@ class WebCameraPreview extends StatelessWidget {
     ui_web.platformViewRegistry.registerViewFactory(
       'signbridge-camera',
       (int viewId) => web.HTMLVideoElement()
-        ..id = 'signbridge-web-camera'
+        ..setAttribute('data-signbridge-camera', 'true')
         ..autoplay = true
         ..muted = true
         ..setAttribute('playsinline', 'true')

@@ -203,7 +203,7 @@ class AppController extends ChangeNotifier {
   ///
   /// The live API keeps every raw landmark. My Signs additionally stores a
   /// stable wrist-centred vector for each left/right hand, motion features,
-  /// and DeepFace emotion scores so a later sequence model can compare a
+  /// and facial-expression scores so a later sequence model can compare a
   /// user's examples without depending on camera position.
   List<double>? captureCurrentSignSample() {
     final frame = latestFrame;

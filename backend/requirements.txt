@@ -1,3 +1,6 @@
 opencv-python<5
 deepface
 tf_keras
+onnxruntime
+onnx
+hsemotion-onnx

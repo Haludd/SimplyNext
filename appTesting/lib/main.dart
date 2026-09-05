@@ -1152,6 +1152,11 @@ class _HandAnalysisCard extends StatelessWidget {
     final frame = controller.latestFrame;
     final motion = frame?.handMotion;
     final face = frame?.faceExpression;
+    final faceModel = face?.source == 'hsemotion'
+        ? 'HSEmotion'
+        : face?.source == 'deepface'
+        ? 'DeepFace'
+        : 'Face model';
     final analysis = controller.latestAnalysis;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 13),
@@ -1216,33 +1221,42 @@ class _HandAnalysisCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(9),
               border: Border.all(color: _cyan.withValues(alpha: .12)),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Icon(
-                  Icons.face_retouching_natural,
-                  color: _cyan,
-                  size: 16,
-                ),
-                const SizedBox(width: 7),
-                const Text(
-                  'Face signal',
-                  style: TextStyle(
-                    color: _subtle,
-                    fontSize: 9,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  face == null
-                      ? 'waiting'
-                      : '${face.source == 'deepface' ? 'DeepFace' : 'MediaPipe'}: '
-                            '${face.label} · ${(face.confidence * 100).round()}%',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: <Widget>[
+                    const Icon(
+                      Icons.face_retouching_natural,
+                      color: _cyan,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 7),
+                    const Text(
+                      'Face signal',
+                      style: TextStyle(
+                        color: _subtle,
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const Spacer(),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: <Widget>[
+                        Text(
+                          face == null
+                              ? 'waiting'
+                              : '$faceModel: ${face.label} · ${(face.confidence * 100).round()}%',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ],
             ),

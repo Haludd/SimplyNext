@@ -164,6 +164,9 @@ tracked into language, and back. Items 10–17 are the tracking set; items 18–
 31. **`CTR`** — `plan/CTR_contracts.md` · *Status:* Frozen
     *Contents:* Version 1.0 `GlossLattice` stage ⑤ → ⑥ wire contract and integration rules
     *SoT for:* **The `GlossLattice` wire contract**
+32. **`DEP`** — `plan/DEP_dependencies.md` · *Status:* Live
+    *Contents:* Python environment setup and current-versus-planned dependency inventory
+    *SoT for:* Human-readable dependency and environment guidance
 
 
 
@@ -619,7 +622,8 @@ SimplyNext/
 │   ├── ARC_architecture.md               ARC
 │   ├── RSK_risk_register.md              RSK
 │   ├── PLN_plan.md                       PLN — execution plan
-│   └── CTR_contracts.md                  CTR — GlossLattice wire contract
+│   ├── CTR_contracts.md                  CTR — GlossLattice wire contract
+│   └── DEP_dependencies.md               DEP — dependencies and environment
 │
 ├── doc/                                  reference material and syntheses
 │   ├── [D1..D6]*.pdf                     original training decks (read-only)
@@ -776,3 +780,6 @@ The consequences, in order of how often they bite:
    *Change:* Registered [`CTR`](plan/CTR_contracts.md) as the frozen source of truth for the
    `GlossLattice` version 1.0 wire contract and added it to the directory map in
    [`RIX_S5`](#5-directory-map).
+8. **2026-09-06** · *Author:* Codex (GPT-5)
+   *Change:* Registered [`DEP`](plan/DEP_dependencies.md) as the human-readable dependency and
+   virtual-environment guide and added it to the directory map in [`RIX_S5`](#5-directory-map).

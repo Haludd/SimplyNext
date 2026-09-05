@@ -416,6 +416,10 @@ and `git status` is clean after touching a file under `data/`.
 A `requirements.txt` in which every version is exact, and a recorded date on which each was checked
 against the live index.
 
+The current install commands, declared packages, and deferred package candidates are maintained in
+[`DEP`](DEP_dependencies.md). Its reproducibility-gap section records what remains before this task
+is complete.
+
 1. Pin `mediapipe` to an exact version. **Rule 2 of
    [`ARC_S6.5`](ARC_architecture.md#65-perception-engineering-rules) is not optional**: the
    upstream repository has already removed a public API, and almost every tutorial online uses the
@@ -1964,3 +1968,6 @@ from a document in this repository, by address, and resolves to that document's 
    the landmark budget is decision 2's; and that decision 4 names a scenario, not a vocabulary
    bound, which `T3.1` must supply. Placeholders left for the calendar, the lane owners and the
    face-mesh indices.
+2. **2026-09-06** · *Author:* Codex (GPT-5)
+   *Change:* Linked `T0.2` to [`DEP`](DEP_dependencies.md), the maintained dependency inventory and
+   virtual-environment guide, while preserving the exact-lock requirement as unfinished work.

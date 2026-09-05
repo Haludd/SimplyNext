@@ -327,6 +327,7 @@ class BedrockLatticeAssemblerNode:
             messages=messages,
             tools=tools,
             tool_state=tool_state,
+            utterance_id=lattice.utterance_id,
         )
         self._increment_metric("assembler_output_validation_attempts")
 
@@ -354,13 +355,18 @@ class BedrockLatticeAssemblerNode:
         messages: list[dict[str, Any]],
         tools: AllowedToolExecutor | None,
         tool_state: AgentGraphState | None,
+        utterance_id: str,
     ) -> Mapping[str, Any]:
         definitions = () if tools is None else tools.definitions
         request_options: dict[str, Any] = {}
         if definitions:
             request_options["toolConfig"] = _bedrock_tool_config(definitions)
 
-        response = self._converse(messages=messages, request_options=request_options)
+        response = self._converse(
+            messages=messages,
+            request_options=request_options,
+            utterance_id=utterance_id,
+        )
         tool_requests = _extract_tool_requests(
             response,
             maximum=self._config.max_tool_calls_per_round,
@@ -385,7 +391,11 @@ class BedrockLatticeAssemblerNode:
             )
         messages.append({"role": "user", "content": result_content})
 
-        final_response = self._converse(messages=messages, request_options=request_options)
+        final_response = self._converse(
+            messages=messages,
+            request_options=request_options,
+            utterance_id=utterance_id,
+        )
         repeated_requests = _extract_tool_requests(
             final_response,
             maximum=self._config.max_tool_calls_per_round,
@@ -399,6 +409,7 @@ class BedrockLatticeAssemblerNode:
         *,
         messages: list[dict[str, Any]],
         request_options: Mapping[str, Any],
+        utterance_id: str,
     ) -> Mapping[str, Any]:
         response = self._client.converse(
             modelId=self._config.model_id,
@@ -407,6 +418,10 @@ class BedrockLatticeAssemblerNode:
             inferenceConfig={
                 "maxTokens": self._config.max_tokens,
                 "temperature": float(self._config.temperature),
+            },
+            requestMetadata={
+                "simplynext_role": "assembler",
+                "simplynext_utterance_id": utterance_id,
             },
             **request_options,
         )

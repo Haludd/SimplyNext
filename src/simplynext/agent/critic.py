@@ -287,6 +287,10 @@ class BedrockLatticeCriticNode:
                     "maxTokens": self._config.max_tokens,
                     "temperature": float(self._config.temperature),
                 },
+                requestMetadata={
+                    "simplynext_role": "critic",
+                    "simplynext_utterance_id": str(payload.get("utterance_id", "unavailable")),
+                },
             )
             return response
         finally:

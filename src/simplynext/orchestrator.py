@@ -15,11 +15,17 @@ from simplynext.agent import (
     AssemblyStatus,
     BedrockAssemblerConfig,
     BedrockCaptionAssembler,
+    BedrockCostGuard,
+    BedrockPricing,
     CaptionAssembler,
     CaptionTemplate,
+    CostGuardedConverseClient,
     DeterministicTemplateAssembler,
     GlossEvidence,
     create_bedrock_client,
+    create_bedrock_control_client,
+    preflight_bedrock_access,
+    preflight_bedrock_runtime_access,
 )
 from simplynext.config import Settings
 from simplynext.contracts import (
@@ -451,8 +457,36 @@ def build_translation_engine(settings: Settings, metrics: MetricsRegistry) -> Tr
 
     assembler: CaptionAssembler
     if settings.bedrock_enabled:
+        preflight_bedrock_access(
+            create_bedrock_control_client(region_name=settings.aws_region),
+            region_name=settings.aws_region,
+            model_id=settings.bedrock_model_id,
+        )
+        pricing = BedrockPricing(
+            model_id=settings.bedrock_model_id,
+            input_usd_per_million=settings.bedrock_input_usd_per_million_tokens,
+            output_usd_per_million=settings.bedrock_output_usd_per_million_tokens,
+            cache_write_usd_per_million=(settings.bedrock_cache_write_usd_per_million_tokens),
+            cache_read_usd_per_million=(settings.bedrock_cache_read_usd_per_million_tokens),
+        )
+        guard = BedrockCostGuard(
+            pricing=pricing,
+            spend_limit_usd=settings.bedrock_spend_limit_usd,
+            known_spend_usd=settings.bedrock_known_spend_usd,
+        )
+        client = CostGuardedConverseClient(
+            client=create_bedrock_client(region_name=settings.aws_region),
+            guard=guard,
+            metrics=metrics,
+            prompt_cache_enabled=settings.bedrock_prompt_cache_enabled,
+        )
+        preflight_bedrock_runtime_access(
+            client,
+            region_name=settings.aws_region,
+            model_id=settings.bedrock_model_id,
+        )
         assembler = BedrockCaptionAssembler(
-            create_bedrock_client(region_name=settings.aws_region),
+            client,
             BedrockAssemblerConfig(
                 model_id=settings.bedrock_model_id,
                 max_revisions=settings.agent_max_revisions,

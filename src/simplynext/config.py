@@ -6,11 +6,12 @@ left to the standard AWS credential provider chain and are never model fields.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from simplynext.contracts import SignLanguage
@@ -61,6 +62,18 @@ class Settings(BaseSettings):
     bedrock_enabled: bool = False
     aws_region: str = "ap-southeast-1"
     bedrock_model_id: str = DEFAULT_BEDROCK_MODEL_ID
+    bedrock_lease_owner: str | None = None
+    bedrock_spend_limit_usd: Decimal = Field(
+        default=Decimal("5.00"),
+        gt=0,
+        lt=Decimal("20.00"),
+    )
+    bedrock_known_spend_usd: Decimal = Field(default=Decimal(0), ge=0)
+    bedrock_input_usd_per_million_tokens: Decimal = Field(default=Decimal("1.10"), ge=0)
+    bedrock_output_usd_per_million_tokens: Decimal = Field(default=Decimal("5.50"), ge=0)
+    bedrock_cache_write_usd_per_million_tokens: Decimal = Field(default=Decimal("1.375"), ge=0)
+    bedrock_cache_read_usd_per_million_tokens: Decimal = Field(default=Decimal("0.11"), ge=0)
+    bedrock_prompt_cache_enabled: bool = True
     agent_max_revisions: int = Field(default=1, ge=0, le=1)
     enable_hypothesis_replay_endpoint: bool = False
 
@@ -83,9 +96,17 @@ class Settings(BaseSettings):
 
     @field_validator("template_bundle_path", "caption_templates_path", mode="before")
     @classmethod
-    def empty_path_is_unconfigured(cls, value: object) -> object:
+    def empty_optional_value_is_unconfigured(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("bedrock_lease_owner", mode="before")
+    @classmethod
+    def normalize_bedrock_lease_owner(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
         return value
 
     @field_validator("bedrock_model_id", mode="before")
@@ -102,6 +123,26 @@ class Settings(BaseSettings):
         if not value:
             raise ValueError("value must not be empty")
         return value
+
+    @model_validator(mode="after")
+    def require_bedrock_ownership_and_budget_headroom(self) -> Self:
+        if self.bedrock_known_spend_usd > self.bedrock_spend_limit_usd:
+            raise ValueError("bedrock_known_spend_usd cannot exceed bedrock_spend_limit_usd")
+        if self.bedrock_enabled and self.bedrock_lease_owner is None:
+            raise ValueError("bedrock_lease_owner is required when Bedrock is enabled")
+        pricing_fields = {
+            "bedrock_input_usd_per_million_tokens",
+            "bedrock_output_usd_per_million_tokens",
+            "bedrock_cache_write_usd_per_million_tokens",
+            "bedrock_cache_read_usd_per_million_tokens",
+        }
+        if self.bedrock_model_id != DEFAULT_BEDROCK_MODEL_ID and not pricing_fields.issubset(
+            self.model_fields_set
+        ):
+            raise ValueError(
+                "a non-default bedrock_model_id requires all four explicit pricing fields"
+            )
+        return self
 
     @property
     def cors_origins(self) -> tuple[str, ...]:

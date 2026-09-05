@@ -260,6 +260,10 @@ class BedrockCaptionAssembler:
                     "maxTokens": self._config.max_tokens,
                     "temperature": self._config.temperature,
                 },
+                requestMetadata={
+                    "simplynext_role": role,
+                    "simplynext_utterance_id": _request_utterance_id(payload),
+                },
             )
             return _response_text(response)
         finally:
@@ -289,6 +293,15 @@ def create_bedrock_client(*, region_name: str | None = None) -> ConverseClient:
         raise RuntimeError("boto3 is required for Bedrock caption assembly") from exc
     region = region_name or os.environ.get(BEDROCK_REGION_ENV) or None
     return cast(ConverseClient, boto3.client("bedrock-runtime", region_name=region))
+
+
+def _request_utterance_id(payload: Mapping[str, Any]) -> str:
+    request = payload.get("request")
+    if isinstance(request, Mapping):
+        utterance_id = request.get("utterance_id")
+        if isinstance(utterance_id, str) and utterance_id:
+            return utterance_id
+    return "unavailable"
 
 
 def _evidence_payload(request: AssemblyRequest) -> dict[str, Any]:

@@ -1,52 +1,8 @@
 import 'dart:math' as math;
 
-class NormalizedPoint {
-  const NormalizedPoint({
-    required this.x,
-    required this.y,
-    this.z = 0,
-    this.visibility = 1,
-  });
+import 'landmark_frame.dart';
 
-  final double x;
-  final double y;
-  final double z;
-  final double visibility;
-
-  bool get isVisible => visibility >= 0.5;
-}
-
-class LandmarkFrame {
-  const LandmarkFrame({
-    required this.timestamp,
-    this.leftShoulder,
-    this.rightShoulder,
-    this.leftWrist,
-    this.rightWrist,
-    this.leftHandVisible = false,
-    this.rightHandVisible = false,
-    this.lightingScore = 0.9,
-    this.trackingConfidence = 0.98,
-    this.featureVector = const <double>[],
-  });
-
-  final DateTime timestamp;
-  final NormalizedPoint? leftShoulder;
-  final NormalizedPoint? rightShoulder;
-  final NormalizedPoint? leftWrist;
-  final NormalizedPoint? rightWrist;
-  final bool leftHandVisible;
-  final bool rightHandVisible;
-  final double lightingScore;
-  final double trackingConfidence;
-  final List<double> featureVector;
-
-  bool get shouldersVisible =>
-      leftShoulder?.isVisible == true && rightShoulder?.isVisible == true;
-  bool get armsVisible =>
-      leftWrist?.isVisible == true && rightWrist?.isVisible == true;
-  bool get handsVisible => leftHandVisible && rightHandVisible;
-}
+export 'landmark_frame.dart';
 
 class AlignmentConfig {
   const AlignmentConfig({

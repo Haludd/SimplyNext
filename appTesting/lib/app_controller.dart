@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'models/face_tracking_models.dart';
 import 'models/tracking_models.dart';
 import 'models/hand_tracking_models.dart';
 import 'services/device_access_service.dart';
@@ -202,7 +203,7 @@ class AppController extends ChangeNotifier {
   ///
   /// The live API keeps every raw landmark. My Signs additionally stores a
   /// stable wrist-centred vector for each left/right hand, motion features,
-  /// and facial non-manual features so a later sequence model can compare a
+  /// and DeepFace emotion scores so a later sequence model can compare a
   /// user's examples without depending on camera position.
   List<double>? captureCurrentSignSample() {
     final frame = latestFrame;
@@ -242,14 +243,10 @@ class AppController extends ChangeNotifier {
       motion?.averageSpeed ?? 0,
       motion?.averageAcceleration ?? 0,
       motion?.averageOpenness ?? 0,
-      face?.smile ?? 0,
-      face?.frown ?? 0,
-      face?.browRaise ?? 0,
-      face?.browFurrow ?? 0,
-      face?.eyeWide ?? 0,
-      face?.jawOpen ?? 0,
-      face?.mouthPucker ?? 0,
     ]);
+    for (final emotion in deepFaceEmotionLabels) {
+      vector.add(face?.emotionScores[emotion] ?? 0);
+    }
     return vector;
   }
 

@@ -29,10 +29,18 @@ The overlay is a 3D-style skeleton projection. It is not pretending that a webca
 
 The current local analyzer intentionally reports a useful feature readout (`open hand`, `closed hand`, movement, confidence) instead of claiming that four dictionary entries are a complete ASL translator. The seed lexicon is in `assets/sign_lexicon.json`. It stores the ASL labels and Handspeak reference links for `hello`, `help`, `water`, and `please`, plus the sign parameters to compare: handshape, movement, location, and handedness. Add a licensed dataset and a trained temporal model before presenting a word-level result as reliable.
 
+Chrome also supports an optional DeepFace emotion signal. The Flutter web
+camera remains in the browser for hand and shoulder tracking. About once per
+second, `web/hand_tracking.js` sends a compressed still image to
+`POST /v1/emotions/analyze`; the Python service follows the OpenCV + DeepFace
+flow from the referenced GitHub project and returns the dominant emotion and
+class scores. If the local DeepFace service is unavailable, hand and shoulder
+tracking continue but the face emotion signal is left empty.
+
 My signs uses the live tracker rather than placeholder samples. Each valid capture
 stores five examples of a fixed 136-value sample: 63 wrist-centred x/y/z values
 for the left hand, 63 for the right hand (zero-filled when that hand is absent),
-three motion values, and seven facial non-manual values. The saved entry also
+three motion values, and seven DeepFace emotion scores. The saved entry also
 keeps its selected language, coordinate-space label, and face signal for audit
 and later matching. One-handed signs are accepted; both hands are not required.
 The My signs page includes the ASL reference cards from the seed lexicon and
@@ -134,27 +142,27 @@ MediaPipe provides world landmarks; otherwise the app labels the summary
 `image_normalized_wrist_centered`. This distinction prevents the backend from
 treating webcam-relative depth as absolute physical measurements.
 
-The same frame can include `face_expression`. Chrome uses MediaPipe Face
-Landmarker blendshapes for a small non-manual feature set: smile, frown, brow
-raise/furrow, eye widening, jaw opening, and lip pursing. It also sends ten
-curated face landmarks rather than all face points. The backend receives these
-fields automatically because `SignSequencePayload` serializes each
-`LandmarkFrame` before `SignSequenceApiClient` posts it.
+The same frame can include `face_expression`. Chrome uses the local DeepFace
+endpoint for seven emotion scores: angry, disgust, fear, happy, sad, surprise,
+and neutral. DeepFace supplies the emotion result; it does not provide hand or
+shoulder landmarks. The backend receives these fields automatically because
+`SignSequencePayload` serializes each `LandmarkFrame` before
+`SignSequenceApiClient` posts it.
 
-The requested [Facial-Expression-Recognition.Pytorch repository](https://github.com/WuJie1010/Facial-Expression-Recognition.Pytorch)
-is useful as a backend model reference, but it is not a drop-in browser
-dependency. It is an older Python/PyTorch training and evaluation project for
-FER2013 and CK+ expression classes. A backend adapter can later consume the
-`face_expression.blendshapes` and curated landmarks, or crop the stored face
-region and run an exported model from that project. The adapter should return
-the model name, class probabilities, and confidence; it should not confuse a
-generic emotion class with a sign-language non-manual marker.
+The requested [OpenCV + DeepFace repository](https://github.com/manish-9245/Facial-Emotion-Recognition-using-OpenCV-and-Deepface)
+is not a drop-in Flutter dependency: its `emotion.py` owns an OpenCV desktop
+webcam loop. The backend adapter keeps its face-cascade → RGB face crop →
+`DeepFace.analyze(actions=['emotion'])` logic, but returns JSON for the Flutter
+browser instead of opening an OpenCV window. It should still be treated as a
+generic emotion signal, not as a declaration of a person's intent or a
+complete sign-language translation.
 
 The request path is:
 
 ```text
 camera frame
-  → hand + pose + face landmarkers
+  → MediaPipe hand + pose landmarkers
+  → optional JPEG snapshot → /v1/emotions/analyze → DeepFace emotion
   → HandTrackingFrame
   → HandPoseNormalizer
   → LandmarkFrame.toJson()
@@ -162,8 +170,8 @@ camera frame
   → POST /v1/sign-sequences/analyze
 ```
 
-MediaPipe's face output is an expression signal, not a declaration of a
-person's emotion or intent. A sign-language model should use it as a
+DeepFace's output is a generic facial-expression estimate, not a declaration
+of a person's emotion or intent. A sign-language model should use it as a
 non-manual feature alongside hand and body motion, with consent and an
 appropriate model for the selected language.
 
@@ -189,6 +197,6 @@ service call, runs the local feature readout, and returns a clearly labelled
 Once the backend is ready, supplying `SIGNBRIDGE_API_URL` automatically swaps
 in the real HTTP client without changing the capture flow.
 
-For browser testing, serve the API over HTTPS (or localhost), allow the Flutter dev origin in CORS, and never upload raw video unless the user has explicitly opted into it. Store landmarks and the consent/session ID instead of camera frames by default.
+For browser testing, serve the API over HTTPS (or localhost), allow the Flutter dev origin in CORS, and never upload raw video unless the user has explicitly opted into it. DeepFace requires a still image, so the optional local service receives compressed snapshots; it does not store them. Store landmarks and the consent/session ID instead of camera frames by default.
 
 `AlignmentEvaluator` remains independent of the UI. It receives normalized shoulder points, computes midpoint, width, horizontal error, and vertical error, and returns feedback such as “Move back” or “Position looks good ✓”.

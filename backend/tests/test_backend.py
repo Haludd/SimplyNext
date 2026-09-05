@@ -13,6 +13,18 @@ from backend.signbridge_backend.service import SignBridgeBackend
 from backend.signbridge_backend.store import SequenceStore
 
 
+class FakeEmotionAnalyzer:
+    def analyze(self, image_bytes: bytes) -> dict:
+        assert image_bytes == b"fake-jpeg"
+        return {
+            "status": "ok",
+            "dominant_emotion": "happy",
+            "confidence": 0.86,
+            "emotions": {"happy": 0.86, "neutral": 0.14},
+            "model": "DeepFace",
+        }
+
+
 def payload(*, frame_count: int = 1) -> dict:
     frames = [
         {
@@ -70,6 +82,31 @@ class BackendTests(unittest.TestCase):
             with urlopen(request, timeout=2) as response:
                 result = json.loads(response.read().decode("utf-8"))
             self.assertEqual(result["status"], "no_signal")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_http_emotion_endpoint_returns_deepface_result(self) -> None:
+        server = create_server(
+            "127.0.0.1",
+            0,
+            SignBridgeBackend(emotion_analyzer=FakeEmotionAnalyzer()),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            address = server.server_address
+            request = Request(
+                f"http://{address[0]}:{address[1]}/v1/emotions/analyze",
+                data=b"fake-jpeg",
+                headers={"Content-Type": "image/jpeg"},
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(result["dominant_emotion"], "happy")
+            self.assertEqual(result["model"], "DeepFace")
         finally:
             server.shutdown()
             server.server_close()

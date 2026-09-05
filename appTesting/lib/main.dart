@@ -1236,7 +1236,8 @@ class _HandAnalysisCard extends StatelessWidget {
                 Text(
                   face == null
                       ? 'waiting'
-                      : '${face.label} · ${(face.confidence * 100).round()}%',
+                      : '${face.source == 'deepface' ? 'DeepFace' : 'MediaPipe'}: '
+                            '${face.label} · ${(face.confidence * 100).round()}%',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 10,

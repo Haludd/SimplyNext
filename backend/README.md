@@ -1,8 +1,8 @@
 # SignBridge backend
 
-This is the first working backend for the Flutter tracking contract. It uses
-only Python's standard library, so it can run before the trained ASL and facial
-models are ready.
+This is the local backend for the Flutter tracking contract. The sign-sequence
+endpoint still uses only Python's standard library. The optional emotion
+endpoint adapts the OpenCV + DeepFace example used by the frontend.
 
 ## Run it
 
@@ -12,11 +12,20 @@ From the repository root:
 python3 backend/run.py
 ```
 
+To enable DeepFace emotion analysis, install the model dependencies first:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python backend/run.py
+```
+
 The API listens on `http://127.0.0.1:8000`:
 
 ```text
 GET  /health
 POST /v1/sign-sequences/analyze
+POST /v1/emotions/analyze  (JPEG or PNG body)
 ```
 
 Start Flutter against it in another terminal:
@@ -35,7 +44,22 @@ replaceable library class: a trained temporal model can implement the same
 
 The stored payload includes the 21-point hand coordinates, world coordinates
 when the browser provides them, hand geometry, motion, and facial expression
-features. Raw video is not uploaded or stored.
+features. Raw video is not stored. When DeepFace is enabled, the browser sends
+one compressed camera snapshot about once per second to the configured API so
+the Python service can analyse it; keep the API local unless the user has
+explicitly consented to remote processing.
+
+The emotion response looks like this:
+
+```json
+{
+  "status": "ok",
+  "dominant_emotion": "happy",
+  "confidence": 0.86,
+  "emotions": {"angry": 0.01, "happy": 0.86, "neutral": 0.08},
+  "model": "DeepFace"
+}
+```
 
 Run the backend tests with:
 

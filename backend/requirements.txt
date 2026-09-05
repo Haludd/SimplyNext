@@ -1,2 +1,3 @@
-# The local backend uses only Python's standard library.
-# Add a pinned ML/runtime dependency here when a trained model is introduced.
+opencv-python<5
+deepface
+tf_keras

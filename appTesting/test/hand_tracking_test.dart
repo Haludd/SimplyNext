@@ -138,16 +138,10 @@ void main() {
   test('keeps facial expression features in the frame payload', () {
     const face = FaceExpressionFeatures(
       confidence: .9,
-      label: 'smile',
-      smile: .8,
-      frown: .02,
-      browRaise: .1,
-      browFurrow: .01,
-      eyeWide: .2,
-      jawOpen: .05,
-      mouthPucker: .03,
+      label: 'sad',
       landmarks: <FaceLandmark>[FaceLandmark(index: 1, x: .5, y: .3, z: -.02)],
-      blendshapes: <String, double>{'mouthSmileLeft': .8},
+      source: 'deepface',
+      emotionScores: <String, double>{'sad': .86, 'neutral': .1},
     );
     final frame = HandPoseNormalizer().normalize(
       HandTrackingFrame(
@@ -157,7 +151,9 @@ void main() {
       ),
     );
 
-    expect(frame.faceExpression?.label, 'smile');
+    expect(frame.faceExpression?.label, 'sad');
+    expect(frame.faceExpression?.source, 'deepface');
+    expect(frame.faceExpression?.emotionScores['sad'], .86);
     expect(frame.toJson()['face_expression'], isNotNull);
     expect(
       (frame.toJson()['face_expression'] as Map<String, dynamic>)['landmarks'],

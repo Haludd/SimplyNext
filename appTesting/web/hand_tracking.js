@@ -1,6 +1,5 @@
 import {
   FilesetResolver,
-  FaceLandmarker,
   HandLandmarker,
   PoseLandmarker,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs';
@@ -11,16 +10,28 @@ const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const POSE_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-const FACE_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const configuredDeepFaceUrl = globalThis.signBridgeDeepFaceUrl;
+const queryDeepFaceUrl = new URLSearchParams(globalThis.location.search).get(
+  'deepface_api',
+);
+const DEEPFACE_API_URL =
+  configuredDeepFaceUrl ||
+  queryDeepFaceUrl ||
+  'http://127.0.0.1:8000/v1/emotions/analyze';
+const DEEPFACE_INTERVAL_MS = 900;
 
 let handLandmarker;
 let poseLandmarker;
-let faceLandmarker;
 let video;
 let stream;
 let animationFrame;
 let started = false;
+let deepFaceEmotion;
+let deepFaceRequestInFlight = false;
+let lastDeepFaceRequestAt = 0;
+let deepFaceWarningShown = false;
+let emotionCanvas;
+let emotionContext;
 
 function posePointToJson(point) {
   if (!point) return null;
@@ -32,81 +43,86 @@ function posePointToJson(point) {
   };
 }
 
-function averageBlendshape(blendshapes, names) {
-  const values = names
-    .map((name) => blendshapes[name] ?? 0)
-    .filter((value) => value > 0);
-  return values.length === 0
-    ? 0
-    : values.reduce((sum, value) => sum + value, 0) / values.length;
+async function requestDeepFaceEmotion() {
+  if (
+    !DEEPFACE_API_URL ||
+    !video ||
+    video.readyState < 2 ||
+    deepFaceRequestInFlight
+  ) {
+    return;
+  }
+
+  const now = performance.now();
+  if (now - lastDeepFaceRequestAt < DEEPFACE_INTERVAL_MS) return;
+  lastDeepFaceRequestAt = now;
+  deepFaceRequestInFlight = true;
+
+  try {
+    if (!emotionCanvas) {
+      emotionCanvas = document.createElement('canvas');
+      emotionContext = emotionCanvas.getContext('2d');
+    }
+    const sourceWidth = video.videoWidth || 640;
+    const sourceHeight = video.videoHeight || 480;
+    const scale = Math.min(1, 640 / sourceWidth);
+    emotionCanvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    emotionCanvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    emotionContext.drawImage(
+      video,
+      0,
+      0,
+      emotionCanvas.width,
+      emotionCanvas.height,
+    );
+    const blob = await new Promise((resolve) =>
+      emotionCanvas.toBlob(resolve, 'image/jpeg', 0.72),
+    );
+    if (!blob) return;
+
+    const response = await fetch(DEEPFACE_API_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'image/jpeg'},
+      body: blob,
+    });
+    if (!response.ok) {
+      throw new Error(`DeepFace API returned ${response.status}`);
+    }
+    const payload = await response.json();
+    deepFaceEmotion = payload.status === 'ok' ? payload : null;
+  } catch (error) {
+    // Hand and shoulder tracking remain available if the optional local
+    // DeepFace service is not running or its Python dependencies are missing.
+    if (!deepFaceWarningShown) {
+      console.warn(
+        'DeepFace emotion API unavailable; face emotion will remain unavailable.',
+        error,
+      );
+      deepFaceWarningShown = true;
+    }
+  } finally {
+    deepFaceRequestInFlight = false;
+  }
 }
 
-function faceToJson(faceResult) {
-  const sourceLandmarks = faceResult?.faceLandmarks?.[0] ?? [];
-  if (sourceLandmarks.length === 0) return null;
-
-  const landmarkIndices = [1, 10, 13, 14, 33, 61, 70, 263, 291, 300];
-  const landmarks = landmarkIndices.map((index) => ({
-    index,
-    ...posePointToJson(sourceLandmarks[index]),
-  }));
-  const categories = faceResult?.faceBlendshapes?.[0]?.categories ?? [];
-  const blendshapes = Object.fromEntries(
-    categories.map((category) => [
-      category.categoryName,
-      category.score ?? 0,
+function deepFaceToJson(result) {
+  if (!result || result.status !== 'ok') return null;
+  const emotions = Object.fromEntries(
+    Object.entries(result.emotions ?? {}).map(([label, score]) => [
+      label.toLowerCase(),
+      Number(score),
     ]),
   );
-  const smile = averageBlendshape(blendshapes, [
-    'mouthSmileLeft',
-    'mouthSmileRight',
-  ]);
-  const frown = averageBlendshape(blendshapes, [
-    'mouthFrownLeft',
-    'mouthFrownRight',
-  ]);
-  const browRaise = averageBlendshape(blendshapes, [
-    'browInnerUp',
-    'browOuterUpLeft',
-    'browOuterUpRight',
-  ]);
-  const browFurrow = averageBlendshape(blendshapes, [
-    'browDownLeft',
-    'browDownRight',
-  ]);
-  const eyeWide = averageBlendshape(blendshapes, [
-    'eyeWideLeft',
-    'eyeWideRight',
-  ]);
-  const jawOpen = blendshapes.jawOpen ?? 0;
-  const mouthPucker = blendshapes.mouthPucker ?? 0;
-  const candidates = [
-    ['smile', smile],
-    ['frown', frown],
-    ['brow raised', browRaise],
-    ['brow furrowed', browFurrow],
-    ['eyes wide', eyeWide],
-    ['mouth open', jawOpen],
-    ['pursed lips', mouthPucker],
-  ].sort((left, right) => right[1] - left[1]);
-  const label = candidates[0][1] >= 0.35 ? candidates[0][0] : 'neutral';
-
   return {
-    confidence: 0.9,
-    label,
-    smile,
-    frown,
-    brow_raise: browRaise,
-    brow_furrow: browFurrow,
-    eye_wide: eyeWide,
-    jaw_open: jawOpen,
-    mouth_pucker: mouthPucker,
-    landmarks,
-    blendshapes,
+    source: 'deepface',
+    confidence: Number(result.confidence ?? 0),
+    label: result.dominant_emotion ?? 'not detected',
+    landmarks: [],
+    emotion_scores: emotions,
   };
 }
 
-function dispatchFrame(result, poseResult, faceResult) {
+function dispatchFrame(result, poseResult) {
   const handednesses = result.handednesses ?? result.handedness ?? [];
   const hands = (result.landmarks ?? []).map((landmarks, index) => {
     const category = handednesses[index]?.[0];
@@ -130,7 +146,7 @@ function dispatchFrame(result, poseResult, faceResult) {
   const rightShoulder = posePointToJson(pose[12]);
   const hasShoulders =
     leftShoulder?.visibility >= 0.45 && rightShoulder?.visibility >= 0.45;
-  const face = faceToJson(faceResult);
+  const face = deepFaceToJson(deepFaceEmotion);
 
   window.dispatchEvent(
     new CustomEvent('signbridge-hand-frame', {
@@ -148,6 +164,7 @@ function dispatchFrame(result, poseResult, faceResult) {
       }),
     }),
   );
+  void requestDeepFaceEmotion();
 }
 
 function processFrame() {
@@ -155,13 +172,11 @@ function processFrame() {
   if (
     video?.readyState >= 2 &&
     handLandmarker &&
-    poseLandmarker &&
-    faceLandmarker
+    poseLandmarker
   ) {
     const result = handLandmarker.detectForVideo(video, performance.now());
     const poseResult = poseLandmarker.detectForVideo(video, performance.now());
-    const faceResult = faceLandmarker.detectForVideo(video, performance.now());
-    dispatchFrame(result, poseResult, faceResult);
+    dispatchFrame(result, poseResult);
   }
   animationFrame = requestAnimationFrame(processFrame);
 }
@@ -190,19 +205,7 @@ async function createLandmarker(delegate) {
     minPosePresenceConfidence: 0.55,
     minTrackingConfidence: 0.55,
   });
-  const face = await FaceLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: FACE_MODEL_URL,
-      delegate,
-    },
-    runningMode: 'VIDEO',
-    numFaces: 1,
-    minFaceDetectionConfidence: 0.55,
-    minFacePresenceConfidence: 0.55,
-    minTrackingConfidence: 0.55,
-    outputFaceBlendshapes: true,
-  });
-  return { hand, pose, face };
+  return { hand, pose };
 }
 
 function waitForCameraElement(timeoutMs = 3000) {
@@ -248,13 +251,11 @@ async function start() {
     const detectors = await createLandmarker('GPU');
     handLandmarker = detectors.hand;
     poseLandmarker = detectors.pose;
-    faceLandmarker = detectors.face;
   } catch (error) {
     console.warn('MediaPipe GPU delegate unavailable; using CPU.', error);
     const detectors = await createLandmarker('CPU');
     handLandmarker = detectors.hand;
     poseLandmarker = detectors.pose;
-    faceLandmarker = detectors.face;
   }
 
   started = true;
@@ -267,12 +268,13 @@ async function stop() {
   stream?.getTracks().forEach((track) => track.stop());
   stream = null;
   if (video) video.srcObject = null;
+  deepFaceEmotion = null;
+  deepFaceRequestInFlight = false;
+  lastDeepFaceRequestAt = 0;
   handLandmarker?.close();
   poseLandmarker?.close();
-  faceLandmarker?.close();
   handLandmarker = null;
   poseLandmarker = null;
-  faceLandmarker = null;
 }
 
 window.signBridgeHandTracker = { start, stop };

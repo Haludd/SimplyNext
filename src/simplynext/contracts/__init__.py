@@ -1,0 +1,110 @@
+"""Public wire contracts for the SimplyNext backend."""
+
+from typing import Annotated, TypeAlias
+
+from pydantic import Field
+
+from .common import Confidence, ContractModel, Identifier, SignLanguage
+from .events import (
+    AckEvent,
+    ActivityEvent,
+    ActivityState,
+    ErrorCode,
+    ErrorEvent,
+    OutboundEvent,
+    PongEvent,
+    RepairRequiredEvent,
+    UtteranceResultEvent,
+)
+from .landmarks import (
+    FACE_LANDMARK_INDICES,
+    FACE_LANDMARK_NAMES,
+    HAND_LANDMARK_NAMES,
+    LANDMARK_SCHEMA_VERSION,
+    MAX_CONTRACT_BATCH_FRAMES,
+    POSE_LANDMARK_INDICES,
+    POSE_LANDMARK_NAMES,
+    CameraGeometry,
+    FaceLandmarks,
+    HandLandmarks,
+    LandmarkBatch,
+    LandmarkFrame,
+    LandmarkLayout,
+    LandmarkPoint,
+    PoseLandmarks,
+)
+from .sessions import (
+    ClientDescriptor,
+    ClientPlatform,
+    ControlAction,
+    DetectorDelegate,
+    DetectorDescriptor,
+    SessionCreateRequest,
+    SessionCreateResponse,
+    SessionRequest,
+    SessionResponse,
+    StreamControlMessage,
+)
+from .utterances import (
+    GlossHypothesis,
+    RepairAction,
+    TranslationResult,
+    TranslationStatus,
+    UtterancePayload,
+    UtteranceRequest,
+    UtteranceResponse,
+)
+
+InboundStreamMessage: TypeAlias = Annotated[
+    LandmarkBatch | StreamControlMessage,
+    Field(discriminator="type"),
+]
+
+__all__ = [
+    "AckEvent",
+    "ActivityEvent",
+    "ActivityState",
+    "CameraGeometry",
+    "ClientDescriptor",
+    "ClientPlatform",
+    "Confidence",
+    "ContractModel",
+    "ControlAction",
+    "DetectorDelegate",
+    "DetectorDescriptor",
+    "ErrorCode",
+    "ErrorEvent",
+    "FACE_LANDMARK_INDICES",
+    "FACE_LANDMARK_NAMES",
+    "FaceLandmarks",
+    "GlossHypothesis",
+    "HAND_LANDMARK_NAMES",
+    "HandLandmarks",
+    "Identifier",
+    "InboundStreamMessage",
+    "LANDMARK_SCHEMA_VERSION",
+    "LandmarkBatch",
+    "LandmarkFrame",
+    "LandmarkLayout",
+    "LandmarkPoint",
+    "MAX_CONTRACT_BATCH_FRAMES",
+    "OutboundEvent",
+    "PongEvent",
+    "POSE_LANDMARK_INDICES",
+    "POSE_LANDMARK_NAMES",
+    "PoseLandmarks",
+    "RepairAction",
+    "RepairRequiredEvent",
+    "SessionCreateRequest",
+    "SessionCreateResponse",
+    "SessionRequest",
+    "SessionResponse",
+    "SignLanguage",
+    "StreamControlMessage",
+    "TranslationResult",
+    "TranslationStatus",
+    "UtterancePayload",
+    "UtteranceRequest",
+    "UtteranceResponse",
+    "UtteranceResultEvent",
+]

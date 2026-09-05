@@ -271,7 +271,7 @@ downstream module see only signing-space coordinates.
 > coordinate system**, and pose world landmarks with the origin at the hip centre `[S21]`. What
 > remains for the project is the **scale** normalisation (by shoulder width) and the derived
 > velocity and acceleration features. The origin translation does not need to be written.
-> This is a reduction in scope, not a change of direction.
+> This is a reduction in scope, not a change of d irection.
 
 > **Decision:** ship body-normalised 2D + per-hand world landmarks. Treat true metric 3D as a
 > roadmap item tied to hardware ([`ARC_S6.4`](#64-latency-budget)), not an MVP requirement.

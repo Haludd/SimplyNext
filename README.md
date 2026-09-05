@@ -143,7 +143,8 @@ SimplyNext/
 │   ├── scribbles.md        SCR      raw ideation, product intent
 │   ├── JCR_judging_criteria.md      how the submission is scored
 │   ├── ARC_architecture.md          technical direction, sourced
-│   └── RSK_risk_register.md         136 catalogued risks
+│   ├── RSK_risk_register.md         136 catalogued risks
+│   └── PLN_plan.md                  execution plan: 9 packages, 50 tasks
 │
 ├── doc/                             reference material and syntheses
 │   ├── [D1..D6]*.pdf                training decks (read-only originals)
@@ -183,7 +184,8 @@ SimplyNext/
 
 
 # 5. READING ORDER
-Full onboarding sequence for someone joining the team cold. Roughly two hours end to end.
+Full onboarding sequence for someone joining the team cold. Roughly two and a half hours end
+to end.
 
 1. **[`RIX`](ref_index.md)** · *Time:* 5 min
    *Purpose:* How to find and cite everything else
@@ -193,16 +195,18 @@ Full onboarding sequence for someone joining the team cold. Roughly two hours en
    *Purpose:* The specification the submission is graded against
 4. **[`ARC`](plan/ARC_architecture.md)** · *Time:* 30 min
    *Purpose:* What is being built, and why the obvious approach fails
-5. **[`RSK_S10`](plan/RSK_risk_register.md#10-top-ten-risks)** · *Time:* 10 min
+5. **[`PLN`](plan/PLN_plan.md)** · *Time:* 20 min
+   *Purpose:* How it gets built, in what order, and what is cut first
+6. **[`RSK_S10`](plan/RSK_risk_register.md#10-top-ten-risks)** · *Time:* 10 min
    *Purpose:* The ten risks that matter most
-6. **[`MPS`](doc/MPS_mediapipe_synthesis.md)** · *Time:* 5 min
+7. **[`MPS`](doc/MPS_mediapipe_synthesis.md)** · *Time:* 5 min
    *Purpose:* The perception library the project depends on, and its four traps
-7. **[`LTS`](doc/LTS_signlang_literature_synthesis.md)** · *Time:* 10 min
+8. **[`LTS`](doc/LTS_signlang_literature_synthesis.md)** · *Time:* 10 min
    *Purpose:* What the field already knows, what data exists, and what does not
-8. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
+9. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
    *Purpose:* The six training decks, condensed
-9. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
-   *Purpose:* Working rules
+10. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
+    *Purpose:* Working rules
 
 Then the remaining repository syntheses, 5 minutes each. **Tracking:**
 [`APS`](doc/APS_apple_synthesis.md) for the segmentation state machine,
@@ -460,8 +464,10 @@ D3_p39       doc/[D3]_..., slide 39
     [`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
 6.  **Training material**
     🟢 Synthesised — [`TRN`](doc/TRN_training_synthesis.md)
-7.  **Master plan (`PLN`)**
-    🔴 Not written — blocked on the architecture decisions
+7.  **Execution plan (`PLN`)**
+    🟡 Written — [`PLN`](plan/PLN_plan.md). **Draft** until the architecture decisions are
+    ratified; thirty-one of its fifty tasks proceed regardless —
+    [`PLN_S2.3`](plan/PLN_plan.md#23-the-lane-that-proceeds-regardless)
 8.  **Implementation (`src/`)**
     🔴 Not started
 9.  **Dataset**
@@ -538,7 +544,9 @@ plan.
     The ten clones themselves, git-ignored — [`RIX_S2.3`](ref_index.md#23-source-material)
 20. **`D1`–`D6`**
     The six training PDFs in `doc/`
-21. **`PLN` `TDO` `EVL` `DEC`**
+21. **`PLN`**
+    `plan/PLN_plan.md` — execution plan: work packages, tasks, schedule, descoping order
+22. **`TDO` `EVL` `DEC`**
     Reserved, not yet written — [`RIX_S2.2`](ref_index.md#22-planned-documents)
 
 The repository-code pattern — tag + `R` for a report, tag + `S` for a synthesis — is in

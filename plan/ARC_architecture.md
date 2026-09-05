@@ -1425,53 +1425,53 @@ Ratify or amend these, then [`PLN`](../ref_index.md#22-planned-documents) can be
 them.
 
 1.  Subject selection is a **tracking** problem. Build hysteresis-held largest-person tracking; do
-    **not** build segmentation · *Status:* Proposed
+    **not** build segmentation · *Status:* Agreed ✅
 2.  Track hands + handedness + upper-body pose + a **curated face subset**. Reject the full
-    468-point face mesh as model input · *Status:* Proposed
+    468-point face mesh as model input · *Status:* Agreed ✅
 3.  Representation is **body-normalised 2D + per-hand world landmarks**, not metric 3D · *Status:*
-    Proposed
-4.  **Closed vocabulary**, scoped to one named scenario. State the scope openly · *Status:* Proposed
+    Agreed 
+4.  **Closed vocabulary**, scoped to one named scenario. State the scope openly · *Status:* Agreed ✅. The scenario will be a normal, informal conversation between two individuals (friends, strangers, ...).
 5.  The only trained component is a **small temporal classifier**. **No LLM is trained** · *Status:*
     Proposed
 6.  Segmentation is **geometry + hysteresis + buffer-and-replay**, ported from
-    [`APR_S5.3`](../ref_repo/tracking/apple/APR_apple_report.md). No model · *Status:* Proposed
-7.  The agent runs **once per utterance**, never per frame · *Status:* Proposed
+    [`APR_S5.3`](../ref_repo/tracking/apple/APR_apple_report.md). No model · *Status:* Agreed
+7.  The agent runs **once per utterance**, never per frame · *Status:* Agreed
 8.  Below the confidence threshold the system **does not emit a sentence**. It plans a repair action
-    · *Status:* Proposed
-9.  Build P2 (frame-sampled VLM) as a fallback **and** as a measured baseline · *Status:* Proposed
-10. Depth hardware is a **roadmap item**, not an MVP dependency · *Status:* Proposed
+    · *Status:* Agreed
+9.  Build P2 (frame-sampled VLM) as a fallback **and** as a measured baseline · *Status:* Agree
+10. Depth hardware is a **roadmap item**, not an MVP dependency · *Status:* Agreed
 11. **At least one Deaf or hard-of-hearing person reviews the prototype before submission** ·
-    *Status:* Proposed
-12. **Log token usage from the first commit; report cost per run as a metric** · *Status:* Proposed
+    *Status:* Agreed ✅. To be carried out by my team.
+12. **Log token usage from the first commit; report cost per run as a metric** · *Status:* Agreed.
 13. **Perception is MediaPipe's Tasks API at a pinned version.** Never the legacy `mp.solutions`
-    interface, which is excluded from the 1.0-line wheel `[S21]` · *Status:* Proposed
+    interface, which is excluded from the 1.0-line wheel `[S21]` · *Status:* Agreed.
 14. **Landmark task chosen by measurement, not argument.** Build `HolisticLandmarker` and
     `HandLandmarker` + `PoseLandmarker` behind one interface, time both, and record the result —
-    [`ARC_S7.2`](#72-the-four-reference-repositories-compared) · *Status:* Proposed
+    [`ARC_S7.2`](#72-the-four-reference-repositories-compared) · *Status:* Agreed.
 15. **The four tracking fixes in [`ARC_S6.5`](#65-perception-engineering-rules) are in scope from
     the first commit**, not deferred: detector rate-limiting, handedness averaging, hand identity
-    and duplicate suppression · *Status:* Proposed
+    and duplicate suppression · *Status:* Agreed
 16. **No OpenPose code, model or derivative enters `src/`.** Its licence is non-commercial and
-    assigns derivatives to CMU `[S22]`. It is cited, not used · *Status:* Proposed
+    assigns derivatives to CMU `[S22]`. It is cited, not used · *Status:* Agreed.
 17. **The landmark budget starts at ~27–37 points**, not the full curated set: `RSA`'s 7 body +
     10 per hand, plus a mouth subset. Widen only where a measurement earns it —
-    [`ARC_S3.2`](#32-the-landmark-budget) · *Status:* Proposed
+    [`ARC_S3.2`](#32-the-landmark-budget) · *Status:* Rejected. Proceed with the budget proposed in decision 2.
 18. **The reverse direction is `RSS` (`spoken-to-signed`), with the project's own lexicon.** It is
     MIT, CPU-only and cannot fabricate a sign — [`ARC_S5.7`](#57-the-reverse-direction) ·
-    *Status:* Proposed
+    *Status:* Agreed.
 19. **Every gloss carries per-token provenance**, on `RSS`'s four-state coverage ladder, and the
-    output displays it. Refusal precision is measured per token · *Status:* Proposed
+    output displays it. Refusal precision is measured per token · *Status:* Agreed.
 20. **The segmenter and the sliding window are built behind one interface and compared**, exactly
     as decision 14 treats the landmark task — [`ARC_S5.6`](#56-the-four-routes-from-skeleton-to-text)
-    · *Status:* Proposed
+    · *Status:* Agreed
 21. **No SLRT code, model or derivative enters `src/`.** The repository carries **no licence
-    file**, so no permission to copy exists `[S25]`. It is cited, not used · *Status:* Proposed
+    file**, so no permission to copy exists `[S25]`. It is cited, not used · *Status:* Agreed.
 22. **No SAM-SLR code, model or derivative enters `src/`.** Its licence is self-contradictory and
-    is treated as non-commercial `[S26]`. It is cited, not used · *Status:* Proposed
+    is treated as non-commercial `[S26]`. It is cited, not used · *Status:* Agreed.
 23. **The reverse direction outputs a pose skeleton, not a photorealistic avatar.** An avatar that
-    looks almost-human is a worse product than a skeleton that obviously is not · *Status:* Proposed
+    looks almost-human is a worse product than a skeleton that obviously is not · *Status:* Agreed.
 24. **Evaluation splits by signer, and reports held-out-signer accuracy separately** —
-    [`ARC_S8.4`](#84-proposed-metric-set) metric 10 · *Status:* Proposed
+    [`ARC_S8.4`](#84-proposed-metric-set) metric 10 · *Status:* Agreed.
 
 
 

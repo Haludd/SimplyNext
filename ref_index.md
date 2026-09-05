@@ -88,7 +88,10 @@ reader to locate the exact paragraph: open the file the code names, then search 
 7.  **`RSK`** — `plan/RSK_risk_register.md` · *Status:* Live
     *Contents:* Catalogue of potential problems. Problems only, no mitigations
     *SoT for:* **Known problems**
-8.  **`TRN`** — `doc/TRN_training_synthesis.md` · *Status:* Live
+8.  **`PLN`** — `plan/PLN_plan.md` · *Status:* Draft
+    *Contents:* Execution plan: nine work packages, fifty tasks, schedule and descoping order
+    *SoT for:* **Execution sequence**
+9.  **`TRN`** — `doc/TRN_training_synthesis.md` · *Status:* Live
     *Contents:* Synthesis of all six hackathon training decks
     *SoT for:* Training content
 
@@ -99,61 +102,61 @@ version control tracks — [`RIX_S5.2`](#52-what-version-control-tracks).
 
 The repositories are grouped by the problem they address: **`ref_repo/tracking/`** for
 perception — finding and following the body — and **`ref_repo/translation/`** for turning what was
-tracked into language, and back. Items 9–16 are the tracking set; items 17–28 the translation set.
+tracked into language, and back. Items 10–17 are the tracking set; items 18–29 the translation set.
 
-9.  **`APR`** — `ref_repo/tracking/apple/APR_apple_report.md` · *Status:* Live
+10. **`APR`** — `ref_repo/tracking/apple/APR_apple_report.md` · *Status:* Live
     *Contents:* Full technical report on the Apple `HandPose` clone
     *SoT for:* Apple repository analysis
-10. **`APS`** — `doc/APS_apple_synthesis.md` · *Status:* Live
+11. **`APS`** — `doc/APS_apple_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the Apple repository; defers to `APR`
-11. **`MPR`** — `ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md` · *Status:* Live
+12. **`MPR`** — `ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md` · *Status:* Live
     *Contents:* Full technical report on MediaPipe, focused on the Hand Landmarker task
     *SoT for:* MediaPipe repository analysis
-12. **`MPS`** — `doc/MPS_mediapipe_synthesis.md` · *Status:* Live
+13. **`MPS`** — `doc/MPS_mediapipe_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of MediaPipe; defers to `MPR`
-13. **`DHR`** — `ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md` · *Status:* Live
+14. **`DHR`** — `ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md` · *Status:* Live
     *Contents:* Full technical report on the DepthAI hand tracker
     *SoT for:* DepthAI repository analysis
-14. **`DHS`** — `doc/DHS_depthai_synthesis.md` · *Status:* Live
+15. **`DHS`** — `doc/DHS_depthai_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the DepthAI hand tracker; defers to `DHR`
-15. **`OPR`** — `ref_repo/tracking/openpose/OPR_openpose_report.md` · *Status:* Live
+16. **`OPR`** — `ref_repo/tracking/openpose/OPR_openpose_report.md` · *Status:* Live
     *Contents:* Full technical report on OpenPose, including the licence analysis
     *SoT for:* OpenPose repository analysis
-16. **`OPS`** — `doc/OPS_openpose_synthesis.md` · *Status:* Live
+17. **`OPS`** — `doc/OPS_openpose_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of OpenPose and the record of its rejection; defers to `OPR`
-17. **`SLR`** — `ref_repo/translation/slrt/SLR_slrt_report.md` · *Status:* Live
+18. **`SLR`** — `ref_repo/translation/slrt/SLR_slrt_report.md` · *Status:* Live
     *Contents:* Full technical report on `FangyunWei/SLRT` — six papers on recognition and
     translation
     *SoT for:* SLRT repository analysis
-18. **`SLS`** — `doc/SLS_slrt_synthesis.md` · *Status:* Live
+19. **`SLS`** — `doc/SLS_slrt_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of SLRT and the numbers it supplies; defers to `SLR`
-19. **`SAR`** — `ref_repo/translation/sam-slr/SAR_sam_slr_report.md` · *Status:* Live
+20. **`SAR`** — `ref_repo/translation/sam-slr/SAR_sam_slr_report.md` · *Status:* Live
     *Contents:* Full technical report on SAM-SLR, including the licence contradiction
     *SoT for:* SAM-SLR repository analysis
-20. **`SAS`** — `doc/SAS_sam_slr_synthesis.md` · *Status:* Live
+21. **`SAS`** — `doc/SAS_sam_slr_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of SAM-SLR and its two decisive tables; defers to `SAR`
-21. **`SPR`** — `ref_repo/translation/sign-pose/SPR_sign_pose_report.md` · *Status:* Live
+22. **`SPR`** — `ref_repo/translation/sign-pose/SPR_sign_pose_report.md` · *Status:* Live
     *Contents:* Full technical report on `pose-format`, including the MediaPipe collision
     *SoT for:* `pose-format` repository analysis
-22. **`SPS`** — `doc/SPS_sign_pose_synthesis.md` · *Status:* Live
+23. **`SPS`** — `doc/SPS_sign_pose_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of `pose-format`; defers to `SPR`
-23. **`SSR`** — `ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md` ·
+24. **`SSR`** — `ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md` ·
     *Status:* Live
     *Contents:* Full technical report on the spoken-to-signed pipeline
     *SoT for:* Spoken-to-signed repository analysis; **the reverse translation direction**
-24. **`SSS`** — `doc/SSS_spoken_to_signed_synthesis.md` · *Status:* Live
+25. **`SSS`** — `doc/SSS_spoken_to_signed_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the spoken-to-signed pipeline; defers to `SSR`
-25. **`LTR`** — `ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md` ·
+26. **`LTR`** — `ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md` ·
     *Status:* Live
     *Contents:* Full report on the sign language processing survey and its 49-dataset registry
     *SoT for:* **The field's published state, and what data exists**
-26. **`LTS`** — `doc/LTS_signlang_literature_synthesis.md` · *Status:* Live
+27. **`LTS`** — `doc/LTS_signlang_literature_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of the survey and the facts it settles; defers to `LTR`
-27. **`STR`** — `ref_repo/translation/sign-translator/STR_sign_translator_report.md` ·
+28. **`STR`** — `ref_repo/translation/sign-translator/STR_sign_translator_report.md` ·
     *Status:* Live
     *Contents:* Full technical report on `sign-language-translator`, including the Tasks-API example
     *SoT for:* `sign-language-translator` repository analysis
-28. **`STS`** — `doc/STS_sign_translator_synthesis.md` · *Status:* Live
+29. **`STS`** — `doc/STS_sign_translator_synthesis.md` · *Status:* Live
     *Contents:* Short synthesis of `sign-language-translator`; defers to `STR`
 
 
@@ -162,20 +165,21 @@ tracked into language, and back. Items 9–16 are the tracking set; items 17–2
 ## 2.2. Planned Documents
 Codes reserved; files not yet created.
 
-1. **`PLN`** — `plan/PLN_master_plan.md`
-   *Contents:* Master implementation plan; parent of all feature plans
-   *Blocked on:* Architecture sign-off — [`ARC_S9`](plan/ARC_architecture.md#9-decisions)
-2. **`TDO`** — `plan/TDO_todo.md`
-   *Contents:* Live task board
-   *Blocked on:* `PLN`
-3. **`EVL`** — `plan/EVL_eval_protocol.md`
+1. **`TDO`** — `plan/TDO_todo.md`
+   *Contents:* Live task board, written from
+   [`PLN_S4`](plan/PLN_plan.md#4-wp0--foundations) onwards
+   *Blocked on:* `PLN` reaching **Live** — architecture sign-off,
+   [`ARC_S9`](plan/ARC_architecture.md#9-decisions)
+2. **`EVL`** — `plan/EVL_eval_protocol.md`
    *Contents:* Test data, metrics, measurement methodology — see
    [`JCR_S5`](plan/JCR_judging_criteria.md#5-evaluation-and-metrics)
-   *Blocked on:* `PLN`
-4. **`DEC`** — `plan/DEC_deck_outline.md`
+   *Blocked on:* Nothing. It is task `T8.1` —
+   [`PLN_S12.1`](plan/PLN_plan.md#121-t81--write-evl)
+3. **`DEC`** — `plan/DEC_deck_outline.md`
    *Contents:* Ten-slide submission deck outline — see
    [`JCR_S6`](plan/JCR_judging_criteria.md#6-the-10-slide-deck)
-   *Blocked on:* `PLN`
+   *Blocked on:* The named person —
+   [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team) question 3
 
 
 
@@ -607,7 +611,8 @@ SimplyNext/
 │   ├── scribbles.md                      SCR — raw ideation (product intent)
 │   ├── JCR_judging_criteria.md           JCR
 │   ├── ARC_architecture.md               ARC
-│   └── RSK_risk_register.md              RSK
+│   ├── RSK_risk_register.md              RSK
+│   └── PLN_plan.md                       PLN — execution plan
 │
 ├── doc/                                  reference material and syntheses
 │   ├── [D1..D6]*.pdf                     original training decks (read-only)
@@ -751,3 +756,12 @@ The consequences, in order of how often they bite:
    described was **never present in `.gitignore`**, and the four tracking clones were committed as
    embedded-repository gitlinks. The block is now written, at the new three-level depth, and
    consequence 5 records that the depth is load-bearing.
+6. **2026-09-05** · *Author:* Claude (Opus 5)
+   *Change:* Registered [`PLN`](plan/PLN_plan.md) as item 8 of
+   [`RIX_S2.1`](#21-live-documents), status **Draft**, and renumbered the twenty
+   reference-repository documents that follow to 10–29. **The filename is `plan/PLN_plan.md`, not
+   the `plan/PLN_master_plan.md` reserved in 2026-08-28**; the reservation is superseded, the code
+   is unchanged. Removed `PLN` from [`RIX_S2.2`](#22-planned-documents) and restated what now
+   blocks `TDO`, `EVL` and `DEC`: `EVL` is unblocked and is task `T8.1`, and `DEC` waits on the
+   named person rather than on `PLN`. Added `PLN` to the directory map in
+   [`RIX_S5`](#5-directory-map).

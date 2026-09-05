@@ -23,16 +23,22 @@ from .assembler import (
 BEDROCK_MODEL_ID_ENV: Final[str] = "SIMPLYNEXT_BEDROCK_MODEL_ID"
 BEDROCK_REGION_ENV: Final[str] = "AWS_REGION"
 MAX_ALLOWED_REVISIONS: Final[int] = 1
+DEFAULT_CONNECT_TIMEOUT_SECONDS: Final[float] = 5.0
+DEFAULT_READ_TIMEOUT_SECONDS: Final[float] = 30.0
+DEFAULT_TOTAL_MAX_ATTEMPTS: Final[int] = 3
 
 _ASSEMBLER_SYSTEM: Final[str] = (
-    "Assemble a short caption from the ordered closed-vocabulary gloss evidence. "
+    "A gloss is not a spoken-language word. Assemble a short caption from the ordered "
+    "closed-vocabulary gloss lattice evidence. Do not complete an unfinished utterance or "
+    "fill a missing slot from conversational likelihood. "
     "Do not add an event, object, person, intent, or certainty that is not supported by "
     "that evidence. Return only JSON with keys caption, tts_text, used_evidence_ids, "
     "and used_glosses. The two text fields must be identical."
 )
 _CRITIC_SYSTEM: Final[str] = (
-    "Check whether the proposed caption is completely supported by the ordered gloss "
-    "evidence. Fluency never outweighs evidence. Return only JSON with the keys "
+    "Mechanically check whether every proposed caption token is supported by the ordered "
+    "gloss lattice evidence. Alternatives are context, not permission to replace the selected "
+    "gloss. Fluency never outweighs evidence. Return only JSON with the keys "
     "supported and reason."
 )
 _REVISION_SYSTEM: Final[str] = (
@@ -280,28 +286,80 @@ class BedrockCaptionAssembler:
             )
 
 
-def create_bedrock_client(*, region_name: str | None = None) -> ConverseClient:
-    """Create the optional boto3 client without making a network request."""
+def create_bedrock_client(
+    *,
+    region_name: str | None = None,
+    connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    read_timeout_seconds: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    total_max_attempts: int = DEFAULT_TOTAL_MAX_ATTEMPTS,
+) -> ConverseClient:
+    """Create a Bedrock client with explicit, bounded transport and retry settings."""
+
+    if connect_timeout_seconds <= 0:
+        raise ValueError("connect_timeout_seconds must be positive")
+    if read_timeout_seconds <= 0:
+        raise ValueError("read_timeout_seconds must be positive")
+    if total_max_attempts < 1:
+        raise ValueError("total_max_attempts must be at least one")
 
     try:
         import boto3  # type: ignore[import-untyped]
+        from botocore.config import Config  # type: ignore[import-untyped]
     except ImportError as exc:  # pragma: no cover - depends on optional installation
         raise RuntimeError("boto3 is required for Bedrock caption assembly") from exc
     region = region_name or os.environ.get(BEDROCK_REGION_ENV) or None
-    return cast(ConverseClient, boto3.client("bedrock-runtime", region_name=region))
+    client_config = Config(
+        connect_timeout=connect_timeout_seconds,
+        read_timeout=read_timeout_seconds,
+        retries={
+            "mode": "standard",
+            "total_max_attempts": total_max_attempts,
+        },
+    )
+    return cast(
+        ConverseClient,
+        boto3.client(
+            "bedrock-runtime",
+            region_name=region,
+            config=client_config,
+        ),
+    )
 
 
 def _evidence_payload(request: AssemblyRequest) -> dict[str, Any]:
     """Whitelist the only request fields allowed to enter a model prompt."""
 
+    if request.lattice is not None:
+        # GlossLattice is a strict, compact contract with no raw-media fields. Sending
+        # the validated model directly prevents a second representation from silently
+        # dropping alternatives, provenance, timing, or producer lineage.
+        return request.lattice.model_dump(mode="json")
     return {
         "utterance_id": request.utterance_id,
         "language": request.language,
+        "subject_id": request.subject_id,
+        "lattice_seq": request.lattice_seq,
+        "revision": request.revision,
+        "classifier_model_version": request.classifier_model_version,
+        "calibration_version": request.calibration_version,
+        "vocabulary_version": request.vocabulary_version,
         "evidence": [
             {
                 "evidence_id": item.evidence_id,
+                "slot_id": item.slot_id,
                 "gloss": item.gloss,
                 "confidence": round(item.confidence, 6),
+                "provenance": item.source,
+                "start_ms": item.start_ms,
+                "end_ms": item.end_ms,
+                "alternatives": [
+                    {
+                        "rank": alternative.rank,
+                        "gloss": alternative.gloss,
+                        "confidence": round(alternative.confidence, 6),
+                    }
+                    for alternative in item.alternatives
+                ],
             }
             for item in request.evidence
         ],

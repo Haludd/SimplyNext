@@ -7,21 +7,27 @@ import hmac
 import secrets
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from threading import RLock
 from uuid import UUID, uuid4
 
 from simplynext.contracts import (
+    ClassifierDescriptor,
     ControlAction,
+    GlossLattice,
     LandmarkBatch,
     LandmarkFrame,
+    LatticeRepairRequiredEvent,
+    LatticeTerminalEvent,
     SessionCreateRequest,
     SessionCreateResponse,
     SignLanguage,
     StreamControlMessage,
+    StreamKind,
 )
+from simplynext.contracts.lattices import MAX_GLOSS_LATTICE_BYTES
 
 
 class SessionState(StrEnum):
@@ -69,6 +75,27 @@ class TooManySessions(SessionStoreError):
     code = "rate_limited"
 
 
+class LatticeConflict(SessionStoreError):
+    code = "invalid_session_state"
+
+
+class LatticeInProgress(SessionStoreError):
+    code = "invalid_session_state"
+
+
+class LatticeRateLimited(SessionStoreError):
+    code = "rate_limited"
+
+
+class LatticeQuotaExceeded(SessionStoreError):
+    code = "rate_limited"
+
+
+class LatticeReservationDisposition(StrEnum):
+    ACCEPTED = "accepted"
+    CACHED = "cached"
+
+
 @dataclass(frozen=True, slots=True)
 class SessionSnapshot:
     session_id: UUID
@@ -85,6 +112,10 @@ class SessionSnapshot:
     total_frames_received: int
     client_dropped_frames: int
     server_evicted_frames: int
+    stream_kind: StreamKind
+    classifier: ClassifierDescriptor | None
+    last_lattice_seq: int | None
+    lattice_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +131,25 @@ class IngestReceipt:
     @property
     def dropped_frames(self) -> int:
         return self.client_dropped_frames + self.server_evicted_frames
+
+
+@dataclass(frozen=True, slots=True)
+class LatticeReservation:
+    session_id: UUID
+    lattice_seq: int
+    utterance_id: str
+    revision: int
+    disposition: LatticeReservationDisposition
+    cached_event: LatticeTerminalEvent | None = None
+
+
+@dataclass(slots=True)
+class _LatticeRecord:
+    lattice_seq: int
+    utterance_id: str
+    revision: int
+    payload_digest: bytes
+    terminal_event: LatticeTerminalEvent | None = None
 
 
 @dataclass(slots=True)
@@ -120,6 +170,12 @@ class _SessionRecord:
     client_dropped_frames: int = 0
     server_evicted_frames: int = 0
     active_stream_id: UUID | None = None
+    active_lattice_seq: int | None = None
+    last_lattice_seq: int = -1
+    lattice_records: dict[int, _LatticeRecord] = field(default_factory=dict)
+    lattice_keys: dict[tuple[str, int], int] = field(default_factory=dict)
+    last_lattice_revision: dict[str, int] = field(default_factory=dict)
+    lattice_received_at: deque[datetime] = field(default_factory=deque)
 
 
 class EphemeralSessionStore:
@@ -139,6 +195,11 @@ class EphemeralSessionStore:
         target_fps: int = 20,
         max_sessions: int = 128,
         websocket_path_template: str = "/v1/sessions/{session_id}/landmarks",
+        lattice_websocket_path_template: str = "/v1/sessions/{session_id}/lattices",
+        max_lattice_message_bytes: int = MAX_GLOSS_LATTICE_BYTES,
+        max_lattices_per_session: int = 100,
+        max_lattices_per_minute: int = 30,
+        max_lattices_per_minute_global: int = 120,
         clock: Callable[[], datetime] | None = None,
         token_factory: Callable[[], str] | None = None,
         id_factory: Callable[[], UUID] | None = None,
@@ -155,6 +216,16 @@ class EphemeralSessionStore:
             raise ValueError("max_sessions must be positive")
         if "{session_id}" not in websocket_path_template:
             raise ValueError("websocket_path_template must contain {session_id}")
+        if "{session_id}" not in lattice_websocket_path_template:
+            raise ValueError("lattice_websocket_path_template must contain {session_id}")
+        if not 4_096 <= max_lattice_message_bytes <= MAX_GLOSS_LATTICE_BYTES:
+            raise ValueError("max_lattice_message_bytes must be between 4096 and 65536")
+        if max_lattices_per_session < 1:
+            raise ValueError("max_lattices_per_session must be positive")
+        if max_lattices_per_minute < 1:
+            raise ValueError("max_lattices_per_minute must be positive")
+        if max_lattices_per_minute_global < 1:
+            raise ValueError("max_lattices_per_minute_global must be positive")
 
         self._ttl = timedelta(seconds=ttl_seconds)
         self._buffer_frames = buffer_frames
@@ -162,10 +233,16 @@ class EphemeralSessionStore:
         self._target_fps = target_fps
         self._max_sessions = max_sessions
         self._websocket_path_template = websocket_path_template
+        self._lattice_websocket_path_template = lattice_websocket_path_template
+        self._max_lattice_message_bytes = max_lattice_message_bytes
+        self._max_lattices_per_session = max_lattices_per_session
+        self._max_lattices_per_minute = max_lattices_per_minute
+        self._max_lattices_per_minute_global = max_lattices_per_minute_global
         self._clock = clock or (lambda: datetime.now(UTC))
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
         self._id_factory = id_factory or uuid4
         self._records: dict[UUID, _SessionRecord] = {}
+        self._global_lattice_received_at: deque[datetime] = deque()
         self._lock = RLock()
 
     async def create(self, request: SessionCreateRequest) -> SessionCreateResponse:
@@ -194,14 +271,23 @@ class EphemeralSessionStore:
                 raise ValueError("id_factory returned an existing session_id")
             self._records[session_id] = record
 
+        landmark_path = self._websocket_path_template.format(session_id=session_id)
+        lattice_path = self._lattice_websocket_path_template.format(session_id=session_id)
         return SessionCreateResponse(
             session_id=session_id,
             stream_token=token,
-            websocket_path=self._websocket_path_template.format(session_id=session_id),
+            stream_kind=request.stream_kind,
+            websocket_path=(
+                lattice_path if request.stream_kind is StreamKind.GLOSS_LATTICE else landmark_path
+            ),
+            lattice_websocket_path=(
+                lattice_path if request.stream_kind is StreamKind.GLOSS_LATTICE else None
+            ),
             created_at=now,
             expires_at=record.expires_at,
             max_batch_frames=self._max_batch_frames,
             target_fps=self._target_fps,
+            max_lattice_message_bytes=self._max_lattice_message_bytes,
         )
 
     async def create_session(self, request: SessionCreateRequest) -> SessionCreateResponse:
@@ -226,14 +312,20 @@ class EphemeralSessionStore:
         session_id: UUID | str,
         token: str,
         stream_id: UUID,
+        *,
+        expected_kind: StreamKind | None = None,
     ) -> SessionSnapshot:
         """Exclusively bind one live WebSocket to a session."""
 
         now = self._now()
         with self._lock:
             record = self._authorized_record(session_id, token, now, touch=True)
+            if expected_kind is not None and record.request.stream_kind is not expected_kind:
+                raise InvalidSessionState(
+                    f"session was negotiated for {record.request.stream_kind.value} input"
+                )
             if record.active_stream_id not in (None, stream_id):
-                raise InvalidSessionState("session already has an active landmark stream")
+                raise InvalidSessionState("session already has an active stream")
             record.active_stream_id = stream_id
             return self._snapshot(record)
 
@@ -307,6 +399,150 @@ class EphemeralSessionStore:
                 server_evicted_frames=evicted,
             )
 
+    async def reserve_lattice(
+        self,
+        lattice: GlossLattice,
+        token: str,
+        payload_digest: bytes,
+    ) -> LatticeReservation:
+        """Atomically apply profile, replay, revision, quota, and rate guards."""
+
+        if len(payload_digest) != hashlib.sha256().digest_size:
+            raise ValueError("payload_digest must be a SHA-256 digest")
+        now = self._now()
+        with self._lock:
+            record = self._authorized_record(lattice.session_id, token, now, touch=True)
+            if record.request.stream_kind is not StreamKind.GLOSS_LATTICE:
+                raise InvalidSessionState("session was not negotiated for gloss lattices")
+            if lattice.language is not record.request.language:
+                raise LatticeConflict("lattice language does not match the session")
+            if lattice.producer.classifier != record.request.classifier:
+                raise LatticeConflict("lattice classifier profile does not match the session")
+
+            cached = self._existing_lattice_reservation(record, lattice, payload_digest)
+            if cached is not None:
+                return cached
+            if record.active_lattice_seq is not None:
+                raise LatticeInProgress(
+                    f"lattice_seq {record.active_lattice_seq} is still being processed"
+                )
+            if lattice.lattice_seq <= record.last_lattice_seq:
+                raise NonMonotonicSequence(
+                    f"lattice_seq must be greater than {record.last_lattice_seq}"
+                )
+
+            last_revision = record.last_lattice_revision.get(lattice.utterance_id)
+            if last_revision is None:
+                if lattice.revision != 0:
+                    raise LatticeConflict("the first utterance revision must be 0")
+            else:
+                if lattice.revision != last_revision + 1:
+                    raise LatticeConflict(
+                        f"revision must be exactly {last_revision + 1} for this utterance"
+                    )
+                previous_seq = record.lattice_keys[(lattice.utterance_id, last_revision)]
+                previous = record.lattice_records[previous_seq]
+                if not isinstance(previous.terminal_event, LatticeRepairRequiredEvent):
+                    raise LatticeConflict("only a repair response can be revised")
+
+            if record.state is SessionState.PAUSED:
+                raise InvalidSessionState("cannot submit a lattice while session is paused")
+            if record.state is SessionState.ENDED:
+                raise InvalidSessionState("cannot submit a lattice after session end")
+            if len(record.lattice_records) >= self._max_lattices_per_session:
+                raise LatticeQuotaExceeded("session lattice quota has been reached")
+
+            minute_ago = now - timedelta(minutes=1)
+            while record.lattice_received_at and record.lattice_received_at[0] <= minute_ago:
+                record.lattice_received_at.popleft()
+            if len(record.lattice_received_at) >= self._max_lattices_per_minute:
+                raise LatticeRateLimited("too many new lattices in the last minute")
+            while (
+                self._global_lattice_received_at
+                and self._global_lattice_received_at[0] <= minute_ago
+            ):
+                self._global_lattice_received_at.popleft()
+            if len(self._global_lattice_received_at) >= self._max_lattices_per_minute_global:
+                raise LatticeRateLimited("global lattice rate limit reached")
+
+            lattice_record = _LatticeRecord(
+                lattice_seq=lattice.lattice_seq,
+                utterance_id=lattice.utterance_id,
+                revision=lattice.revision,
+                payload_digest=payload_digest,
+            )
+            key = (lattice.utterance_id, lattice.revision)
+            record.lattice_records[lattice.lattice_seq] = lattice_record
+            record.lattice_keys[key] = lattice.lattice_seq
+            record.last_lattice_revision[lattice.utterance_id] = lattice.revision
+            record.last_lattice_seq = lattice.lattice_seq
+            record.lattice_received_at.append(now)
+            self._global_lattice_received_at.append(now)
+            record.active_lattice_seq = lattice.lattice_seq
+            if record.state is SessionState.READY:
+                record.state = SessionState.STREAMING
+            return LatticeReservation(
+                session_id=record.session_id,
+                lattice_seq=lattice.lattice_seq,
+                utterance_id=lattice.utterance_id,
+                revision=lattice.revision,
+                disposition=LatticeReservationDisposition.ACCEPTED,
+            )
+
+    async def find_lattice_replay(
+        self,
+        lattice: GlossLattice,
+        token: str,
+        payload_digest: bytes,
+    ) -> LatticeReservation | None:
+        """Return a completed exact replay without consuming scarce Agent capacity."""
+
+        if len(payload_digest) != hashlib.sha256().digest_size:
+            raise ValueError("payload_digest must be a SHA-256 digest")
+        now = self._now()
+        with self._lock:
+            record = self._authorized_record(lattice.session_id, token, now, touch=True)
+            if record.request.stream_kind is not StreamKind.GLOSS_LATTICE:
+                raise InvalidSessionState("session was not negotiated for gloss lattices")
+            if lattice.language is not record.request.language:
+                raise LatticeConflict("lattice language does not match the session")
+            if lattice.producer.classifier != record.request.classifier:
+                raise LatticeConflict("lattice classifier profile does not match the session")
+            return self._existing_lattice_reservation(record, lattice, payload_digest)
+
+    async def complete_lattice(
+        self,
+        lattice: GlossLattice,
+        token: str,
+        payload_digest: bytes,
+        terminal_event: LatticeTerminalEvent,
+    ) -> None:
+        """Cache exactly one safe terminal event for an accepted lattice."""
+
+        now = self._now()
+        with self._lock:
+            record = self._authorized_record(lattice.session_id, token, now, touch=True)
+            lattice_record = record.lattice_records.get(lattice.lattice_seq)
+            if lattice_record is None:
+                raise LatticeConflict("lattice was not reserved")
+            if (
+                lattice_record.utterance_id != lattice.utterance_id
+                or lattice_record.revision != lattice.revision
+                or not hmac.compare_digest(lattice_record.payload_digest, payload_digest)
+            ):
+                raise LatticeConflict("lattice completion does not match its reservation")
+            if (
+                terminal_event.lattice_seq != lattice.lattice_seq
+                or terminal_event.utterance_id != lattice.utterance_id
+                or terminal_event.revision != lattice.revision
+            ):
+                raise LatticeConflict("terminal event does not match its lattice")
+            if lattice_record.terminal_event is not None:
+                raise LatticeConflict("lattice already has a terminal event")
+            lattice_record.terminal_event = terminal_event
+            if record.active_lattice_seq == lattice.lattice_seq:
+                record.active_lattice_seq = None
+
     async def apply_control(
         self,
         message: StreamControlMessage,
@@ -372,13 +608,27 @@ class EphemeralSessionStore:
             record.frames.clear()
             return cleared
 
-    async def delete(self, session_id: UUID | str, token: str) -> None:
+    async def delete(
+        self,
+        session_id: UUID | str,
+        token: str,
+        *,
+        owner_stream_id: UUID | None = None,
+    ) -> None:
         """Erase all in-memory state for an authenticated session."""
 
         now = self._now()
         with self._lock:
             record = self._authorized_record(session_id, token, now, touch=False)
+            if record.active_stream_id is not None and record.active_stream_id != owner_stream_id:
+                raise InvalidSessionState("close the active stream before deleting its session")
+            if record.active_lattice_seq is not None:
+                raise InvalidSessionState("cannot delete a session during Agent processing")
             record.frames.clear()
+            record.lattice_records.clear()
+            record.lattice_keys.clear()
+            record.last_lattice_revision.clear()
+            record.lattice_received_at.clear()
             del self._records[record.session_id]
 
     async def purge_expired(self) -> int:
@@ -404,8 +654,12 @@ class EphemeralSessionStore:
         record = self._records.get(canonical_id)
         if record is None:
             raise SessionNotFound("session does not exist")
-        if now >= record.expires_at:
+        if now >= record.expires_at and record.active_lattice_seq is None:
             record.frames.clear()
+            record.lattice_records.clear()
+            record.lattice_keys.clear()
+            record.last_lattice_revision.clear()
+            record.lattice_received_at.clear()
             del self._records[canonical_id]
             raise SessionExpired("session has expired")
         if not isinstance(token, str) or not hmac.compare_digest(
@@ -420,10 +674,17 @@ class EphemeralSessionStore:
 
     def _purge_expired_locked(self, now: datetime) -> int:
         expired_ids = [
-            session_id for session_id, record in self._records.items() if now >= record.expires_at
+            session_id
+            for session_id, record in self._records.items()
+            if now >= record.expires_at and record.active_lattice_seq is None
         ]
         for session_id in expired_ids:
-            self._records[session_id].frames.clear()
+            record = self._records[session_id]
+            record.frames.clear()
+            record.lattice_records.clear()
+            record.lattice_keys.clear()
+            record.last_lattice_revision.clear()
+            record.lattice_received_at.clear()
             del self._records[session_id]
         return len(expired_ids)
 
@@ -449,6 +710,36 @@ class EphemeralSessionStore:
         return value.astimezone(UTC)
 
     @staticmethod
+    def _existing_lattice_reservation(
+        record: _SessionRecord,
+        lattice: GlossLattice,
+        payload_digest: bytes,
+    ) -> LatticeReservation | None:
+        key = (lattice.utterance_id, lattice.revision)
+        existing_key_seq = record.lattice_keys.get(key)
+        if existing_key_seq is not None:
+            existing = record.lattice_records[existing_key_seq]
+            if existing.lattice_seq != lattice.lattice_seq or not hmac.compare_digest(
+                existing.payload_digest, payload_digest
+            ):
+                raise LatticeConflict(
+                    "utterance revision was already submitted with different content"
+                )
+            if existing.terminal_event is None:
+                raise LatticeInProgress("this lattice is already being processed")
+            return LatticeReservation(
+                session_id=record.session_id,
+                lattice_seq=lattice.lattice_seq,
+                utterance_id=lattice.utterance_id,
+                revision=lattice.revision,
+                disposition=LatticeReservationDisposition.CACHED,
+                cached_event=existing.terminal_event,
+            )
+        if lattice.lattice_seq in record.lattice_records:
+            raise LatticeConflict("lattice_seq was already used by another utterance")
+        return None
+
+    @staticmethod
     def _snapshot(record: _SessionRecord) -> SessionSnapshot:
         return SessionSnapshot(
             session_id=record.session_id,
@@ -465,4 +756,8 @@ class EphemeralSessionStore:
             total_frames_received=record.total_frames_received,
             client_dropped_frames=record.client_dropped_frames,
             server_evicted_frames=record.server_evicted_frames,
+            stream_kind=record.request.stream_kind,
+            classifier=record.request.classifier,
+            last_lattice_seq=(None if record.last_lattice_seq < 0 else record.last_lattice_seq),
+            lattice_count=len(record.lattice_records),
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import Semaphore
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -11,6 +12,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from simplynext import __version__
+from simplynext.api.lattice_websocket import lattice_socket
 from simplynext.api.middleware import RequestBodyLimitMiddleware
 from simplynext.api.routes import api_router, health_router, replay_router
 from simplynext.api.websocket import landmark_socket
@@ -39,12 +41,20 @@ def create_app(
         websocket_path_template=(
             f"{runtime_settings.api_prefix}/sessions/{{session_id}}/landmarks"
         ),
+        lattice_websocket_path_template=(
+            f"{runtime_settings.api_prefix}/sessions/{{session_id}}/lattices"
+        ),
+        max_lattice_message_bytes=runtime_settings.gloss_lattice_max_message_bytes,
+        max_lattices_per_session=runtime_settings.max_lattices_per_session,
+        max_lattices_per_minute=runtime_settings.max_lattices_per_minute,
+        max_lattices_per_minute_global=(runtime_settings.max_lattices_per_minute_global),
     )
     services = RuntimeServices(
         settings=runtime_settings,
         sessions=sessions,
         translation=engine,
         metrics=metrics,
+        agent_slots=Semaphore(runtime_settings.max_concurrent_agent_runs),
     )
 
     @asynccontextmanager
@@ -56,7 +66,7 @@ def create_app(
     application = FastAPI(
         title="SimplyNext Backend",
         version=__version__,
-        summary="Uncertainty-aware sign-landmark translation service",
+        summary="Uncertainty-aware GlossLattice and sign-landmark translation service",
         lifespan=lifespan,
     )
     application.state.services = services
@@ -80,6 +90,10 @@ def create_app(
     @application.websocket(f"{runtime_settings.api_prefix}/sessions/{{session_id}}/landmarks")
     async def stream_landmarks(websocket: WebSocket, session_id: UUID) -> None:
         await landmark_socket(websocket, session_id)
+
+    @application.websocket(f"{runtime_settings.api_prefix}/sessions/{{session_id}}/lattices")
+    async def stream_lattices(websocket: WebSocket, session_id: UUID) -> None:
+        await lattice_socket(websocket, session_id)
 
     return application
 

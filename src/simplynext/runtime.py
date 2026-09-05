@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import Semaphore
 from dataclasses import dataclass
 
 from simplynext.config import Settings
@@ -16,3 +17,4 @@ class RuntimeServices:
     sessions: EphemeralSessionStore
     translation: TranslationEngine
     metrics: MetricsRegistry
+    agent_slots: Semaphore

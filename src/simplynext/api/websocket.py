@@ -28,6 +28,7 @@ from simplynext.contracts import (
     RepairRequiredEvent,
     SignLanguage,
     StreamControlMessage,
+    StreamKind,
 )
 from simplynext.pipeline import (
     SegmentEvent,
@@ -58,7 +59,12 @@ async def landmark_socket(
         return
     stream_id = uuid4()
     try:
-        session = await services.sessions.claim_stream(session_id, token, stream_id)
+        session = await services.sessions.claim_stream(
+            session_id,
+            token,
+            stream_id,
+            expected_kind=StreamKind.LANDMARKS,
+        )
     except SessionStoreError as exc:
         await websocket.close(code=_close_code(exc), reason=exc.message)
         return
@@ -291,7 +297,11 @@ async def landmark_socket(
                         ),
                     )
                     await _send(websocket, result)
-                await services.sessions.delete(session_id, token)
+                await services.sessions.delete(
+                    session_id,
+                    token,
+                    owner_stream_id=stream_id,
+                )
                 await websocket.close(code=1000, reason="Session ended")
                 services.metrics.increment("sessions_ended")
                 return

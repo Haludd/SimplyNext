@@ -7,6 +7,7 @@ from .assembler import (
     CaptionAssembler,
     CaptionTemplate,
     DeterministicTemplateAssembler,
+    GlossAlternativeEvidence,
     GlossEvidence,
     repair_result,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "CaptionTemplate",
     "ConverseClient",
     "DeterministicTemplateAssembler",
+    "GlossAlternativeEvidence",
     "GlossEvidence",
     "create_bedrock_client",
     "repair_result",

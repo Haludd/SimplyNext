@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from simplynext.contracts import SignLanguage
@@ -51,6 +51,21 @@ class Settings(BaseSettings):
         ge=16_384,
         le=16_777_216,
     )
+    gloss_lattice_max_message_bytes: int = Field(
+        default=65_536,
+        ge=4_096,
+        le=65_536,
+    )
+    max_lattices_per_session: int = Field(default=100, ge=1, le=10_000)
+    max_lattices_per_minute: int = Field(default=30, ge=1, le=600)
+    max_lattices_per_minute_global: int = Field(default=120, ge=1, le=10_000)
+    max_concurrent_agent_runs: int = Field(default=4, ge=1, le=64)
+    agent_queue_timeout_seconds: float = Field(default=2.0, ge=0.1, le=30.0)
+    lattice_websocket_idle_timeout_seconds: float = Field(
+        default=120.0,
+        ge=5.0,
+        le=3_600.0,
+    )
 
     template_bundle_path: Path | None = None
     caption_templates_path: Path | None = None
@@ -61,6 +76,9 @@ class Settings(BaseSettings):
     bedrock_enabled: bool = False
     aws_region: str = "ap-southeast-1"
     bedrock_model_id: str = DEFAULT_BEDROCK_MODEL_ID
+    bedrock_connect_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    bedrock_read_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    bedrock_total_max_attempts: int = Field(default=3, ge=1, le=10)
     agent_max_revisions: int = Field(default=1, ge=0, le=1)
     enable_hypothesis_replay_endpoint: bool = False
 
@@ -102,6 +120,14 @@ class Settings(BaseSettings):
         if not value:
             raise ValueError("value must not be empty")
         return value
+
+    @model_validator(mode="after")
+    def lattice_limit_must_fit_websocket_limit(self) -> Settings:
+        if self.gloss_lattice_max_message_bytes > self.websocket_max_message_bytes:
+            raise ValueError(
+                "gloss_lattice_max_message_bytes cannot exceed websocket_max_message_bytes"
+            )
+        return self
 
     @property
     def cors_origins(self) -> tuple[str, ...]:

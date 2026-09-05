@@ -18,13 +18,22 @@ from simplynext.agent import (
     CaptionAssembler,
     CaptionTemplate,
     DeterministicTemplateAssembler,
+    GlossAlternativeEvidence,
     GlossEvidence,
     create_bedrock_client,
 )
 from simplynext.config import Settings
 from simplynext.contracts import (
+    GlossCandidate,
     GlossHypothesis,
+    GlossLattice,
+    GlossLatticeSlot,
+    GlossProvenance,
     LandmarkFrame,
+    LatticeChoice,
+    LatticeEvidenceTrace,
+    LatticeRepairRequiredEvent,
+    LatticeResultEvent,
     RepairRequiredEvent,
     SignLanguage,
     TranslationResult,
@@ -108,6 +117,246 @@ class TranslationEngine:
 
         configured = getattr(self.assembler, "ready", True)
         return configured if isinstance(configured, bool) else False
+
+    async def process_lattice(
+        self,
+        lattice: GlossLattice,
+    ) -> LatticeResultEvent | LatticeRepairRequiredEvent:
+        """Run one already-classified lattice through the bounded Agent seam."""
+
+        return await asyncio.to_thread(self._process_lattice, lattice)
+
+    def _process_lattice(
+        self,
+        lattice: GlossLattice,
+    ) -> LatticeResultEvent | LatticeRepairRequiredEvent:
+        started = perf_counter()
+        evidence_trace = _lattice_evidence_trace(lattice)
+        model_version = lattice.producer.classifier.model_version
+        for slot in lattice.slots:
+            self.metrics.increment(f"lattice_provenance_{slot.provenance.value}")
+
+        if self.model_language is not None and lattice.language is not self.model_language:
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=ContractRepairAction.MODEL_UNAVAILABLE,
+                confidence=0.0,
+                reason_codes=("language_model_not_configured",),
+                evidence_trace=evidence_trace,
+                started=started,
+            )
+        if not lattice.is_final:
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=ContractRepairAction.REPEAT,
+                confidence=0.0,
+                reason_codes=("lattice_not_final",),
+                evidence_trace=evidence_trace,
+                started=started,
+            )
+
+        thresholds = self.policy.thresholds
+        duration_ms = lattice.capture_end_ms - lattice.capture_start_ms
+        if duration_ms < thresholds.min_duration_ms:
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=ContractRepairAction.REPEAT,
+                confidence=0.0,
+                reason_codes=("utterance_too_short",),
+                evidence_trace=evidence_trace,
+                started=started,
+            )
+        if duration_ms > thresholds.max_duration_ms:
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=ContractRepairAction.REPEAT,
+                confidence=0.0,
+                reason_codes=("utterance_too_long",),
+                evidence_trace=evidence_trace,
+                started=started,
+            )
+        if lattice.quality is not None:
+            if lattice.quality.landmark_coverage < thresholds.min_coverage:
+                return self._lattice_repair_event(
+                    lattice=lattice,
+                    action=ContractRepairAction.REPOSITION,
+                    confidence=0.0,
+                    reason_codes=("insufficient_landmark_coverage",),
+                    evidence_trace=evidence_trace,
+                    started=started,
+                )
+            if lattice.quality.dropped_fraction > thresholds.max_dropped_fraction:
+                return self._lattice_repair_event(
+                    lattice=lattice,
+                    action=ContractRepairAction.RECONNECT,
+                    confidence=0.0,
+                    reason_codes=("too_many_dropped_frames",),
+                    evidence_trace=evidence_trace,
+                    started=started,
+                )
+
+        unresolved = tuple(
+            slot for slot in lattice.slots if slot.provenance is GlossProvenance.UNRESOLVED
+        )
+        if unresolved:
+            target = unresolved[0]
+            choices = _lattice_choices(target, target.candidates)
+            action = (
+                ContractRepairAction.CHOOSE_CANDIDATE
+                if len(choices) >= 2
+                else ContractRepairAction.FINGERSPELL
+                if not choices
+                else ContractRepairAction.REPEAT
+            )
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=action,
+                confidence=(target.candidates[0].confidence if target.candidates else 0.0),
+                choices=choices if action is ContractRepairAction.CHOOSE_CANDIDATE else (),
+                target_slot_ids=tuple(slot.slot_id for slot in unresolved),
+                reason_codes=("unresolved_lattice_slot",),
+                evidence_trace=evidence_trace,
+                started=started,
+            )
+
+        rejected_glosses = {_canonical_gloss(value) for value in thresholds.rejected_glosses}
+        for slot in lattice.slots:
+            if slot.provenance is not GlossProvenance.CLASSIFIER_HIGH_CONFIDENCE:
+                continue
+            selected = slot.selected_candidate
+            assert selected is not None
+            canonical = _canonical_gloss(selected.gloss)
+            if canonical in rejected_glosses:
+                action = (
+                    ContractRepairAction.FINGERSPELL
+                    if canonical in {"UNKNOWN", "OOV"}
+                    else ContractRepairAction.REPEAT
+                )
+                return self._lattice_repair_event(
+                    lattice=lattice,
+                    action=action,
+                    confidence=selected.confidence,
+                    target_slot_ids=(slot.slot_id,),
+                    reason_codes=(f"rejected_class:{canonical.lower()}",),
+                    evidence_trace=evidence_trace,
+                    started=started,
+                )
+            if selected.confidence < thresholds.min_top1_confidence:
+                viable = tuple(
+                    item
+                    for item in slot.candidates
+                    if item.confidence >= thresholds.min_candidate_choice_confidence
+                )
+                choices = _lattice_choices(slot, viable)
+                action = (
+                    ContractRepairAction.CHOOSE_CANDIDATE
+                    if len(choices) >= 2
+                    else ContractRepairAction.REPEAT
+                )
+                return self._lattice_repair_event(
+                    lattice=lattice,
+                    action=action,
+                    confidence=selected.confidence,
+                    choices=(choices if action is ContractRepairAction.CHOOSE_CANDIDATE else ()),
+                    target_slot_ids=(slot.slot_id,),
+                    reason_codes=("classifier_provenance_below_threshold",),
+                    evidence_trace=evidence_trace,
+                    started=started,
+                )
+            if len(slot.candidates) >= 2:
+                margin = selected.confidence - slot.candidates[1].confidence
+                if margin < thresholds.min_top1_top2_margin:
+                    choices = _lattice_choices(slot, slot.candidates[:2])
+                    return self._lattice_repair_event(
+                        lattice=lattice,
+                        action=ContractRepairAction.CHOOSE_CANDIDATE,
+                        confidence=selected.confidence,
+                        choices=choices,
+                        target_slot_ids=(slot.slot_id,),
+                        reason_codes=("classifier_provenance_ambiguous",),
+                        evidence_trace=evidence_trace,
+                        started=started,
+                    )
+
+        request = AssemblyRequest(
+            utterance_id=lattice.utterance_id,
+            language=str(lattice.language),
+            evidence=tuple(_assembly_evidence(slot) for slot in lattice.slots),
+            subject_id=lattice.subject_id,
+            lattice_seq=lattice.lattice_seq,
+            revision=lattice.revision,
+            classifier_model_version=model_version,
+            calibration_version=lattice.producer.classifier.calibration_version,
+            vocabulary_version=lattice.producer.classifier.vocabulary_version,
+            lattice=lattice,
+        )
+        assemble_started = perf_counter()
+        try:
+            assembly = self.assembler.assemble(request)
+        except Exception as exc:
+            logger.exception(
+                "lattice_assembly_failed",
+                extra={"utterance_id": lattice.utterance_id, "reason": type(exc).__name__},
+            )
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=ContractRepairAction.ESCALATE,
+                confidence=_minimum_lattice_confidence(lattice),
+                target_slot_ids=tuple(slot.slot_id for slot in lattice.slots),
+                reason_codes=("assembly_failed",),
+                evidence_trace=evidence_trace,
+                started=started,
+                latency_ms={"assemble": _elapsed_ms(assemble_started)},
+            )
+        assemble_ms = _elapsed_ms(assemble_started)
+        if assembly.status is AssemblyStatus.REPAIR_REQUIRED or assembly.caption is None:
+            action = _contract_action(assembly.repair_action)
+            first_slot = lattice.slots[0]
+            choices = (
+                _lattice_choices(first_slot, first_slot.candidates)
+                if action is ContractRepairAction.CHOOSE_CANDIDATE
+                else ()
+            )
+            if action is ContractRepairAction.CHOOSE_CANDIDATE and not choices:
+                action = ContractRepairAction.REPEAT
+            return self._lattice_repair_event(
+                lattice=lattice,
+                action=action,
+                confidence=assembly.confidence,
+                choices=choices,
+                target_slot_ids=(
+                    (first_slot.slot_id,)
+                    if choices
+                    else tuple(slot.slot_id for slot in lattice.slots)
+                ),
+                reason_codes=assembly.reason_codes,
+                evidence_trace=evidence_trace,
+                started=started,
+                agent_source=assembly.source,
+                latency_ms={"assemble": assemble_ms},
+            )
+
+        latency = {
+            "assemble": assemble_ms,
+            "total": _elapsed_ms(started),
+        }
+        event = LatticeResultEvent(
+            lattice_seq=lattice.lattice_seq,
+            utterance_id=lattice.utterance_id,
+            revision=lattice.revision,
+            caption=assembly.caption,
+            tts_text=assembly.tts_text,
+            confidence=assembly.confidence,
+            gloss_trace=tuple(item.gloss for item in assembly.gloss_trace),
+            evidence_trace=evidence_trace,
+            classifier_model_version=model_version,
+            agent_source=assembly.source,
+            latency_ms=latency,
+        )
+        self.metrics.increment("lattice_utterances_confident")
+        self.metrics.increment("utterances_confident")
+        self.metrics.observe_ms("lattice_utterance_total", latency["total"])
+        return event
 
     async def process_frames(
         self,
@@ -399,6 +648,42 @@ class TranslationEngine:
             model_version=model_version,
         )
 
+    def _lattice_repair_event(
+        self,
+        *,
+        lattice: GlossLattice,
+        action: ContractRepairAction,
+        confidence: float,
+        reason_codes: tuple[str, ...],
+        evidence_trace: tuple[LatticeEvidenceTrace, ...],
+        started: float,
+        choices: tuple[LatticeChoice, ...] = (),
+        target_slot_ids: tuple[str, ...] = (),
+        agent_source: str | None = None,
+        latency_ms: Mapping[str, int] | None = None,
+    ) -> LatticeRepairRequiredEvent:
+        latency = dict(latency_ms or {})
+        latency["total"] = _elapsed_ms(started)
+        self.metrics.increment("lattice_utterances_repair_required")
+        self.metrics.increment("utterances_repair_required")
+        self.metrics.increment(f"lattice_repair_{action.value}")
+        self.metrics.observe_ms("lattice_utterance_total", latency["total"])
+        return LatticeRepairRequiredEvent(
+            lattice_seq=lattice.lattice_seq,
+            utterance_id=lattice.utterance_id,
+            revision=lattice.revision,
+            action=action,
+            message=_ACTION_MESSAGES[action],
+            confidence=max(0.0, min(1.0, confidence)),
+            target_slot_ids=target_slot_ids,
+            choices=choices,
+            reason_codes=reason_codes,
+            evidence_trace=evidence_trace,
+            classifier_model_version=lattice.producer.classifier.model_version,
+            agent_source=agent_source,
+            latency_ms=latency,
+        )
+
     def _repair_event(
         self,
         *,
@@ -452,7 +737,12 @@ def build_translation_engine(settings: Settings, metrics: MetricsRegistry) -> Tr
     assembler: CaptionAssembler
     if settings.bedrock_enabled:
         assembler = BedrockCaptionAssembler(
-            create_bedrock_client(region_name=settings.aws_region),
+            create_bedrock_client(
+                region_name=settings.aws_region,
+                connect_timeout_seconds=settings.bedrock_connect_timeout_seconds,
+                read_timeout_seconds=settings.bedrock_read_timeout_seconds,
+                total_max_attempts=settings.bedrock_total_max_attempts,
+            ),
             BedrockAssemblerConfig(
                 model_id=settings.bedrock_model_id,
                 max_revisions=settings.agent_max_revisions,
@@ -522,6 +812,76 @@ def _contract_hypotheses(
     return tuple(
         GlossHypothesis(gloss=item.gloss, confidence=item.confidence) for item in candidates
     )
+
+
+def _assembly_evidence(slot: GlossLatticeSlot) -> GlossEvidence:
+    if slot.resolved_gloss is None:
+        raise ValueError("unresolved lattice slots cannot enter caption assembly")
+    selected = slot.selected_candidate
+    confidence = selected.confidence if selected is not None else 1.0
+    return GlossEvidence(
+        evidence_id=slot.slot_id,
+        gloss=slot.resolved_gloss,
+        confidence=confidence,
+        source=slot.provenance.value,
+        slot_id=slot.slot_id,
+        start_ms=slot.start_ms,
+        end_ms=slot.end_ms,
+        alternatives=tuple(
+            GlossAlternativeEvidence(
+                rank=item.rank,
+                gloss=item.gloss,
+                confidence=item.confidence,
+            )
+            for item in slot.candidates
+        ),
+    )
+
+
+def _lattice_evidence_trace(lattice: GlossLattice) -> tuple[LatticeEvidenceTrace, ...]:
+    trace: list[LatticeEvidenceTrace] = []
+    for slot in lattice.slots:
+        selected = slot.selected_candidate
+        trace.append(
+            LatticeEvidenceTrace(
+                slot_id=slot.slot_id,
+                start_ms=slot.start_ms,
+                end_ms=slot.end_ms,
+                resolved_gloss=slot.resolved_gloss,
+                confidence=selected.confidence if selected is not None else None,
+                provenance=slot.provenance,
+                candidates=slot.candidates,
+            )
+        )
+    return tuple(trace)
+
+
+def _lattice_choices(
+    slot: GlossLatticeSlot,
+    candidates: Sequence[GlossCandidate],
+) -> tuple[LatticeChoice, ...]:
+    return tuple(
+        LatticeChoice(
+            slot_id=slot.slot_id,
+            rank=item.rank,
+            gloss=item.gloss,
+            confidence=item.confidence,
+        )
+        for item in candidates
+    )
+
+
+def _minimum_lattice_confidence(lattice: GlossLattice) -> float:
+    confidences = tuple(
+        slot.selected_candidate.confidence
+        for slot in lattice.slots
+        if slot.selected_candidate is not None
+    )
+    return min(confidences, default=1.0)
+
+
+def _canonical_gloss(gloss: str) -> str:
+    return gloss.strip().upper().replace(" ", "_")
 
 
 def _critical_landmark_coverage(sequence: NormalizedSequence) -> float:

@@ -12,7 +12,7 @@
 | :---------------------- | :-------------------------------------------- |
 | **Code**                | `RDM`                                         |
 | **Status**              | Live                                          |
-| **Last reviewed**       | 2026-09-05                                    |
+| **Last reviewed**       | 2026-09-06                                    |
 | **Source of truth for** | Onboarding, environment setup, project status |
 | **Related**             | [`RIX`](ref_index.md) · [`CLD`](CLAUDE.md)    |
 
@@ -110,12 +110,12 @@ breaks the flow of conversation.
 
 ## 3.2. The Product
 SimplyNext reads sign language from an ordinary camera and produces conversational text or audio.
-In the intended end-to-end system, the Flutter client performs camera capture and MediaPipe
-landmark extraction. A nearby Python backend receives only canonical landmark coordinates, then
-performs body-relative normalization, utterance segmentation, closed-vocabulary recognition and
-confidence gating. An optional AWS Bedrock layer receives only compact accepted gloss evidence for
-bounded caption assembly and critique. **Where confidence is low, the backend refuses to guess and
-requests a repair instead.**
+In the current integration boundary, the Flutter client owns camera capture, subject tracking,
+MediaPipe extraction, normalization, utterance segmentation and closed-vocabulary classification.
+It sends one compact, confidence-scored `GlossLattice` per utterance to the Python backend. The
+backend validates that lattice and runs only bounded caption assembly, critique and repair
+selection; raw media and landmarks do not cross into this Agent boundary. **Where confidence is
+low or any slot is unresolved, the backend refuses to guess and requests a repair instead.**
 
 That last property is the design invariant. For an assistive tool, a fluent wrong sentence
 attributed to a deaf person is worse than no sentence at all.
@@ -209,9 +209,8 @@ Deep dives, as needed: the four full reports in `ref_repo/` —
 
 
 # 6. ENVIRONMENT AND INSTALLATION
-> **Note:** a runnable first-draft Python backend now exists. The current Flutter prototype still
-> emits demonstration landmarks; real camera capture and on-device MediaPipe extraction remain to
-> be connected to this API.
+> **Note:** a runnable Python backend and its `GlossLattice` WebSocket now exist. The Flutter client
+> still needs to connect its real on-device segmentation/classifier output to this contract.
 
 
 
@@ -222,7 +221,7 @@ Deep dives, as needed: the four full reports in `ref_repo/` —
 | **Git**                            | Version control — https://git-scm.com/install/  |
 | **Python 3.11–3.13**               | Backend runtime and bundled `pip`               |
 | **`uv`** *(optional)*              | Used only by the separate training labs         |
-| A Flutter landmark integration     | Required only for live end-to-end use; still pending |
+| A Flutter MediaPipe/classifier integration | Required for live end-to-end lattice input; pending |
 | An AWS account with Bedrock access | Optional bounded caption assembly               |
 
 Installing `uv`:
@@ -312,9 +311,9 @@ python -m ruff check src tests main.py
 python -m mypy src
 ```
 
-`GET /healthz` returns `200` when the process is healthy. `GET /readyz` intentionally returns `503`
-until both a calibrated recognition bundle and a caption assembler are configured; this means
-captions are disabled, not that the server failed to start. Readiness validates local configuration
+`GET /healthz` returns `200` when the process is healthy. `GET /readyz` reports readiness separately
+for `gloss_lattice` and legacy `landmarks` input. Lattice mode needs a caption assembler; legacy
+landmark mode also needs the local calibrated recognizer. Readiness validates local configuration
 and does not make a paid Bedrock call or prove that AWS credentials and model access work. The
 deterministic caption file shape is demonstrated in `data/caption_templates.example.json`.
 
@@ -343,27 +342,36 @@ README.md     clean-clone runbook and project status
 
 
 
-## 6.6. First Draft API
-1. `POST /v1/sessions` negotiates the canonical landmark layout, batch limit, target frame rate,
-   short-lived session identifier and one bearer token. One deployment serves the language selected
-   by `SIMPLYNEXT_RECOGNITION_LANGUAGE`, which defaults to ASL.
-2. The Flutter client opens the returned WebSocket path with that bearer token. Only one active
-   landmark stream may own a session.
-3. Each `landmark_batch` carries ordered frames up to the limit negotiated for that session. The
-   server acknowledges sequence numbers and reports aggregate client-reported plus server-evicted
-   frame loss.
-4. The backend detects signing activity, retains a bounded utterance window, normalizes landmarks
-   relative to the signer, resamples time and asks the configured recognizer for calibrated top-k
-   gloss candidates.
-5. Confidence, margin, coverage, duration, frame loss, vocabulary and calibration gates run before
-   caption assembly. Accepted evidence produces `utterance_result`; anything else produces
-   `repair_required` with a concrete action such as repeat, reposition or fingerspell.
-6. `control` messages support `start`, `pause`, `resume`, `commit`, `clear_live_data`, `ping` and
-   `end`. Invalid or replayed sequence numbers produce typed errors.
+## 6.6. GlossLattice API
+1. `POST /v1/sessions` with `stream_kind: "gloss_lattice"` and versioned `classifier` metadata
+   returns a short-lived session, bearer token, `/v1/sessions/{id}/lattices` path and negotiated
+   limits. One deployment serves the language selected by `SIMPLYNEXT_RECOGNITION_LANGUAGE`.
+2. The Flutter client opens that path with `Authorization: Bearer <stream_token>`. Only one active
+   WebSocket may own a session.
+3. Each `gloss_lattice` is one complete utterance: ordered slots, top-k calibrated candidates,
+   capture timestamps and exactly one provenance rung per slot. The strict schema has no raw-media,
+   landmark, coordinate or feature-tensor field and the transport enforces a 64 KiB ceiling.
+4. A new lattice receives `lattice_ack`, `activity: processing`, then exactly one `lattice_result`
+   or `lattice_repair_required`, followed by `activity: idle`. The terminal event carries a
+   structured per-slot evidence/provenance trace.
+5. Any incomplete or unresolved slot is stopped before the Agent. Server-configured confidence,
+   margin, duration and optional aggregate quality gates are applied to client evidence.
+   Signer-confirmed top-k and
+   fingerspelled revisions retain their provenance.
+6. `lattice_seq` is strictly increasing. Exact semantic retries return the cached terminal event
+   without another Agent call; changed duplicates are rejected. A higher `revision` of the same
+   utterance is accepted only after a repair result.
+7. This socket accepts only `ping` and `end` controls because each lattice is already a committed
+   utterance. Per-minute, per-session and process-wide Agent concurrency bounds limit accidental
+   spend.
 
-Raw camera frames are never accepted by this backend and landmarks are never sent to Bedrock. The
-classified-hypothesis replay endpoint is disabled by default and exists only for authenticated
-development evaluation when `SIMPLYNEXT_ENABLE_HYPOTHESIS_REPLAY_ENDPOINT=true`.
+The legacy `/landmarks` WebSocket remains available when a session uses the default
+`stream_kind: "landmarks"`; its original controls and backend perception pipeline are unchanged.
+The classified-hypothesis replay endpoint remains disabled by default. Full frontend examples and
+the wire schema are in [`docs/GLOSS_LATTICE_WEBSOCKET.md`](docs/GLOSS_LATTICE_WEBSOCKET.md).
+The in-memory replay store and limits are process-local, so this MVP deliberately runs as one
+application worker; see the protocol guide before deploying multiple containers or accepting
+sessions from untrusted clients.
 
 ---
 
@@ -478,9 +486,9 @@ D3_p39       doc/[D3]_..., slide 39
 7.  **Master plan (`PLN`)**
     🔴 Not written — blocked on the architecture decisions
 8.  **Implementation (`src/`)**
-    🟡 Runnable first-draft backend: contracts, bounded sessions, WebSocket ingestion, signer-relative
-    normalization, segmentation, template recognition, confidence policy, caption assembly,
-    observability and automated tests
+    🟡 Runnable backend: strict `GlossLattice` ingress and Agent-only WebSocket, idempotent/rate-bounded
+    sessions, complete top-k/provenance transfer, fail-closed repair policy, legacy landmark
+    pipeline, caption assembly, observability and automated tests
 9.  **Dataset**
     🔴 Not collected; no calibrated recognition template bundle exists yet
 10. **AWS lease**

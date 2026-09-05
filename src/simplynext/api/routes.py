@@ -56,19 +56,27 @@ async def readiness(request: Request, response: Response) -> dict[str, object]:
     metadata = services.translation.recognizer.metadata
     recognizer_ready = metadata.ready and metadata.calibrated
     assembler_ready = services.translation.assembler_ready
-    ready = recognizer_ready and assembler_ready
+    landmark_stream_ready = recognizer_ready and assembler_ready
+    lattice_stream_ready = assembler_ready
+    ready = landmark_stream_ready or lattice_stream_ready
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    if not recognizer_ready:
+    if not recognizer_ready and not assembler_ready:
         state = "recognizer_unconfigured"
     elif not assembler_ready:
         state = "caption_assembler_unconfigured"
+    elif not recognizer_ready:
+        state = "lattice_stream_ready"
     else:
         state = "ready"
     return {
         "status": state,
         "recognizer": asdict(metadata),
         "caption_assembler": {"ready": assembler_ready},
+        "input_modes": {
+            "gloss_lattice": {"ready": lattice_stream_ready},
+            "landmarks": {"ready": landmark_stream_ready},
+        },
     }
 
 

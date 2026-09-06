@@ -42,3 +42,6 @@ data/interim/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local cross-team schema handoff (transferred manually)
+/stage1-4_schema.md

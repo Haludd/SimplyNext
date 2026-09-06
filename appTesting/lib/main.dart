@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_controller.dart';
 import 'models/face_tracking_models.dart';
 import 'models/hand_tracking_models.dart';
+import 'models/speech_recognition_models.dart';
 import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
@@ -784,6 +784,13 @@ class OnboardingScreen extends StatelessWidget {
                     }
                   : null,
             ),
+            const SizedBox(height: 10),
+            OutlineButton(
+              key: const ValueKey<String>('open-voice-captions'),
+              label: 'Use voice captions without camera',
+              icon: Icons.mic_none,
+              onPressed: controller.openVoiceCaptions,
+            ),
           ],
         ),
       ),
@@ -1079,38 +1086,47 @@ class LiveTranslatorScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!controller.calibrated) {
       return _ScreenFrame(
-        eyebrow: 'Camera access required',
+        eyebrow: 'Two-way communication',
         title: 'Live translator',
-        subtitle: 'Complete the one-time calibration before translating.',
-        child: GlassCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Icon(Icons.center_focus_strong, color: _cyan, size: 34),
-              const SizedBox(height: 16),
-              const Text(
-                'Let\'s set up your camera position first.',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+        subtitle: 'Turn speech into readable captions now, or calibrate the camera for sign-to-text.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _SpeechCaptionCard(controller: controller),
+            const SizedBox(height: 18),
+            GlassCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Icon(Icons.center_focus_strong, color: _cyan, size: 34),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Want to translate signs too?',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Complete the one-time camera calibration. Voice captions work independently and do not need camera access.',
+                    style: TextStyle(color: _muted),
+                  ),
+                  const SizedBox(height: 22),
+                  PrimaryButton(
+                    label: 'Start camera calibration',
+                    onPressed: () =>
+                        controller.navigate(SignBridgePage.onboarding),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              const Text(
-                'Your calibration is saved locally and won\'t be required again on your next launch.',
-                style: TextStyle(color: _muted),
-              ),
-              const SizedBox(height: 22),
-              PrimaryButton(
-                label: 'Start calibration',
-                onPressed: () => controller.navigate(SignBridgePage.onboarding),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
     return _ScreenFrame(
       eyebrow: 'Good afternoon, Esther',
       title: 'Live translator',
-      subtitle: 'Sign naturally. We\'ll take care of the words.',
+      subtitle:
+          'Sign naturally or speak. We\'ll make the conversation visible.',
       action: Wrap(
         spacing: 10,
         children: <Widget>[
@@ -1193,6 +1209,8 @@ class LiveTranslatorScreen extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 18),
+          _SpeechCaptionCard(controller: controller),
           const SizedBox(height: 18),
           _ActionDock(controller: controller),
           const SizedBox(height: 16),
@@ -1880,13 +1898,363 @@ class _CaptionCard extends StatelessWidget {
     );
   }
 
-  static void _openCustomFlow(BuildContext context, AppController controller) =>
-      Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => CustomSignFlowScreen(controller: controller),
+  static Future<void> _openCustomFlow(
+    BuildContext context,
+    AppController controller,
+  ) async {
+    await controller.stopSpeechCaptioning();
+    if (!context.mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => CustomSignFlowScreen(controller: controller),
+      ),
+    );
+  }
+}
+
+class _SpeechCaptionCard extends StatelessWidget {
+  const _SpeechCaptionCard({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final speech = controller.speechToText;
+    final status = speech.status;
+    final error = speech.lastError;
+    final confidence = speech.confidence;
+    final selectedLocale = speech.locale;
+    final confirmed = speech.finalTranscript.trim();
+    final partial = speech.partialTranscript.trim();
+    final hasTranscript = confirmed.isNotEmpty || partial.isNotEmpty;
+    final isActive = _isActive(status);
+    final isStopping = status == SpeechServiceStatus.stopping;
+    final statusLabel = _statusLabel(status, error?.message);
+    final statusColor = _statusColor(status);
+
+    return GlassCard(
+      key: const ValueKey<String>('speech-caption-card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 14,
+            runSpacing: 10,
+            children: <Widget>[
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(Icons.mic_none, color: _mint, size: 19),
+                  SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'SPOKEN CAPTIONS',
+                        style: TextStyle(
+                          color: _mint,
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Hearing person → signer',
+                        style: TextStyle(color: _muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              if (selectedLocale != null)
+                _SpeechLocaleMenu(
+                  selectedLocale: selectedLocale,
+                  locales: speech.availableLocales,
+                  enabled: !isActive && !isStopping,
+                  onSelected: speech.selectLocale,
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            constraints: const BoxConstraints(minHeight: 112),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _background.withValues(alpha: .72),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: _mint.withValues(alpha: .2)),
+            ),
+            alignment: Alignment.centerLeft,
+            child: Semantics(
+              key: const ValueKey<String>('spoken-caption-text'),
+              container: true,
+              liveRegion: confirmed.isNotEmpty,
+              label: confirmed.isNotEmpty
+                  ? 'Final spoken caption: $confirmed'
+                  : partial.isNotEmpty
+                  ? 'Draft spoken caption: $partial'
+                  : 'No spoken caption yet',
+              child: ExcludeSemantics(
+                child: hasTranscript
+                    ? SelectableText.rich(
+                        TextSpan(
+                          children: <InlineSpan>[
+                            if (confirmed.isNotEmpty)
+                              TextSpan(
+                                text: confirmed,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            if (confirmed.isNotEmpty && partial.isNotEmpty)
+                              const TextSpan(text: ' '),
+                            if (partial.isNotEmpty)
+                              TextSpan(
+                                text: partial,
+                                style: TextStyle(
+                                  color: _cyan.withValues(alpha: .72),
+                                ),
+                              ),
+                          ],
+                          style: const TextStyle(
+                            fontSize: 26,
+                            height: 1.35,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      )
+                    : const Text(
+                        'Tap Start listening, then speak one short message.',
+                        style: TextStyle(
+                          color: _muted,
+                          fontSize: 20,
+                          height: 1.4,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            container: true,
+            liveRegion:
+                status == SpeechServiceStatus.listening ||
+                status == SpeechServiceStatus.error ||
+                status == SpeechServiceStatus.unavailable,
+            label: statusLabel,
+            child: ExcludeSemantics(
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.circle, color: statusColor, size: 8),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (confidence != null && confirmed.isNotEmpty)
+                    Text(
+                      '${(confidence * 100).round()}% confidence',
+                      style: const TextStyle(
+                        color: _subtle,
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Semantics(
+                button: true,
+                toggled: isActive,
+                enabled: !isStopping,
+                label: isActive
+                    ? 'Stop speech recognition'
+                    : 'Start speech recognition',
+                onTap: isStopping
+                    ? null
+                    : () {
+                        controller.toggleSpeechCaptioning();
+                      },
+                excludeSemantics: true,
+                child: SizedBox(
+                  height: 48,
+                  child: FilledButton.icon(
+                    key: const ValueKey<String>('toggle-speech-captioning'),
+                    onPressed: isStopping
+                        ? null
+                        : controller.toggleSpeechCaptioning,
+                    icon: Icon(
+                      isActive ? Icons.stop_circle_outlined : Icons.mic,
+                      size: 19,
+                    ),
+                    label: Text(
+                      isActive
+                          ? 'Stop listening'
+                          : status == SpeechServiceStatus.error ||
+                                status == SpeechServiceStatus.unavailable
+                          ? 'Try again'
+                          : 'Start listening',
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: isActive ? _red : _mint,
+                      foregroundColor: _background,
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(
+                height: 48,
+                child: TextButton.icon(
+                  key: const ValueKey<String>('clear-speech-caption'),
+                  onPressed: hasTranscript && !isActive && !isStopping
+                      ? controller.clearSpeechCaption
+                      : null,
+                  icon: const Icon(Icons.cleaning_services_outlined, size: 17),
+                  label: const Text('Clear caption'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(Icons.info_outline, color: _subtle, size: 15),
+              SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Speech recognition uses your device\'s configured service and may require an internet connection. Audio is not sent through the sign-language WebSocket.',
+                  style: TextStyle(color: _subtle, fontSize: 10, height: 1.45),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static bool _isActive(SpeechServiceStatus status) =>
+      status == SpeechServiceStatus.initializing ||
+      status == SpeechServiceStatus.starting ||
+      status == SpeechServiceStatus.listening;
+
+  static Color _statusColor(SpeechServiceStatus status) => switch (status) {
+    SpeechServiceStatus.ready => _mint,
+    SpeechServiceStatus.starting || SpeechServiceStatus.listening => _cyan,
+    SpeechServiceStatus.unavailable || SpeechServiceStatus.error => _red,
+    SpeechServiceStatus.uninitialized ||
+    SpeechServiceStatus.initializing ||
+    SpeechServiceStatus.stopping => _yellow,
+  };
+
+  static String _statusLabel(SpeechServiceStatus status, String? error) =>
+      switch (status) {
+        SpeechServiceStatus.uninitialized =>
+          'Ready · microphone permission is requested when you start',
+        SpeechServiceStatus.initializing =>
+          'Requesting microphone and speech-recognition access…',
+        SpeechServiceStatus.ready => 'Ready for a short spoken message',
+        SpeechServiceStatus.starting => 'Starting the microphone…',
+        SpeechServiceStatus.listening => 'Listening… speak naturally',
+        SpeechServiceStatus.stopping => 'Finishing the caption…',
+        SpeechServiceStatus.unavailable =>
+          'Speech recognition is unavailable on this device or browser',
+        SpeechServiceStatus.error => _friendlyError(error),
+      };
+
+  static String _friendlyError(String? error) {
+    final normalized = (error ?? '').toLowerCase();
+    if (normalized.contains('permission') || normalized.contains('denied')) {
+      return 'Microphone or speech-recognition permission was denied';
+    }
+    if (normalized.contains('network')) {
+      return 'Speech recognition needs a network connection on this device';
+    }
+    if (normalized.contains('no_match') || normalized.contains('no match')) {
+      return 'No speech was recognised · try again and speak clearly';
+    }
+    if (normalized.contains('busy')) {
+      return 'The device speech recogniser is busy · try again';
+    }
+    return error == null || error.trim().isEmpty
+        ? 'Speech recognition stopped because of an unexpected error'
+        : 'Speech recognition error · $error';
+  }
+}
+
+class _SpeechLocaleMenu extends StatelessWidget {
+  const _SpeechLocaleMenu({
+    required this.selectedLocale,
+    required this.locales,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final SpeechLocale selectedLocale;
+  final List<SpeechLocale> locales;
+  final bool enabled;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final canChoose = enabled && locales.length > 1;
+    return PopupMenuButton<String>(
+      enabled: canChoose,
+      tooltip: canChoose ? 'Choose spoken language' : 'Spoken language',
+      initialValue: selectedLocale.localeId,
+      onSelected: onSelected,
+      itemBuilder: (context) => locales
+          .map(
+            (locale) => PopupMenuItem<String>(
+              value: locale.localeId,
+              child: Text(locale.name),
+            ),
+          )
+          .toList(growable: false),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          color: _mint.withValues(alpha: .07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _mint.withValues(alpha: .2)),
         ),
-      );
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.language, color: _mint, size: 15),
+            const SizedBox(width: 6),
+            Text(
+              selectedLocale.name,
+              style: const TextStyle(color: _muted, fontSize: 10),
+            ),
+            if (canChoose) ...<Widget>[
+              const SizedBox(width: 4),
+              const Icon(Icons.arrow_drop_down, color: _muted, size: 17),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ActionDock extends StatelessWidget {
@@ -2750,8 +3118,14 @@ class _MicrophoneSettings extends StatelessWidget {
   final AppController controller;
   @override
   Widget build(BuildContext context) {
-    final isGranted =
-        controller.devices.microphonePermission == PermissionStatus.granted;
+    final speech = controller.speechToText;
+    final status = speech.status;
+    final isActive = _SpeechCaptionCard._isActive(status);
+    final isStopping = status == SpeechServiceStatus.stopping;
+    final statusLabel = _SpeechCaptionCard._statusLabel(
+      status,
+      speech.lastError?.message,
+    );
     return GlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2769,33 +3143,38 @@ class _MicrophoneSettings extends StatelessWidget {
             icon: Icons.mic_none,
           ),
           _SettingLine(
-            label: 'Microphone status',
-            value: controller.devices.microphoneStatus,
+            label: 'Speech caption status',
+            value: statusLabel,
             icon: Icons.circle,
-            valueColor: isGranted ? _mint : _yellow,
+            valueColor: _SpeechCaptionCard._statusColor(status),
           ),
+          if (speech.locale != null)
+            _SettingLine(
+              label: 'Spoken language',
+              value: speech.locale!.name,
+              icon: Icons.language,
+            ),
           const SizedBox(height: 10),
           Row(
             children: <Widget>[
               Expanded(
                 child: OutlineButton(
-                  label: isGranted ? 'Microphone enabled' : 'Enable microphone',
-                  icon: Icons.mic_none,
-                  onPressed: isGranted
+                  label: isActive
+                      ? 'Stop listening'
+                      : status == SpeechServiceStatus.ready
+                      ? 'Test voice captions'
+                      : 'Enable speech recognition',
+                  icon: isActive ? Icons.stop_circle_outlined : Icons.mic_none,
+                  onPressed: isStopping
                       ? null
-                      : () => controller.devices.enableMicrophone(),
+                      : controller.toggleSpeechCaptioning,
                 ),
               ),
               const SizedBox(width: 8),
               IconButton(
-                onPressed: () => controller.devices.testMicrophone(),
-                icon: Icon(
-                  controller.devices.isTestingMicrophone
-                      ? Icons.graphic_eq
-                      : Icons.mic,
-                  color: _cyan,
-                ),
-                tooltip: 'Test microphone',
+                onPressed: controller.openVoiceCaptions,
+                icon: const Icon(Icons.closed_caption_outlined, color: _cyan),
+                tooltip: 'Open voice captions',
               ),
             ],
           ),

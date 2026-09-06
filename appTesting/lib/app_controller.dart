@@ -1,14 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import 'models/face_tracking_models.dart';
-import 'models/tracking_models.dart';
 import 'models/hand_tracking_models.dart';
+import 'models/speech_recognition_models.dart';
+import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
 import 'services/api_client.dart';
 import 'services/sign_analysis_service.dart';
+import 'services/speech_to_text_service.dart';
 import 'services/tracking_service.dart';
 import 'services/utterance_stillness_detector.dart';
 
@@ -16,17 +19,20 @@ enum SignBridgePage { onboarding, live, dictionary, settings }
 
 enum ViewMode { raw, wireframe, clean }
 
-class AppController extends ChangeNotifier {
+class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AppController(
     this._localState,
     this.tracking,
     this.devices, {
     this.apiClient,
-  }) {
+    SpeechToTextService? speechToText,
+  }) : speechToText = speechToText ?? SpeechToTextService() {
     backendStatus = apiClient == null
         ? 'Offline simulation · no backend configured'
         : 'Backend configured';
     _trackingSubscription = tracking.frames.listen(_onTrackingFrame);
+    this.speechToText.addListener(_onSpeechToTextChanged);
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_restoreState());
   }
 
@@ -34,6 +40,7 @@ class AppController extends ChangeNotifier {
   final TrackingService tracking;
   final DeviceAccessService devices;
   final SignSequenceApiClient? apiClient;
+  final SpeechToTextService speechToText;
   final SignAnalysisService signAnalyzer = SignAnalysisService();
   final SimulatedSignSequenceApiClient simulator =
       SimulatedSignSequenceApiClient();
@@ -101,6 +108,47 @@ class AppController extends ChangeNotifier {
   int get utteranceFrameCount => tracking.utteranceFrameCount;
   bool get isCapturingUtterance => tracking.isCapturingUtterance;
 
+  void _onSpeechToTextChanged() => notifyListeners();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      unawaited(speechToText.stopListening());
+    }
+  }
+
+  /// Opens the two-way translator without requiring camera calibration.
+  /// Speech captions do not depend on landmark tracking.
+  void openVoiceCaptions() {
+    page = SignBridgePage.live;
+    notifyListeners();
+  }
+
+  Future<void> toggleSpeechCaptioning() async {
+    switch (speechToText.status) {
+      case SpeechServiceStatus.initializing:
+      case SpeechServiceStatus.starting:
+      case SpeechServiceStatus.listening:
+        await speechToText.stopListening();
+        return;
+      case SpeechServiceStatus.stopping:
+        return;
+      case SpeechServiceStatus.uninitialized:
+      case SpeechServiceStatus.ready:
+      case SpeechServiceStatus.unavailable:
+      case SpeechServiceStatus.error:
+        await speechToText.startListening(
+          listenFor: const Duration(minutes: 1),
+          pauseFor: const Duration(seconds: 3),
+        );
+        return;
+    }
+  }
+
+  Future<void> stopSpeechCaptioning() => speechToText.stopListening();
+
+  void clearSpeechCaption() => speechToText.clearTranscript();
+
   /// Starts a fresh utterance buffer. Tracking itself remains continuous;
   /// only frames collected after this point belong to the utterance.
   void startUtterance() {
@@ -143,6 +191,9 @@ class AppController extends ChangeNotifier {
       page = SignBridgePage.onboarding;
     } else {
       page = destination;
+    }
+    if (page != SignBridgePage.live) {
+      unawaited(speechToText.stopListening());
     }
     notifyListeners();
   }
@@ -233,6 +284,7 @@ class AppController extends ChangeNotifier {
     calibrated = false;
     calibrationStep = 1;
     page = SignBridgePage.onboarding;
+    await speechToText.stopListening();
     await _localState.setCalibrated(false);
     notifyListeners();
   }
@@ -364,6 +416,9 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _frameNotifyTimer?.cancel();
     _trackingSubscription.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    speechToText.removeListener(_onSpeechToTextChanged);
+    speechToText.dispose();
     tracking.dispose();
     devices.dispose();
     apiClient?.close();

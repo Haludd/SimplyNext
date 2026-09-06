@@ -19,11 +19,18 @@ flutter run
 
 The project includes generated Android, iOS, and web platform scaffolding. Verify the setup with `flutter analyze`, `flutter test`, or `flutter run`.
 
+The separate integration branch and its current limitations are documented in
+[`../docs/FRONTEND_FULL_INTEGRATION.md`](../docs/FRONTEND_FULL_INTEGRATION.md).
+
 The generated platform files already include the permission descriptions required by the `camera` and `permission_handler` packages: `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` in iOS `Info.plist`, plus camera and record-audio permissions in Android `AndroidManifest.xml`.
 
 ## Frontend → backend boundary
 
-The architecture document recommends keeping the 30 FPS perception loop at the edge. Flutter owns the camera and UI. A MediaPipe Tasks integration (via a Flutter plugin or platform channel) should emit normalized landmark frames into the shared tracking interface in `lib/services/tracking_service.dart`.
+The architecture keeps the 30 FPS perception loop at the edge. On web,
+Harold's MediaPipe bridge emits raw `LandmarkFrame` values into the shared
+tracking interface. `StateNormalisedTrackingService` then adds Stage 3
+tracking state and Stage 4 body-relative normalisation before any downstream
+segmentation service receives the frame.
 
 The old `hypotheses` + `features` HTTP example is deprecated and is not accepted by the frozen backend boundary. Completed classifier output now goes through `lib/adapters/gloss_lattice_builder.dart`, becomes the exact `GlossLattice` model in `lib/contracts/gloss_lattice.dart`, and is sent unchanged by `lib/services/gloss_lattice_websocket_client.dart`. See [`../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md`](../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md) and the authoritative test fixture [`test/fixtures/gloss_lattice_v1.json`](test/fixtures/gloss_lattice_v1.json).
 
@@ -78,7 +85,8 @@ The frame pipeline should be:
 Flutter camera
   → subject tracker
   → MediaPipe Tasks landmarks
-  → body-relative normalizer
+  → tracking state
+  → body-relative normalisation
   → geometry / hysteresis segmenter
   → small closed-vocabulary classifier
   → GlossLattice adapter

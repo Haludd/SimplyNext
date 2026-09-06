@@ -21,6 +21,7 @@ abstract class TrackingService {
   bool get isCapturingUtterance;
   String get status;
   Future<void> start();
+  Future<void> stop();
   void beginUtterance();
   Future<List<LandmarkFrame>> finishUtterance();
   void ingest(LandmarkFrame frame);
@@ -75,6 +76,9 @@ class DemoTrackingService implements TrackingService {
 
   @override
   Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
 
   @override
   void beginUtterance() {

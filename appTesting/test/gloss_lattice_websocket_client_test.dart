@@ -163,6 +163,80 @@ void main() {
     );
   });
 
+  test('accepts matching optional event envelope fields', () async {
+    final lattice = _lattice();
+    final submission = client.send(lattice);
+    await _waitForSentMessage(channel);
+
+    channel.addJson(<String, dynamic>{
+      'type': 'activity',
+      'event_schema_version': GlossLatticeContract.schemaVersion,
+      'session_id': _sessionId,
+      'state': 'processing',
+    });
+    channel.addJson(<String, dynamic>{
+      ..._ack(lattice),
+      'event_schema_version': GlossLatticeContract.schemaVersion,
+      'session_id': _sessionId,
+    });
+    channel.addJson(<String, dynamic>{
+      ..._result(lattice),
+      'event_schema_version': GlossLatticeContract.schemaVersion,
+      'session_id': _sessionId,
+    });
+
+    final receipt = await submission;
+    expect(receipt.latticeSeq, lattice.latticeSeq);
+    expect(receipt.requiresRepair, isFalse);
+  });
+
+  test('rejects an event belonging to another session', () async {
+    final lattice = _lattice();
+    final submission = client.send(lattice);
+    await _waitForSentMessage(channel);
+
+    channel.addJson(<String, dynamic>{
+      ..._ack(lattice),
+      'event_schema_version': GlossLatticeContract.schemaVersion,
+      'session_id': 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    });
+
+    await expectLater(
+      submission,
+      throwsA(
+        isA<GlossLatticeWebSocketException>().having(
+          (error) => error.code,
+          'code',
+          'correlation_mismatch',
+        ),
+      ),
+    );
+  });
+
+  test('rejects an unsupported backend event schema version', () async {
+    final lattice = _lattice();
+    final submission = client.send(lattice);
+    await _waitForSentMessage(channel);
+
+    channel.addJson(<String, dynamic>{
+      'type': 'activity',
+      'event_schema_version': '2.0',
+      'session_id': _sessionId,
+      'state': 'processing',
+    });
+
+    await expectLater(
+      submission,
+      throwsA(
+        isA<GlossLatticeWebSocketException>().having(
+          (error) => error.code,
+          'code',
+          'invalid_response',
+        ),
+      ),
+    );
+  });
+
   test('prevents two submissions from sharing one response sequence', () async {
     final lattice = _lattice();
     final first = client.send(lattice);
@@ -190,6 +264,28 @@ void main() {
     );
     await channel.closeIncoming();
     await expectation;
+  });
+
+  test('turns a silent response stream into a retryable timeout', () async {
+    await client.close();
+    channel = _FakeTextChannel();
+    client = GlossLatticeWebSocketClient(
+      channel: channel,
+      sessionId: _sessionId,
+      responseTimeout: const Duration(milliseconds: 5),
+    );
+
+    final submission = client.send(_lattice());
+    await _waitForSentMessage(channel);
+
+    await expectLater(
+      submission,
+      throwsA(
+        isA<GlossLatticeWebSocketException>()
+            .having((error) => error.code, 'code', 'response_timeout')
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
   });
 
   test('close is idempotent and prevents later sends', () async {

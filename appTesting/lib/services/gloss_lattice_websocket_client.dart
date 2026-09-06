@@ -77,34 +77,48 @@ final class GlossLatticeWebSocketException implements Exception {
 /// Sends a completed [GlossLattice] without changing its wire representation.
 ///
 /// The channel must already be connected to the negotiated lattice endpoint
-/// and authenticated for [sessionId]. Session creation and authentication are
-/// deliberately outside this class: native clients can use an Authorization
-/// header, while browser WebSockets require the backend's future ticket or
-/// equivalent secure handshake.
+/// and authenticated for [sessionId]. `GlossLatticeFrontendSession` composes
+/// session creation and this sender; direct construction remains useful for
+/// tests and for applications that own authentication elsewhere.
 final class GlossLatticeWebSocketClient {
   factory GlossLatticeWebSocketClient({
     required GlossLatticeTextChannel channel,
     required String sessionId,
+    Duration responseTimeout = const Duration(seconds: 60),
   }) {
     if (!GlossLatticeContract.isValidUuid(sessionId)) {
       throw const GlossLatticeValidationException(
         'session_id must be a canonical UUID string',
       );
     }
-    return GlossLatticeWebSocketClient._(channel, sessionId);
+    if (responseTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+        responseTimeout,
+        'responseTimeout',
+        'must be greater than zero',
+      );
+    }
+    return GlossLatticeWebSocketClient._(channel, sessionId, responseTimeout);
   }
 
-  GlossLatticeWebSocketClient._(this._channel, this.sessionId);
+  GlossLatticeWebSocketClient._(
+    this._channel,
+    this.sessionId,
+    this.responseTimeout,
+  );
 
   factory GlossLatticeWebSocketClient.fromWebSocketChannel({
     required WebSocketChannel channel,
     required String sessionId,
+    Duration responseTimeout = const Duration(seconds: 60),
   }) => GlossLatticeWebSocketClient(
     channel: WebSocketGlossLatticeTextChannel(channel),
     sessionId: sessionId,
+    responseTimeout: responseTimeout,
   );
 
   final String sessionId;
+  final Duration responseTimeout;
   final GlossLatticeTextChannel _channel;
   StreamIterator<dynamic>? _messages;
 
@@ -152,6 +166,7 @@ final class GlossLatticeWebSocketClient {
             message: 'The backend event is missing a string type.',
           );
         }
+        _validateOptionalEnvelope(event);
 
         switch (type) {
           case 'activity':
@@ -204,7 +219,23 @@ final class GlossLatticeWebSocketClient {
 
   Future<Map<String, dynamic>> _nextEvent() async {
     final messages = _messages ??= StreamIterator<dynamic>(_channel.stream);
-    if (!await messages.moveNext()) {
+    late bool hasMessage;
+    try {
+      hasMessage = await messages.moveNext().timeout(responseTimeout);
+    } on TimeoutException {
+      throw const GlossLatticeWebSocketException(
+        code: 'response_timeout',
+        message: 'The backend did not answer the lattice in time.',
+        retryable: true,
+      );
+    } on Object {
+      throw const GlossLatticeWebSocketException(
+        code: 'connection_failed',
+        message: 'The WebSocket failed while waiting for a backend event.',
+        retryable: true,
+      );
+    }
+    if (!hasMessage) {
       throw const GlossLatticeWebSocketException(
         code: 'connection_closed',
         message: 'The WebSocket closed before the lattice result arrived.',
@@ -256,6 +287,22 @@ final class GlossLatticeWebSocketClient {
     }
   }
 
+  void _validateOptionalEnvelope(Map<String, dynamic> event) {
+    if (event.containsKey('event_schema_version') &&
+        event['event_schema_version'] != GlossLatticeContract.schemaVersion) {
+      throw const GlossLatticeWebSocketException(
+        code: 'invalid_response',
+        message: 'The backend event_schema_version is unsupported.',
+      );
+    }
+    if (event.containsKey('session_id') && event['session_id'] != sessionId) {
+      throw const GlossLatticeWebSocketException(
+        code: 'correlation_mismatch',
+        message: 'The backend event session_id does not match this session.',
+      );
+    }
+  }
+
   GlossLatticeWebSocketException _serverException(
     Map<String, dynamic> event,
   ) => GlossLatticeWebSocketException(
@@ -269,6 +316,10 @@ final class GlossLatticeWebSocketClient {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    // A synchronous test/platform channel may complete send() from inside its
+    // own event callback. Yield before closing so the controller can finish
+    // dispatching that event safely.
+    await Future<void>.delayed(Duration.zero);
     final messages = _messages;
     if (messages == null) {
       await _channel.close();

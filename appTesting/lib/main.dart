@@ -1,5 +1,6 @@
 import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -7,7 +8,10 @@ import 'app_controller.dart';
 import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
+import 'services/state_normalised_tracking_service.dart';
 import 'services/tracking_service.dart';
+import 'services/web_tracking_service.dart';
+import 'ui/web_camera_preview.dart';
 
 const _background = Color(0xFF07111F);
 const _surface = Color(0xFF102235);
@@ -22,11 +26,14 @@ const _subtle = Color(0xFF657B8D);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
+  final TrackingService mediaPipeTracking = kIsWeb
+      ? WebTrackingService()
+      : DemoTrackingService();
   runApp(
     SignBridgeApp(
       controller: AppController(
         LocalStateService(preferences),
-        DemoTrackingService(),
+        StateNormalisedTrackingService(mediaPipeTracking),
         DeviceAccessService(),
       ),
     ),
@@ -801,7 +808,10 @@ class TrackingPreview extends StatelessWidget {
         fit: StackFit.expand,
         children: <Widget>[
           if (controller.devices.cameraReady)
-            CameraPreview(controller.devices.cameraController!)
+            if (kIsWeb)
+              WebCameraPreview()
+            else
+              CameraPreview(controller.devices.cameraController!)
           else
             const CustomPaint(painter: _PreviewBackgroundPainter()),
           if (controller.viewMode != ViewMode.raw)

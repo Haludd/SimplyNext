@@ -14,6 +14,7 @@ enum ViewMode { raw, wireframe, clean }
 class AppController extends ChangeNotifier {
   AppController(this._localState, this.tracking, this.devices) {
     _trackingSubscription = tracking.frames.listen((_) => notifyListeners());
+    devices.addListener(_onDeviceStateChanged);
     unawaited(_restoreState());
   }
 
@@ -39,6 +40,8 @@ class AppController extends ChangeNotifier {
   double get confidence => latestFrame?.trackingConfidence ?? 0;
   String get confidenceWindowLabel => tracking.confidenceWindow.windowLabel;
 
+  void _onDeviceStateChanged() => notifyListeners();
+
   Future<void> _restoreState() async {
     calibrated = await _localState.isCalibrated();
     final savedSigns = await _localState.loadCustomSigns();
@@ -60,7 +63,32 @@ class AppController extends ChangeNotifier {
 
   Future<void> requestCamera() async {
     await devices.enableCamera();
+    if (devices.cameraReady) {
+      try {
+        await tracking.start();
+      } catch (_) {
+        if (kIsWeb) {
+          devices.markWebCameraUnavailable(
+            'Camera unavailable · allow access and retry',
+          );
+        }
+      }
+    }
     notifyListeners();
+  }
+
+  /// Resets the MediaPipe and temporal Stage 3/4 state before starting a new
+  /// camera stream.
+  Future<void> restartCamera() async {
+    try {
+      await tracking.stop();
+    } catch (_) {
+      // A browser may already have closed a suspended camera stream.
+    }
+    if (kIsWeb) {
+      devices.markWebCameraUnavailable('Restarting camera...');
+    }
+    await requestCamera();
   }
 
   Future<void> completeCalibrationStep() async {
@@ -122,6 +150,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _trackingSubscription.cancel();
+    devices.removeListener(_onDeviceStateChanged);
     tracking.dispose();
     devices.dispose();
     super.dispose();

@@ -1,0 +1,4 @@
+# Runtime for the linked cv4ed-affect-2026 HSEmotion ONNX inference script.
+numpy
+opencv-python-headless
+onnxruntime

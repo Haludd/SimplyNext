@@ -4,3 +4,6 @@ tf_keras
 onnxruntime
 onnx
 hsemotion-onnx
+
+# WebSocket transport for landmark-only classifier/segmentation streaming.
+websockets>=13,<16

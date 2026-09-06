@@ -29,12 +29,41 @@ def open_hand(x: float, y: float) -> list[dict[str, float]]:
     return [{"x": x + dx, "y": y + dy, "z": 0.0} for dx, dy in relative]
 
 
+def add_stage3_normalization(frame: dict) -> None:
+    """Add the same shoulder-centred 3D shape emitted by Flutter stage 3."""
+    origin = {"x": 0.5, "y": 0.45, "z": 0.0}
+    shoulder_width = 0.30
+    normalized_hands = []
+    for hand in frame["hands"]:
+        normalized_hands.append({
+            "handedness": hand["handedness"],
+            "confidence": hand["confidence"],
+            "landmarks": [
+                {
+                    "x": round((point["x"] - origin["x"]) / shoulder_width, 6),
+                    "y": round((point["y"] - origin["y"]) / shoulder_width, 6),
+                    "z": round((point["z"] - origin["z"]) / shoulder_width, 6),
+                    "confidence": round(hand["confidence"], 6),
+                }
+                for point in hand["landmarks"]
+            ],
+        })
+    frame["normalized_coordinates"] = normalized_hands
+    frame["normalization"] = {
+        "coordinate_space": "shoulder_centered_normalized_3d",
+        "origin": origin,
+        "scale": shoulder_width,
+        "confidence": 0.95,
+        "source": "stage_3_body_normalization",
+    }
+
+
 def build_payload(source: dict) -> SignSequencePayload:
     start = datetime(2026, 9, 6, 8, 14, tzinfo=timezone.utc)
     frames = []
     for index, position in enumerate(source["wrist_positions"]):
         timestamp = (start + timedelta(seconds=index / 10)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        frames.append({
+        frame = {
             "timestamp": timestamp,
             "tracking_confidence": 0.98,
             "hands": [{
@@ -46,7 +75,9 @@ def build_payload(source: dict) -> SignSequencePayload:
             "right_shoulder": {"x": 0.65, "y": 0.45, "z": 0.0, "visibility": 0.95},
             "left_hip": {"x": 0.40, "y": 0.90, "z": 0.0, "visibility": 0.95},
             "right_hip": {"x": 0.60, "y": 0.90, "z": 0.0, "visibility": 0.95},
-        })
+        }
+        add_stage3_normalization(frame)
+        frames.append(frame)
     value = {
         "session_id": source["session_id"],
         "sequence_id": source["sequence_id"],
@@ -67,6 +98,10 @@ def run(arm: str) -> None:
     print(f"frames: {source['wrist_positions'].__len__()}")
     print(f"phrases/windows: {result['segmentation']['phrase_count']}")
     print(f"boundary events: {len(result['boundary_events'])}")
+    first_window = result["feature_windows"][0] if result["feature_windows"] else None
+    if first_window and first_window["normalized_coordinates"]:
+        first_hand = first_window["normalized_coordinates"][0]["hands"][0]
+        print("stage-3 normalized wrist:", first_hand["landmarks"][0])
     for phrase in result["segmentation"]["phrases"]:
         print(
             f"  {phrase['phrase_id']}: frames {phrase['start_index']}..{phrase['end_index']} "

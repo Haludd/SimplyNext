@@ -86,6 +86,14 @@ def _validate_frame(index: int, frame: Any) -> None:
             _required_string(face["label"], f"frames[{index}].face_expression.label")
 
 
+def _optional_face_analysis(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise PayloadValidationError("face_analysis must be an object")
+    return value
+
+
 @dataclass(frozen=True)
 class SignSequencePayload:
     """Validated representation of the JSON emitted by the Flutter client."""
@@ -98,6 +106,7 @@ class SignSequencePayload:
     frame_count: int
     lexicon_version: str
     frames: list[dict[str, Any]]
+    face_analysis: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, value: Any) -> "SignSequencePayload":
@@ -133,6 +142,7 @@ class SignSequencePayload:
             frame_count=frame_count,
             lexicon_version=lexicon_version,
             frames=frames,
+            face_analysis=_optional_face_analysis(value.get("face_analysis")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,4 +155,5 @@ class SignSequencePayload:
             "frame_count": self.frame_count,
             "lexicon_version": self.lexicon_version,
             "frames": self.frames,
+            **({"face_analysis": self.face_analysis} if self.face_analysis else {}),
         }

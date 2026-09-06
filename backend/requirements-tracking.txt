@@ -1,0 +1,7 @@
+# RTMDet hand detector + RTMPose/RTMW whole-body inference.
+numpy>=1.26
+opencv-python-headless>=4.10
+onnxruntime>=1.20
+rtmlib==0.0.16
+websockets>=13,<16
+certifi>=2024.8.30

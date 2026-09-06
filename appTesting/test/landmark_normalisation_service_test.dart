@@ -1,353 +1,166 @@
-import 'package:apptesting/models/landmark_frame.dart';
+import 'package:apptesting/models/hand_tracking_models.dart';
+import 'package:apptesting/models/state_normalisation_models.dart';
 import 'package:apptesting/services/tracking_state_normalisation_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'fixtures/landmark_frame_fixtures.dart';
+
 void main() {
-  group('LandmarkNormalisationService', () {
-    test('is invariant to image translation and scale', () {
-      final firstService = LandmarkNormalisationService();
-      final secondService = LandmarkNormalisationService();
+  group('LandmarkNormalisationService canonical boundary', () {
+    test('adds namespaced results without changing Harold raw data', () {
+      final input = LandmarkFrameFixtures.fullyTrackedFrame();
+      final rawJson = input.toJson();
 
-      final first = firstService.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(leftX: 0.40, rightX: 0.60, shoulderY: 0.50),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.50, y: 0.40, handedness: Handedness.right),
-          ],
-        ),
-      );
-      final second = secondService.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(leftX: 0.20, rightX: 0.60, shoulderY: 0.50),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.40, y: 0.30, handedness: Handedness.right),
-          ],
-        ),
-      );
+      final output = TrackingStateNormalisationService().process(input);
 
-      final firstPoint = first.hands.single.pointAt(0)!.normalisedCoordinates!;
-      final secondPoint = second.hands.single
-          .pointAt(0)!
-          .normalisedCoordinates!;
-      expect(firstPoint.x, closeTo(0, 1e-9));
-      expect(firstPoint.y, closeTo(-0.5, 1e-9));
-      expect(secondPoint.x, closeTo(firstPoint.x, 1e-9));
-      expect(secondPoint.y, closeTo(firstPoint.y, 1e-9));
-      expect(first.coordinateSpace, LandmarkCoordinateSpace.bodyNormalised);
-      expect(first.normalisationScale, closeTo(0.20, 1e-9));
+      expect(output.trackingState?.status, TrackingStatus.tracked);
+      expect(output.normalisation?.canNormalise, isTrue);
+      expect(output.normalisation?.origin?.x, closeTo(0.5, 1e-12));
+      expect(output.normalisation?.origin?.y, closeTo(0.35, 1e-12));
+      expect(output.normalisation?.scale, closeTo(0.2, 1e-12));
+
+      final leftWrist = output.normalisation!.hands[0].landmarks[0];
+      expect(leftWrist.normalisedCoordinates?.x, closeTo(-1, 1e-12));
+      expect(leftWrist.normalisedCoordinates?.y, closeTo(1.15, 1e-12));
+      expect(leftWrist.velocity, isNull);
+      expect(leftWrist.acceleration, isNull);
+
+      expect(output.toJson(), equals(rawJson));
+      expect(identical(output.hands, input.hands), isTrue);
+      expect(identical(output.poseLandmarks, input.poseLandmarks), isTrue);
+      expect(output.trackingConfidence, input.trackingConfidence);
     });
 
-    test('maps shoulder midpoint to zero without flipping MediaPipe y', () {
-      final service = LandmarkNormalisationService();
+    test('does not normalise when one shoulder is missing', () {
+      final input = LandmarkFrameFixtures.oneShoulderMissingFrame();
 
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(leftX: 0.40, rightX: 0.60, shoulderY: 0.50),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.50, y: 0.40, handedness: Handedness.right),
-          ],
-        ),
-      );
+      final output = TrackingStateNormalisationService().process(input);
 
-      final left = output.pose.pointAt(11)!.normalisedCoordinates!;
-      final right = output.pose.pointAt(12)!.normalisedCoordinates!;
-      final wrist = output.hands.single.pointAt(0)!.normalisedCoordinates!;
-      expect(left.x, closeTo(-0.5, 1e-9));
-      expect(right.x, closeTo(0.5, 1e-9));
-      expect((left.x + right.x) / 2, closeTo(0, 1e-9));
-      expect(wrist.y, lessThan(0));
+      expect(output.trackingState?.canNormalise, isFalse);
+      expect(output.normalisation?.canNormalise, isFalse);
+      expect(output.normalisation?.origin, isNull);
+      expect(output.normalisation?.scale, isNull);
+      for (final hand in output.normalisation!.hands) {
+        for (final point in hand.landmarks) {
+          expect(point.normalisedCoordinates, isNull);
+          expect(point.velocity, isNull);
+          expect(point.acceleration, isNull);
+        }
+      }
     });
 
-    test('gates low-confidence points and preserves explicit absence', () {
-      final service = LandmarkNormalisationService();
-      final points = <LandmarkPoint?>[
-        _point(0, 0.50, 0.40, confidence: 0.2),
-        null,
-      ];
-
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            HandLandmarkGroup(isPresent: true, landmarks: points),
-          ],
-        ),
-      );
-
-      final gated = output.hands.single.landmarks[0]!;
-      expect(gated.imageCoordinates, isNotNull);
-      expect(gated.confidence, 0.2);
-      expect(gated.normalisedCoordinates, isNull);
-      expect(gated.velocity, isNull);
-      expect(output.hands.single.landmarks[1], isNull);
-    });
-
-    test('does not normalise stale points from absent groups', () {
-      final service = LandmarkNormalisationService();
-      final stalePose = _pose();
-      final staleHand = _hand(x: 0.50, y: 0.40, handedness: Handedness.right);
-
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: LandmarkGroup(isPresent: false, landmarks: stalePose.landmarks),
-          hands: <HandLandmarkGroup>[staleHand.copyWith(isPresent: false)],
-        ),
-      );
-
-      expect(output.canNormalise, isFalse);
-      expect(output.pose.pointAt(11)!.normalisedCoordinates, isNull);
-      expect(output.hands.single.pointAt(0)!.normalisedCoordinates, isNull);
-    });
-
-    test('computes velocity and acceleration from capture timestamps', () {
-      final service = LandmarkNormalisationService(
-        config: const TrackingStateNormalisationConfig(
-          smoothingCutoffHz: 1000000000,
-          normalisationAnchorTimeConstant: Duration.zero,
-        ),
-      );
-
-      final first = service.process(_motionFrame(1, 0, 0.50));
-      final second = service.process(_motionFrame(2, 100, 0.52));
-      final third = service.process(_motionFrame(3, 200, 0.56));
-
-      expect(first.hands.single.pointAt(0)!.velocity, isNull);
-      expect(second.hands.single.pointAt(0)!.acceleration, isNull);
-      expect(second.hands.single.pointAt(0)!.velocity!.x, closeTo(1, 1e-5));
-      expect(third.hands.single.pointAt(0)!.velocity!.x, closeTo(2, 1e-5));
-      expect(third.hands.single.pointAt(0)!.acceleration!.x, closeTo(10, 1e-4));
-    });
-
-    test('resets temporal history after a missing point', () {
-      final service = LandmarkNormalisationService();
-      service.process(_motionFrame(1, 0, 0.50));
-      service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 33,
-          pose: _pose(),
-          hands: const <HandLandmarkGroup>[HandLandmarkGroup(isPresent: false)],
-        ),
-      );
-
-      final returned = service.process(_motionFrame(3, 66, 0.55));
-
-      expect(returned.hands.single.pointAt(0)!.velocity, isNull);
-      expect(returned.hands.single.pointAt(0)!.acceleration, isNull);
-    });
-
-    test('resets derivatives after a long timestamp gap', () {
-      final service = LandmarkNormalisationService();
-      service.process(_motionFrame(1, 0, 0.50));
-
-      final returned = service.process(_motionFrame(2, 300, 0.55));
-
-      expect(
-        returned.hands.single.pointAt(0)!.normalisedCoordinates,
-        isNotNull,
-      );
-      expect(returned.hands.single.pointAt(0)!.velocity, isNull);
-      expect(returned.hands.single.pointAt(0)!.acceleration, isNull);
-    });
-
-    test('briefly reuses but eventually expires a shoulder anchor', () {
-      final service = LandmarkNormalisationService();
-      service.process(_motionFrame(1, 0, 0.50));
-
-      final stale = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 100,
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.52, y: 0.40, handedness: Handedness.right),
-          ],
-        ),
-      );
-      expect(stale.canNormalise, isTrue);
-      expect(stale.normalisationAnchorIsStale, isTrue);
-      expect(
-        stale.trackingIssues,
-        contains(TrackingIssue.staleNormalisationAnchor),
-      );
-
-      LandmarkFrame expired = stale;
-      for (var step = 2; step <= 6; step += 1) {
-        expired = service.process(
-          _frame(
-            frameIndex: step + 1,
-            milliseconds: step * 100,
-            hands: <HandLandmarkGroup>[
-              _hand(x: 0.52, y: 0.40, handedness: Handedness.right),
-            ],
-          ),
+    test(
+      'pose wrist substitution is derived and raw hand point stays absent',
+      () {
+        final missingWristHand = LandmarkFrameFixtures.realisticHand(
+          handedness: Handedness.left,
+          missingIndices: const <int>{0},
         );
-      }
-      expect(expired.canNormalise, isFalse);
-      expect(expired.hands.single.pointAt(0)!.normalisedCoordinates, isNull);
+        final input = LandmarkFrameFixtures.haroldFrame(
+          hands: <TrackedHand>[missingWristHand],
+        );
+        final rawJson = input.toJson();
+
+        final output = TrackingStateNormalisationService().process(input);
+        final handState = output.trackingState!.hands.single;
+        final normalisedWrist = output.normalisation!.hands.single.landmarks[0];
+
+        expect(
+          handState.poseWristSubstituteCoordinates?.x,
+          closeTo(0.3, 1e-12),
+        );
+        expect(
+          handState.poseWristSubstituteCoordinates?.y,
+          closeTo(0.58, 1e-12),
+        );
+        expect(handState.poseWristSubstituteVisibility, closeTo(0.98, 1e-12));
+        expect(normalisedWrist.source, LandmarkSource.poseWristSubstitution);
+        expect(normalisedWrist.normalisedCoordinates?.x, closeTo(-1, 1e-12));
+        expect(normalisedWrist.normalisedCoordinates?.y, closeTo(1.15, 1e-12));
+
+        expect(output.hands.single.landmarks.first.x, 0);
+        expect(output.hands.single.landmarks.first.y, 0);
+        expect(output.hands.single.landmarks.first.z, 0);
+        expect(output.hands.single.landmarks.first.visibility, 0);
+        expect(output.toJson(), equals(rawJson));
+      },
+    );
+
+    test('incomplete world triple prevents canonical world calculation', () {
+      final complete = LandmarkFrameFixtures.realisticHand(
+        handedness: Handedness.right,
+      );
+      final points = List<HandLandmark>.of(complete.landmarks);
+      final point = points[5];
+      points[5] = HandLandmark(
+        x: point.x,
+        y: point.y,
+        z: point.z,
+        worldX: point.worldX,
+        worldY: point.worldY,
+        visibility: point.visibility,
+      );
+      final hand = TrackedHand(
+        handedness: complete.handedness,
+        confidence: complete.confidence,
+        landmarks: points,
+        boundingBox: complete.boundingBox,
+        fingerStatus: complete.fingerStatus,
+      );
+      final input = LandmarkFrameFixtures.haroldFrame(
+        hands: <TrackedHand>[hand],
+      );
+
+      final output = TrackingStateNormalisationService().process(input);
+
+      expect(
+        output.normalisation!.hands.single.landmarks.map(
+          (point) => point.canonicalWorldCoordinates,
+        ),
+        everyElement(isNull),
+      );
+      final rawPoint =
+          (output.toJson()['hands'] as List<dynamic>).single['landmarks'][5]
+              as Map<String, dynamic>;
+      expect(rawPoint.containsKey('world_x'), isTrue);
+      expect(rawPoint.containsKey('world_y'), isTrue);
+      expect(rawPoint.containsKey('world_z'), isFalse);
     });
 
-    test('does not smooth face coordinates', () {
-      final service = LandmarkNormalisationService(
+    test('reset clears temporal derivative history', () {
+      final service = TrackingStateNormalisationService(
         config: const TrackingStateNormalisationConfig(
-          smoothingCutoffHz: 0.1,
           normalisationAnchorTimeConstant: Duration.zero,
         ),
       );
-      service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          face: _face(x: 0.50),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.50, y: 0.40, handedness: Handedness.right),
-          ],
+      final first = LandmarkFrameFixtures.fullyTrackedFrame();
+      final second = LandmarkFrameFixtures.haroldFrame(
+        timestamp: LandmarkFrameFixtures.atFrame(1),
+        hands: <TrackedHand>[
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.left,
+            wristX: 0.31,
+          ),
+          LandmarkFrameFixtures.realisticHand(handedness: Handedness.right),
+        ],
+      );
+
+      service.process(first);
+      final moving = service.process(second);
+      expect(moving.normalisation!.hands[0].landmarks[0].velocity, isNotNull);
+
+      service.reset();
+      final afterReset = service.process(
+        LandmarkFrameFixtures.copyFrame(
+          second,
+          timestamp: LandmarkFrameFixtures.atFrame(2),
         ),
       );
-
-      final output = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 100,
-          pose: _pose(),
-          face: _face(x: 0.54),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.54, y: 0.40, handedness: Handedness.right),
-          ],
-        ),
-      );
-
+      expect(afterReset.normalisation!.hands[0].landmarks[0].velocity, isNull);
       expect(
-        output.face.pointAt(0)!.normalisedCoordinates!.x,
-        closeTo(0.2, 1e-9),
+        afterReset.normalisation!.hands[0].landmarks[0].acceleration,
+        isNull,
       );
-      expect(
-        output.hands.single.pointAt(0)!.normalisedCoordinates!.x,
-        lessThan(0.2),
-      );
-    });
-
-    test('canonical hand world coordinates are rotation invariant', () {
-      final original = LandmarkNormalisationService().process(
-        _worldHandFrame(<int, LandmarkCoordinates>{
-          0: const LandmarkCoordinates(x: 0, y: 0, z: 0),
-          5: const LandmarkCoordinates(x: 1, y: 1, z: 0),
-          8: const LandmarkCoordinates(x: 1, y: 2, z: 0),
-          17: const LandmarkCoordinates(x: -1, y: 1, z: 0),
-        }),
-      );
-      final rotated = LandmarkNormalisationService().process(
-        _worldHandFrame(<int, LandmarkCoordinates>{
-          0: const LandmarkCoordinates(x: 0, y: 0, z: 0),
-          5: const LandmarkCoordinates(x: -1, y: 1, z: 0),
-          8: const LandmarkCoordinates(x: -2, y: 1, z: 0),
-          17: const LandmarkCoordinates(x: -1, y: -1, z: 0),
-        }),
-      );
-
-      for (final index in <int>[0, 5, 8, 17]) {
-        final first = original.hands.single
-            .pointAt(index)!
-            .canonicalWorldCoordinates!;
-        final second = rotated.hands.single
-            .pointAt(index)!
-            .canonicalWorldCoordinates!;
-        expect(second.x, closeTo(first.x, 1e-9));
-        expect(second.y, closeTo(first.y, 1e-9));
-        expect(second.z, closeTo(first.z!, 1e-9));
-      }
     });
   });
 }
-
-final _epoch = DateTime.utc(2026, 9, 6);
-
-LandmarkFrame _motionFrame(int frameIndex, int milliseconds, double handX) =>
-    _frame(
-      frameIndex: frameIndex,
-      milliseconds: milliseconds,
-      pose: _pose(),
-      hands: <HandLandmarkGroup>[
-        _hand(x: handX, y: 0.40, handedness: Handedness.right),
-      ],
-    );
-
-LandmarkFrame _worldHandFrame(Map<int, LandmarkCoordinates> worldPoints) {
-  final points = List<LandmarkPoint?>.filled(18, null);
-  for (final entry in worldPoints.entries) {
-    points[entry.key] = _point(
-      entry.key,
-      0.50 + entry.key * 0.001,
-      0.40,
-      world: entry.value,
-    );
-  }
-  return _frame(
-    frameIndex: 1,
-    pose: _pose(),
-    hands: <HandLandmarkGroup>[
-      HandLandmarkGroup(isPresent: true, landmarks: points),
-    ],
-  );
-}
-
-LandmarkFrame _frame({
-  required int frameIndex,
-  int milliseconds = 0,
-  LandmarkGroup pose = const LandmarkGroup.absent(),
-  LandmarkGroup face = const LandmarkGroup.absent(),
-  List<HandLandmarkGroup> hands = const <HandLandmarkGroup>[],
-}) => LandmarkFrame(
-  timestamp: _epoch.add(Duration(milliseconds: milliseconds)),
-  frameIndex: frameIndex,
-  subjectId: 'subject-a',
-  pose: pose,
-  face: face,
-  hands: hands,
-);
-
-LandmarkGroup _pose({
-  double leftX = 0.40,
-  double rightX = 0.60,
-  double shoulderY = 0.50,
-}) {
-  final points = List<LandmarkPoint?>.filled(17, null);
-  points[11] = _point(11, leftX, shoulderY);
-  points[12] = _point(12, rightX, shoulderY);
-  return LandmarkGroup(isPresent: true, landmarks: points);
-}
-
-LandmarkGroup _face({required double x}) => LandmarkGroup(
-  isPresent: true,
-  landmarks: <LandmarkPoint?>[_point(0, x, 0.30)],
-);
-
-HandLandmarkGroup _hand({
-  required double x,
-  required double y,
-  required Handedness handedness,
-}) => HandLandmarkGroup(
-  isPresent: true,
-  trackId: 'test-hand',
-  rawHandedness: handedness,
-  handedness: handedness,
-  handednessScore: 0.9,
-  landmarks: <LandmarkPoint?>[_point(0, x, y)],
-);
-
-LandmarkPoint _point(
-  int index,
-  double x,
-  double y, {
-  double confidence = 1,
-  LandmarkCoordinates? world,
-}) => LandmarkPoint(
-  index: index,
-  confidence: confidence,
-  imageCoordinates: LandmarkCoordinates(x: x, y: y),
-  worldCoordinates: world,
-);

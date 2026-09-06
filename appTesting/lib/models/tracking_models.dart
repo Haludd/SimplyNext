@@ -1,8 +1,212 @@
 import 'dart:math' as math;
 
-import 'landmark_frame.dart';
+import 'hand_coordinate_analysis.dart';
+import 'hand_tracking_models.dart';
+import 'face_tracking_models.dart';
+import 'state_normalisation_models.dart';
 
-export 'landmark_frame.dart';
+class NormalizedPoint {
+  const NormalizedPoint({
+    required this.x,
+    required this.y,
+    this.z = 0,
+    this.visibility = 1,
+  });
+
+  final double x;
+  final double y;
+  final double z;
+  final double visibility;
+
+  bool get isVisible => visibility >= 0.5;
+}
+
+class LandmarkFrame {
+  const LandmarkFrame({
+    required this.timestamp,
+    this.leftShoulder,
+    this.rightShoulder,
+    this.leftWrist,
+    this.rightWrist,
+    this.leftHandVisible = false,
+    this.rightHandVisible = false,
+    this.lightingScore = 0.9,
+    this.trackingConfidence = 0.98,
+    this.featureVector = const <double>[],
+    this.hands = const <TrackedHand>[],
+    this.handCoordinateAnalysis = const <HandCoordinateAnalysis>[],
+    this.faceExpression,
+    this.poseLandmarks = const <PoseLandmark>[],
+    this.faceUpperLandmarks = const <FaceLandmark>[],
+    this.faceMouthLandmarks = const <FaceLandmark>[],
+    this.subjectTracking,
+    this.trackingState,
+    this.normalisation,
+  });
+
+  static const Object _notProvided = Object();
+
+  final DateTime timestamp;
+  final NormalizedPoint? leftShoulder;
+  final NormalizedPoint? rightShoulder;
+  final NormalizedPoint? leftWrist;
+  final NormalizedPoint? rightWrist;
+  final bool leftHandVisible;
+  final bool rightHandVisible;
+  final double lightingScore;
+  final double trackingConfidence;
+  final List<double> featureVector;
+  final List<TrackedHand> hands;
+  final List<HandCoordinateAnalysis> handCoordinateAnalysis;
+  final FaceExpressionFeatures? faceExpression;
+  final List<PoseLandmark> poseLandmarks;
+  final List<FaceLandmark> faceUpperLandmarks;
+  final List<FaceLandmark> faceMouthLandmarks;
+  final SubjectTracking? subjectTracking;
+
+  /// Runtime-only Stage 3 result. It is deliberately excluded from [toJson]
+  /// so Harold's serialized Stage 1/2 contract remains unchanged.
+  final TrackingStateResult? trackingState;
+
+  /// Runtime-only Stage 4 result. It is deliberately excluded from [toJson]
+  /// so Harold's serialized Stage 1/2 contract remains unchanged.
+  final NormalisationResult? normalisation;
+
+  bool get shouldersVisible =>
+      leftShoulder?.isVisible == true && rightShoulder?.isVisible == true;
+  bool get armsVisible =>
+      leftWrist?.isVisible == true && rightWrist?.isVisible == true;
+  bool get handsVisible =>
+      hands.isNotEmpty || (leftHandVisible && rightHandVisible);
+
+  /// Returns a frame with selected values replaced while preserving every
+  /// Stage 1/2 field by default. Passing null explicitly clears nullable data.
+  LandmarkFrame copyWith({
+    DateTime? timestamp,
+    Object? leftShoulder = _notProvided,
+    Object? rightShoulder = _notProvided,
+    Object? leftWrist = _notProvided,
+    Object? rightWrist = _notProvided,
+    bool? leftHandVisible,
+    bool? rightHandVisible,
+    double? lightingScore,
+    double? trackingConfidence,
+    List<double>? featureVector,
+    List<TrackedHand>? hands,
+    List<HandCoordinateAnalysis>? handCoordinateAnalysis,
+    Object? faceExpression = _notProvided,
+    List<PoseLandmark>? poseLandmarks,
+    List<FaceLandmark>? faceUpperLandmarks,
+    List<FaceLandmark>? faceMouthLandmarks,
+    Object? subjectTracking = _notProvided,
+    Object? trackingState = _notProvided,
+    Object? normalisation = _notProvided,
+  }) => LandmarkFrame(
+    timestamp: timestamp ?? this.timestamp,
+    leftShoulder: identical(leftShoulder, _notProvided)
+        ? this.leftShoulder
+        : leftShoulder as NormalizedPoint?,
+    rightShoulder: identical(rightShoulder, _notProvided)
+        ? this.rightShoulder
+        : rightShoulder as NormalizedPoint?,
+    leftWrist: identical(leftWrist, _notProvided)
+        ? this.leftWrist
+        : leftWrist as NormalizedPoint?,
+    rightWrist: identical(rightWrist, _notProvided)
+        ? this.rightWrist
+        : rightWrist as NormalizedPoint?,
+    leftHandVisible: leftHandVisible ?? this.leftHandVisible,
+    rightHandVisible: rightHandVisible ?? this.rightHandVisible,
+    lightingScore: lightingScore ?? this.lightingScore,
+    trackingConfidence: trackingConfidence ?? this.trackingConfidence,
+    featureVector: featureVector ?? this.featureVector,
+    hands: hands ?? this.hands,
+    handCoordinateAnalysis:
+        handCoordinateAnalysis ?? this.handCoordinateAnalysis,
+    faceExpression: identical(faceExpression, _notProvided)
+        ? this.faceExpression
+        : faceExpression as FaceExpressionFeatures?,
+    poseLandmarks: poseLandmarks ?? this.poseLandmarks,
+    faceUpperLandmarks: faceUpperLandmarks ?? this.faceUpperLandmarks,
+    faceMouthLandmarks: faceMouthLandmarks ?? this.faceMouthLandmarks,
+    subjectTracking: identical(subjectTracking, _notProvided)
+        ? this.subjectTracking
+        : subjectTracking as SubjectTracking?,
+    trackingState: identical(trackingState, _notProvided)
+        ? this.trackingState
+        : trackingState as TrackingStateResult?,
+    normalisation: identical(normalisation, _notProvided)
+        ? this.normalisation
+        : normalisation as NormalisationResult?,
+  );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'timestamp': timestamp.toUtc().toIso8601String(),
+    'tracking_confidence': trackingConfidence,
+    'left_shoulder': leftShoulder?.toJson(),
+    'right_shoulder': rightShoulder?.toJson(),
+    'hands': hands.map((hand) => hand.toJson()).toList(),
+    'hand_coordinate_analysis': handCoordinateAnalysis
+        .map((analysis) => analysis.toJson())
+        .toList(),
+    'face_expression': faceExpression?.toJson(),
+    'subject_tracking': subjectTracking?.toJson(),
+    'landmark_worlds': <String, dynamic>{
+      'left_hand': _handWorld(Handedness.left),
+      'right_hand': _handWorld(Handedness.right),
+      'pose': <String, dynamic>{
+        'landmarks': poseLandmarks
+            .map((landmark) => landmark.toJson())
+            .toList(),
+      },
+      'face': <String, dynamic>{
+        'upper': faceUpperLandmarks
+            .map((landmark) => landmark.toJson())
+            .toList(),
+        'mouth': faceMouthLandmarks
+            .map((landmark) => landmark.toJson())
+            .toList(),
+        'emotion': faceExpression?.toJson(),
+      },
+    },
+  };
+
+  Map<String, dynamic> _handWorld(Handedness side) {
+    TrackedHand? hand;
+    for (final candidate in hands) {
+      if (candidate.handedness == side) {
+        hand = candidate;
+        break;
+      }
+    }
+    return <String, dynamic>{
+      'handedness': handednessToString(side),
+      'confidence': hand?.confidence ?? 0,
+      'finger_status': fingerStatusesToJson(hand?.fingerStatus ?? const {}),
+      'landmarks':
+          hand?.landmarks
+              .asMap()
+              .entries
+              .map(
+                (entry) => <String, dynamic>{
+                  'index': entry.key,
+                  ...entry.value.toJson(),
+                },
+              )
+              .toList() ??
+          <dynamic>[],
+    };
+  }
+}
+
+extension on NormalizedPoint {
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'x': x,
+    'y': y,
+    'z': z,
+    'visibility': visibility,
+  };
+}
 
 class AlignmentConfig {
   const AlignmentConfig({
@@ -164,11 +368,19 @@ class CustomSign {
     required this.label,
     required this.samples,
     required this.createdAt,
+    this.language = 'ASL',
+    this.vectorSize = 0,
+    this.coordinateSpace = 'normalized_3d',
+    this.faceSignal = 'not captured',
   });
 
   final String label;
   final List<List<double>> samples;
   final DateTime createdAt;
+  final String language;
+  final int vectorSize;
+  final String coordinateSpace;
+  final String faceSignal;
 
   bool get hasEnoughSamples => samples.length >= 5;
 
@@ -176,6 +388,10 @@ class CustomSign {
     'label': label,
     'samples': samples,
     'createdAt': createdAt.toIso8601String(),
+    'language': language,
+    'vector_size': vectorSize,
+    'coordinate_space': coordinateSpace,
+    'face_signal': faceSignal,
   };
 
   factory CustomSign.fromJson(Map<String, dynamic> json) => CustomSign(
@@ -188,5 +404,9 @@ class CustomSign {
         )
         .toList(),
     createdAt: DateTime.parse(json['createdAt'] as String),
+    language: json['language'] as String? ?? 'ASL',
+    vectorSize: (json['vector_size'] as num?)?.toInt() ?? 0,
+    coordinateSpace: json['coordinate_space'] as String? ?? 'normalized_3d',
+    faceSignal: json['face_signal'] as String? ?? 'not captured',
   );
 }

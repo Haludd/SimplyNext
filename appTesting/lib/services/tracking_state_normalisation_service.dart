@@ -5,15 +5,15 @@ library;
 
 import 'dart:math' as math;
 
-import '../models/landmark_frame.dart';
+import '../models/face_tracking_models.dart';
+import '../models/hand_tracking_models.dart';
+import '../models/state_normalisation_models.dart';
+import '../models/tracking_models.dart';
 
 /// Tunable choices for the 30 FPS state and normalisation stages.
 ///
-/// The PLN specifies the behaviour but not these numeric policies. Defaults
-/// are deliberately explicit: confidence is gated at 0.5, histories reset
-/// after 250 ms, a body anchor may bridge at most 500 ms of missing shoulders,
-/// and hand/body coordinates use a causal 6 Hz low-pass filter. Face points
-/// are never smoothed.
+/// Stage 1/2 owns the raw schema. These values only control derived Stage 3/4
+/// results and never alter Harold's raw confidence or coordinate fields.
 class TrackingStateNormalisationConfig {
   const TrackingStateNormalisationConfig({
     this.confidenceThreshold = 0.5,
@@ -47,8 +47,6 @@ class TrackingStateNormalisationConfig {
   final double handednessMismatchPenalty;
   final double maximumHandMatchDistance;
   final int trackExpiryFrames;
-
-  /// Upper-body points used only to assess completeness, not to curate data.
   final List<int> poseQualityIndices;
   final int expectedHandLandmarkCount;
   final Duration maximumTemporalGap;
@@ -58,12 +56,11 @@ class TrackingStateNormalisationConfig {
   final double smoothingCutoffHz;
 }
 
-/// Adds stable hand identity, lifetime handedness, and frame tracking health.
+/// Derives current tracking health and stable per-hand state from Harold's
+/// canonical Stage 1/2 [LandmarkFrame].
 ///
-/// This class consumes MediaPipe results through [LandmarkFrame]; it neither
-/// invokes nor configures MediaPipe. In particular, the PLN detector
-/// rate-limiter needs an upstream hook owned by `frontend_track` and is not
-/// faked here.
+/// Raw hands, points, confidence values, and coordinates are never replaced.
+/// The result is attached to [LandmarkFrame.trackingState].
 class TrackingStateService {
   TrackingStateService({
     this.config = const TrackingStateNormalisationConfig(),
@@ -73,84 +70,96 @@ class TrackingStateService {
   final Map<String, _HandTrack> _tracks = <String, _HandTrack>{};
 
   DateTime? _lastTimestamp;
-  String? _subjectId;
+  bool? _lastSubjectLocked;
   var _hasProcessedFrame = false;
   var _sequence = 0;
   var _nextTrackId = 1;
+  var _trackingEpoch = 0;
 
   LandmarkFrame process(LandmarkFrame input) {
     _prepareFor(input);
 
-    final identityTrackedHands = _assignTracks(input.hands);
-    final wristCorrectedHands = identityTrackedHands
-        .map((hand) => _substituteMeasuredPoseWrist(hand, input.pose))
-        .toList(growable: false);
-
-    final hasShoulders = _hasUsableShoulderPair(input.pose);
-    final hasHand = wristCorrectedHands.any(
-      (hand) => hand.isPresent && _hasUsablePoint(hand.landmarks),
+    var handStates = _assignTracks(input.hands);
+    handStates = _addMeasuredPoseWristSubstitutes(
+      input.hands,
+      handStates,
+      input.poseLandmarks,
     );
-    final hasAnyLandmark =
-        (input.pose.isPresent && _hasUsablePoint(input.pose.landmarks)) ||
-        (input.face.isPresent && _hasUsablePoint(input.face.landmarks)) ||
-        hasHand;
-    final handQuality = _handTrackingQuality(wristCorrectedHands);
-    final quality = _trackingQuality(input.pose, handQuality);
-    final hasUncertainHandedness = wristCorrectedHands
-        .where((hand) => hand.isPresent)
-        .any((hand) => hand.handednessUncertain);
+
+    final hasShoulders = _hasUsableShoulderPair(
+      input.leftShoulder,
+      input.rightShoulder,
+    );
+    final hasHand = input.hands.any(_handHasUsablePoint);
+    final hasPose = input.poseLandmarks.any(_isUsablePose);
+    final hasFace =
+        input.faceUpperLandmarks.any(_isUsableFace) ||
+        input.faceMouthLandmarks.any(_isUsableFace);
+    final hasAnyLandmark = hasHand || hasPose || hasFace;
+    final handQuality = _handTrackingQuality(input.hands);
+    final assessedQuality = _trackingQuality(input.poseLandmarks, handQuality);
+    final hasUncertainHandedness = handStates.any(
+      (state) => state.handednessUncertain,
+    );
 
     final issues = <TrackingIssue>{};
     if (!hasAnyLandmark) issues.add(TrackingIssue.noLandmarks);
     if (!hasHand) issues.add(TrackingIssue.noHands);
     if (!hasShoulders) issues.add(TrackingIssue.missingShoulders);
-    if (_hasLowConfidencePoint(input, wristCorrectedHands)) {
+    if (_hasLowConfidenceOrInvalidPoint(input)) {
       issues.add(TrackingIssue.lowConfidence);
     }
     if (hasUncertainHandedness) {
       issues.add(TrackingIssue.handednessUncertain);
     }
 
-    final status = !hasAnyLandmark
+    final subject = input.subjectTracking;
+    final subjectIsLockedAndVisible =
+        subject?.locked == true && subject?.visible == true;
+    final lockedSubjectIsMissing =
+        subject?.locked == true && subject?.visible == false;
+    final status = !hasAnyLandmark || lockedSubjectIsMissing
         ? TrackingStatus.absent
-        : hasShoulders &&
+        : subjectIsLockedAndVisible &&
+              hasShoulders &&
               hasHand &&
               handQuality >= config.minimumTrackingQuality &&
-              quality >= config.minimumTrackingQuality
+              assessedQuality >= config.minimumTrackingQuality
         ? TrackingStatus.tracked
         : TrackingStatus.degraded;
 
     return input.copyWith(
-      hands: wristCorrectedHands,
-      trackingStatus: status,
-      trackingQuality: quality,
-      trackingIssues: issues.toList(growable: false),
-      canNormalise: hasShoulders,
+      trackingState: TrackingStateResult(
+        status: status,
+        assessedQuality: assessedQuality,
+        issues: issues.toList(growable: false),
+        canNormalise: hasShoulders,
+        trackingEpoch: _trackingEpoch,
+        hands: handStates,
+      ),
+      // A Stage 3 pass invalidates any derived Stage 4 result that may have
+      // been attached to this object by an earlier caller.
+      normalisation: null,
     );
   }
 
-  void reset() {
-    _tracks.clear();
-    _lastTimestamp = null;
-    _subjectId = null;
-    _hasProcessedFrame = false;
-    _sequence = 0;
-    _nextTrackId = 1;
-  }
+  void reset() => _startNewEpoch();
 
   void _prepareFor(LandmarkFrame input) {
     if (_hasProcessedFrame) {
       final elapsed = input.timestamp.difference(_lastTimestamp!);
-      final discontinuity =
-          input.subjectId != _subjectId ||
-          elapsed <= Duration.zero ||
-          elapsed > config.maximumTemporalGap;
-      if (discontinuity) reset();
+      final lostSubjectLock =
+          _lastSubjectLocked == true && input.subjectTracking?.locked == false;
+      if (elapsed <= Duration.zero ||
+          elapsed > config.maximumTemporalGap ||
+          lostSubjectLock) {
+        _startNewEpoch();
+      }
     }
 
     _hasProcessedFrame = true;
-    _subjectId = input.subjectId;
     _lastTimestamp = input.timestamp;
+    _lastSubjectLocked = input.subjectTracking?.locked;
     _sequence += 1;
     _tracks.removeWhere(
       (_, track) =>
@@ -158,64 +167,26 @@ class TrackingStateService {
     );
   }
 
-  HandLandmarkGroup _substituteMeasuredPoseWrist(
-    HandLandmarkGroup hand,
-    LandmarkGroup pose,
-  ) {
-    if (!hand.isPresent ||
-        !pose.isPresent ||
-        hand.handednessUncertain ||
-        _isUsable(hand.pointAt(0))) {
-      return hand;
-    }
-
-    final stableHandedness = hand.handedness != Handedness.unknown
-        ? hand.handedness
-        : _observedHandedness(hand);
-    final poseIndex = switch (stableHandedness) {
-      Handedness.left => 15,
-      Handedness.right => 16,
-      Handedness.unknown => null,
-    };
-    if (poseIndex == null) return hand;
-
-    final poseWrist = pose.pointAt(poseIndex);
-    if (!_isUsable(poseWrist)) return hand;
-
-    final replacement = LandmarkPoint(
-      index: 0,
-      confidence: poseWrist!.confidence,
-      imageCoordinates: poseWrist.imageCoordinates,
-      source: LandmarkSource.poseWristSubstitution,
-    );
-    final points = List<LandmarkPoint?>.from(hand.landmarks);
-    while (points.isEmpty) {
-      points.add(null);
-    }
-    points[0] = replacement;
-    return hand.copyWith(landmarks: points);
+  void _startNewEpoch() {
+    _tracks.clear();
+    _lastTimestamp = null;
+    _lastSubjectLocked = null;
+    _hasProcessedFrame = false;
+    _sequence = 0;
+    _nextTrackId = 1;
+    _trackingEpoch += 1;
   }
 
-  List<HandLandmarkGroup> _assignTracks(List<HandLandmarkGroup> hands) {
-    if (hands.isEmpty) return const <HandLandmarkGroup>[];
+  List<TrackedHandState> _assignTracks(List<TrackedHand> hands) {
+    if (hands.isEmpty) return const <TrackedHandState>[];
 
     final anchors = hands.map(_handAnchor).toList(growable: false);
     final assignments = List<_HandTrack?>.filled(hands.length, null);
     final usedTrackIds = <String>{};
 
-    for (var index = 0; index < hands.length; index += 1) {
-      if (!hands[index].isPresent) continue;
-      final requestedId = hands[index].trackId;
-      final existing = requestedId == null ? null : _tracks[requestedId];
-      if (existing != null && usedTrackIds.add(existing.id)) {
-        assignments[index] = existing;
-      }
-    }
-
     final spatialAssignments = _bestSpatialAssignments(
       hands,
       anchors,
-      assignments,
       usedTrackIds,
     );
     for (final assignment in spatialAssignments.entries) {
@@ -224,8 +195,8 @@ class TrackingStateService {
     }
 
     for (var index = 0; index < hands.length; index += 1) {
-      if (!hands[index].isPresent || assignments[index] != null) continue;
-      final observed = _observedHandedness(hands[index]);
+      if (assignments[index] != null) continue;
+      final observed = hands[index].handedness;
       if (observed == Handedness.unknown) continue;
       final labelMatches = _tracks.values
           .where(
@@ -240,69 +211,57 @@ class TrackingStateService {
       }
     }
 
-    final trackedHands = <HandLandmarkGroup>[];
+    final initialStates = <TrackedHandState>[];
     for (var index = 0; index < hands.length; index += 1) {
       final hand = hands[index];
-      if (!hand.isPresent) {
-        trackedHands.add(hand.copyWith(handednessUncertain: false));
-        continue;
-      }
-      final track = assignments[index] ?? _createTrack(hand);
-      usedTrackIds.add(track.id);
+      final track = assignments[index] ?? _createTrack();
       track.lastSeenSequence = _sequence;
       if (anchors[index] != null) track.lastAnchor = anchors[index];
-
-      final observed = _observedHandedness(hand);
-      _updateHandedness(track, observed, hand.handednessScore);
-      trackedHands.add(
-        hand.copyWith(
+      _updateHandedness(track, hand.handedness, hand.confidence);
+      initialStates.add(
+        TrackedHandState(
+          sourceHandIndex: index,
           trackId: track.id,
-          rawHandedness: observed,
-          handedness: track.settledHandedness,
-          handednessRunningAverage: track.runningRightProbability,
+          stableHandedness: track.settledHandedness,
+          rightHandednessRunningAverage: track.runningRightProbability,
           handednessObservationCount: track.handednessObservationCount,
-          handednessUncertain:
-              hand.handednessUncertain ||
-              track.settledHandedness == Handedness.unknown,
+          handednessUncertain: track.settledHandedness == Handedness.unknown,
         ),
       );
     }
 
-    final presentHands = trackedHands.where((hand) => hand.isPresent);
-    final rawCounts = _handednessCounts(
-      presentHands.map((hand) => hand.rawHandedness),
+    final rawCounts = _handednessCounts(hands.map((hand) => hand.handedness));
+    final stableCounts = _handednessCounts(
+      initialStates.map((state) => state.stableHandedness),
     );
-    final settledCounts = _handednessCounts(
-      presentHands.map((hand) => hand.handedness),
-    );
-    return trackedHands
-        .map(
-          (hand) => !hand.isPresent
-              ? hand
-              : hand.copyWith(
-                  handednessUncertain:
-                      hand.handednessUncertain ||
-                      (hand.rawHandedness != Handedness.unknown &&
-                          (rawCounts[hand.rawHandedness] ?? 0) > 1) ||
-                      (hand.handedness != Handedness.unknown &&
-                          (settledCounts[hand.handedness] ?? 0) > 1),
-                ),
-        )
+    return initialStates
+        .map((state) {
+          final raw = hands[state.sourceHandIndex].handedness;
+          final stable = state.stableHandedness;
+          return TrackedHandState(
+            sourceHandIndex: state.sourceHandIndex,
+            trackId: state.trackId,
+            stableHandedness: stable,
+            rightHandednessRunningAverage: state.rightHandednessRunningAverage,
+            handednessObservationCount: state.handednessObservationCount,
+            handednessUncertain:
+                state.handednessUncertain ||
+                (raw != Handedness.unknown && (rawCounts[raw] ?? 0) > 1) ||
+                (stable != Handedness.unknown &&
+                    (stableCounts[stable] ?? 0) > 1),
+          );
+        })
         .toList(growable: false);
   }
 
   Map<int, _HandTrack> _bestSpatialAssignments(
-    List<HandLandmarkGroup> hands,
+    List<TrackedHand> hands,
     List<LandmarkCoordinates?> anchors,
-    List<_HandTrack?> existingAssignments,
     Set<String> alreadyUsedTrackIds,
   ) {
     final handIndices = <int>[
       for (var index = 0; index < hands.length; index += 1)
-        if (hands[index].isPresent &&
-            existingAssignments[index] == null &&
-            anchors[index] != null)
-          index,
+        if (anchors[index] != null) index,
     ];
     final tracks = _tracks.values
         .where(
@@ -318,14 +277,13 @@ class TrackingStateService {
     var bestMatchCount = -1;
     var bestCost = double.infinity;
     var best = <int, _HandTrack>{};
-    late void Function(
+
+    void search(
       int offset,
       Map<int, _HandTrack> selected,
       Set<String> usedIds,
       double cost,
-    )
-    search;
-    search = (offset, selected, usedIds, cost) {
+    ) {
       if (offset == handIndices.length) {
         if (selected.length > bestMatchCount ||
             (selected.length == bestMatchCount && cost < bestCost)) {
@@ -353,19 +311,16 @@ class TrackingStateService {
         usedIds.remove(track.id);
         selected.remove(handIndex);
       }
-    };
+    }
+
     search(0, <int, _HandTrack>{}, <String>{}, 0);
     return best;
   }
 
-  double _handMatchCost(
-    HandLandmarkGroup hand,
-    _HandTrack track,
-    double distance,
-  ) {
-    final observed = _observedHandedness(hand);
+  double _handMatchCost(TrackedHand hand, _HandTrack track, double distance) {
+    final observed = hand.handedness;
     final isConfidentMismatch =
-        hand.handednessScore >= config.handednessDecisionThreshold &&
+        hand.confidence >= config.handednessDecisionThreshold &&
         observed != Handedness.unknown &&
         track.settledHandedness != Handedness.unknown &&
         observed != track.settledHandedness;
@@ -373,25 +328,11 @@ class TrackingStateService {
         (isConfidentMismatch ? config.handednessMismatchPenalty : 0);
   }
 
-  _HandTrack _createTrack(HandLandmarkGroup hand) {
-    final requestedId = hand.trackId?.trim();
-    final id =
-        requestedId != null &&
-            requestedId.isNotEmpty &&
-            !_tracks.containsKey(requestedId)
-        ? requestedId
-        : _nextGeneratedTrackId();
+  _HandTrack _createTrack() {
+    final id = 'hand-${_nextTrackId++}';
     final track = _HandTrack(id: id, lastSeenSequence: _sequence);
     _tracks[id] = track;
     return track;
-  }
-
-  String _nextGeneratedTrackId() {
-    String candidate;
-    do {
-      candidate = 'hand-${_nextTrackId++}';
-    } while (_tracks.containsKey(candidate));
-    return candidate;
   }
 
   void _updateHandedness(
@@ -424,10 +365,44 @@ class TrackingStateService {
     }
   }
 
-  Handedness _observedHandedness(HandLandmarkGroup hand) =>
-      hand.rawHandedness != Handedness.unknown
-      ? hand.rawHandedness
-      : hand.handedness;
+  List<TrackedHandState> _addMeasuredPoseWristSubstitutes(
+    List<TrackedHand> hands,
+    List<TrackedHandState> states,
+    List<PoseLandmark> pose,
+  ) => states
+      .map((state) {
+        final hand = hands[state.sourceHandIndex];
+        final wrist = hand.landmarks.isEmpty ? null : hand.landmarks.first;
+        if (_isUsableHand(wrist) || state.handednessUncertain) return state;
+
+        final side = state.stableHandedness != Handedness.unknown
+            ? state.stableHandedness
+            : hand.handedness;
+        final poseIndex = switch (side) {
+          Handedness.left => 15,
+          Handedness.right => 16,
+          Handedness.unknown => null,
+        };
+        if (poseIndex == null) return state;
+        final poseWrist = _poseAt(pose, poseIndex);
+        if (!_isUsablePose(poseWrist)) return state;
+
+        return TrackedHandState(
+          sourceHandIndex: state.sourceHandIndex,
+          trackId: state.trackId,
+          stableHandedness: state.stableHandedness,
+          rightHandednessRunningAverage: state.rightHandednessRunningAverage,
+          handednessObservationCount: state.handednessObservationCount,
+          handednessUncertain: state.handednessUncertain,
+          poseWristSubstituteCoordinates: LandmarkCoordinates(
+            x: poseWrist!.x,
+            y: poseWrist.y,
+            z: poseWrist.z,
+          ),
+          poseWristSubstituteVisibility: poseWrist.visibility,
+        );
+      })
+      .toList(growable: false);
 
   Map<Handedness, int> _handednessCounts(Iterable<Handedness> values) {
     final counts = <Handedness, int>{};
@@ -437,98 +412,109 @@ class TrackingStateService {
     return counts;
   }
 
-  LandmarkCoordinates? _handAnchor(HandLandmarkGroup hand) {
-    if (!hand.isPresent) return null;
-    final wrist = hand.pointAt(0);
-    if (_isUsable(wrist)) return wrist!.imageCoordinates;
+  LandmarkCoordinates? _handAnchor(TrackedHand hand) {
+    if (hand.landmarks.isEmpty) return null;
+    final wrist = hand.landmarks.first;
+    if (_isUsableHand(wrist)) {
+      return LandmarkCoordinates(x: wrist.x, y: wrist.y, z: wrist.z);
+    }
 
-    final usable = hand.landmarks.whereType<LandmarkPoint>().where(_isUsable);
     var count = 0;
     var x = 0.0;
     var y = 0.0;
-    for (final point in usable) {
-      x += point.imageCoordinates!.x;
-      y += point.imageCoordinates!.y;
+    for (final point in hand.landmarks) {
+      if (!_isUsableHand(point)) continue;
+      x += point.x;
+      y += point.y;
       count += 1;
     }
     return count == 0 ? null : LandmarkCoordinates(x: x / count, y: y / count);
   }
 
-  bool _hasUsableShoulderPair(LandmarkGroup pose) {
-    if (!pose.isPresent) return false;
-    final left = pose.pointAt(11);
-    final right = pose.pointAt(12);
-    if (!_isUsable(left) || !_isUsable(right)) return false;
-    return _distance2d(left!.imageCoordinates!, right!.imageCoordinates!) >=
+  bool _handHasUsablePoint(TrackedHand hand) =>
+      hand.landmarks.any(_isUsableHand);
+
+  bool _hasUsableShoulderPair(NormalizedPoint? left, NormalizedPoint? right) {
+    if (!_isUsableNormalized(left) || !_isUsableNormalized(right)) {
+      return false;
+    }
+    return _distance2d(
+          LandmarkCoordinates(x: left!.x, y: left.y),
+          LandmarkCoordinates(x: right!.x, y: right.y),
+        ) >=
         config.minimumShoulderWidth;
   }
 
-  bool _hasUsablePoint(List<LandmarkPoint?> points) => points.any(_isUsable);
+  bool _hasLowConfidenceOrInvalidPoint(LandmarkFrame frame) =>
+      frame.hands
+          .expand((hand) => hand.landmarks)
+          .any((point) => !_isUsableHand(point)) ||
+      frame.poseLandmarks.any((point) => !_isUsablePose(point)) ||
+      frame.faceUpperLandmarks.any((point) => !_isUsableFace(point)) ||
+      frame.faceMouthLandmarks.any((point) => !_isUsableFace(point));
 
-  bool _isUsable(LandmarkPoint? point) =>
-      point != null &&
-      point.confidence >= config.confidenceThreshold &&
-      point.imageCoordinates?.isFinite == true;
-
-  bool _hasLowConfidencePoint(
-    LandmarkFrame frame,
-    List<HandLandmarkGroup> hands,
-  ) =>
-      <LandmarkPoint?>[
-        if (frame.pose.isPresent) ...frame.pose.landmarks,
-        if (frame.face.isPresent) ...frame.face.landmarks,
-        for (final hand in hands)
-          if (hand.isPresent) ...hand.landmarks,
-      ].whereType<LandmarkPoint>().any(
-        (point) => point.confidence < config.confidenceThreshold,
-      );
-
-  double _trackingQuality(LandmarkGroup pose, double handQuality) {
-    final poseQuality = _indexedGroupQuality(
-      pose.isPresent,
-      pose.pointAt,
-      config.poseQualityIndices,
-    );
+  double _trackingQuality(List<PoseLandmark> pose, double handQuality) {
+    var poseQuality = 0.0;
+    for (final index in config.poseQualityIndices) {
+      final point = _poseAt(pose, index);
+      if (_isUsablePose(point)) poseQuality += _unit(point!.visibility);
+    }
+    poseQuality = config.poseQualityIndices.isEmpty
+        ? 0
+        : poseQuality / config.poseQualityIndices.length;
     return _unit((poseQuality + handQuality) / 2);
   }
 
-  double _handTrackingQuality(List<HandLandmarkGroup> hands) {
-    final presentHands = hands.where((hand) => hand.isPresent).toList();
-    final expectedIndices = List<int>.generate(
-      config.expectedHandLandmarkCount,
-      (index) => index,
-    );
-    return presentHands.isEmpty
-        ? 0.0
-        : presentHands
-                  .map(
-                    (hand) => _indexedGroupQuality(
-                      hand.isPresent,
-                      hand.pointAt,
-                      expectedIndices,
-                    ),
-                  )
-                  .reduce((left, right) => left + right) /
-              presentHands.length;
+  double _handTrackingQuality(List<TrackedHand> hands) {
+    if (hands.isEmpty) return 0;
+    var total = 0.0;
+    for (final hand in hands) {
+      var handTotal = 0.0;
+      for (
+        var index = 0;
+        index < config.expectedHandLandmarkCount;
+        index += 1
+      ) {
+        if (index >= hand.landmarks.length) continue;
+        final point = hand.landmarks[index];
+        if (_isUsableHand(point)) handTotal += _unit(point.visibility);
+      }
+      total += handTotal / config.expectedHandLandmarkCount;
+    }
+    return _unit(total / hands.length);
   }
 
-  double _indexedGroupQuality(
-    bool isPresent,
-    LandmarkPoint? Function(int) pointAt,
-    List<int> expectedIndices,
-  ) {
-    if (!isPresent || expectedIndices.isEmpty) return 0;
-    var qualityTotal = 0.0;
-    for (final index in expectedIndices) {
-      final point = pointAt(index);
-      if (_isUsable(point)) qualityTotal += _unit(point!.confidence);
-    }
-    return _unit(qualityTotal / expectedIndices.length);
-  }
+  bool _isUsableHand(HandLandmark? point) =>
+      point != null &&
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
+
+  bool _isUsablePose(PoseLandmark? point) =>
+      point != null &&
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
+
+  bool _isUsableFace(FaceLandmark? point) =>
+      point != null &&
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
+
+  bool _isUsableNormalized(NormalizedPoint? point) =>
+      point != null &&
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
 }
 
-/// Converts image coordinates to a stable shoulder-relative signing space and
-/// adds per-point velocity and acceleration.
+/// Creates body-relative coordinates and temporal derivatives without
+/// changing the canonical Stage 1/2 landmark fields.
 class LandmarkNormalisationService {
   LandmarkNormalisationService({
     this.config = const TrackingStateNormalisationConfig(),
@@ -540,13 +526,16 @@ class LandmarkNormalisationService {
 
   _BodyAnchor? _anchor;
   DateTime? _lastTimestamp;
-  String? _subjectId;
+  int? _trackingEpoch;
   var _hasProcessedFrame = false;
 
   LandmarkFrame process(LandmarkFrame input) {
     _prepareFor(input);
 
-    final measurement = _shoulderMeasurement(input.pose);
+    final measurement = _shoulderMeasurement(
+      input.leftShoulder,
+      input.rightShoulder,
+    );
     if (measurement != null) _updateAnchor(measurement, input.timestamp);
 
     var anchorIsStale = measurement == null && _anchor != null;
@@ -558,57 +547,61 @@ class LandmarkNormalisationService {
     }
 
     _seenHistoryKeys.clear();
-    final pose = LandmarkGroup(
-      isPresent: input.pose.isPresent,
-      landmarks: _normalisePoints(
-        input.pose.landmarks,
-        isPresent: input.pose.isPresent,
-        keyPrefix: 'pose',
-        timestamp: input.timestamp,
-        smooth: true,
-      ),
-    );
-    final face = LandmarkGroup(
-      isPresent: input.face.isPresent,
-      landmarks: _normalisePoints(
-        input.face.landmarks,
-        isPresent: input.face.isPresent,
-        keyPrefix: 'face',
-        timestamp: input.timestamp,
-        smooth: false,
-      ),
-    );
+    final pose = input.poseLandmarks
+        .map(
+          (point) => _normaliseObservation(
+            _Observation.fromPose(point),
+            key: 'pose:${point.index}',
+            timestamp: input.timestamp,
+            smooth: true,
+          ),
+        )
+        .toList(growable: false);
+    final faceUpper = input.faceUpperLandmarks
+        .map(
+          (point) => _normaliseObservation(
+            _Observation.fromFace(point),
+            key: 'face-upper:${point.index}',
+            timestamp: input.timestamp,
+            smooth: false,
+          ),
+        )
+        .toList(growable: false);
+    final faceMouth = input.faceMouthLandmarks
+        .map(
+          (point) => _normaliseObservation(
+            _Observation.fromFace(point),
+            key: 'face-mouth:${point.index}',
+            timestamp: input.timestamp,
+            smooth: false,
+          ),
+        )
+        .toList(growable: false);
     final hands = input.hands
         .asMap()
         .entries
-        .map((entry) => _normaliseHand(entry.value, entry.key, input.timestamp))
+        .map(
+          (entry) => _normaliseHand(
+            entry.value,
+            entry.key,
+            input.trackingState,
+            input.timestamp,
+          ),
+        )
         .toList(growable: false);
     _history.removeWhere((key, _) => !_seenHistoryKeys.contains(key));
 
-    final issues = input.trackingIssues.toSet();
-    if (anchorIsStale) {
-      issues.add(TrackingIssue.staleNormalisationAnchor);
-    } else {
-      issues.remove(TrackingIssue.staleNormalisationAnchor);
-    }
-    final canNormalise = _anchor != null;
-    final status =
-        input.trackingStatus == TrackingStatus.tracked && !canNormalise
-        ? TrackingStatus.degraded
-        : input.trackingStatus;
-
     return input.copyWith(
-      pose: pose,
-      face: face,
-      hands: hands,
-      coordinateSpace: LandmarkCoordinateSpace.bodyNormalised,
-      trackingStatus: status,
-      trackingIssues: issues.toList(growable: false),
-      canNormalise: canNormalise,
-      normalisationOrigin: _anchor?.centre,
-      normalisationScale: _anchor?.shoulderWidth,
-      clearNormalisation: !canNormalise,
-      normalisationAnchorIsStale: anchorIsStale,
+      normalisation: NormalisationResult(
+        canNormalise: _anchor != null,
+        origin: _anchor?.centre,
+        scale: _anchor?.shoulderWidth,
+        anchorIsStale: anchorIsStale,
+        poseLandmarks: pose,
+        faceUpperLandmarks: faceUpper,
+        faceMouthLandmarks: faceMouth,
+        hands: hands,
+      ),
     );
   }
 
@@ -617,37 +610,42 @@ class LandmarkNormalisationService {
     _seenHistoryKeys.clear();
     _anchor = null;
     _lastTimestamp = null;
-    _subjectId = null;
+    _trackingEpoch = null;
     _hasProcessedFrame = false;
   }
 
   void _prepareFor(LandmarkFrame input) {
+    final incomingEpoch = input.trackingState?.trackingEpoch;
     if (_hasProcessedFrame) {
       final elapsed = input.timestamp.difference(_lastTimestamp!);
-      final discontinuity =
-          input.subjectId != _subjectId ||
-          elapsed <= Duration.zero ||
-          elapsed > config.maximumTemporalGap;
-      if (discontinuity) reset();
+      final changedEpoch =
+          incomingEpoch != null &&
+          _trackingEpoch != null &&
+          incomingEpoch != _trackingEpoch;
+      if (elapsed <= Duration.zero ||
+          elapsed > config.maximumTemporalGap ||
+          changedEpoch) {
+        reset();
+      }
     }
     _hasProcessedFrame = true;
-    _subjectId = input.subjectId;
     _lastTimestamp = input.timestamp;
+    _trackingEpoch = incomingEpoch;
   }
 
-  _ShoulderMeasurement? _shoulderMeasurement(LandmarkGroup pose) {
-    if (!pose.isPresent) return null;
-    final left = pose.pointAt(11);
-    final right = pose.pointAt(12);
-    if (!_isUsable(left) || !_isUsable(right)) return null;
-    final leftCoordinates = left!.imageCoordinates!;
-    final rightCoordinates = right!.imageCoordinates!;
+  _ShoulderMeasurement? _shoulderMeasurement(
+    NormalizedPoint? left,
+    NormalizedPoint? right,
+  ) {
+    if (!_isUsableShoulder(left) || !_isUsableShoulder(right)) return null;
+    final leftCoordinates = LandmarkCoordinates(x: left!.x, y: left.y);
+    final rightCoordinates = LandmarkCoordinates(x: right!.x, y: right.y);
     final width = _distance2d(leftCoordinates, rightCoordinates);
     if (width < config.minimumShoulderWidth) return null;
     return _ShoulderMeasurement(
       centre: LandmarkCoordinates(
-        x: (leftCoordinates.x + rightCoordinates.x) / 2,
-        y: (leftCoordinates.y + rightCoordinates.y) / 2,
+        x: (left.x + right.x) / 2,
+        y: (left.y + right.y) / 2,
       ),
       shoulderWidth: width,
     );
@@ -682,76 +680,79 @@ class LandmarkNormalisationService {
     );
   }
 
-  HandLandmarkGroup _normaliseHand(
-    HandLandmarkGroup hand,
-    int listIndex,
+  NormalisedHand _normaliseHand(
+    TrackedHand hand,
+    int sourceHandIndex,
+    TrackingStateResult? trackingState,
     DateTime timestamp,
   ) {
-    final canonicalWorld = hand.isPresent
-        ? _canonicaliseHandWorldCoordinates(hand)
-        : const <int, LandmarkCoordinates>{};
-    final stableId = hand.trackId ?? 'untracked-$listIndex';
-    return hand.copyWith(
-      landmarks: _normalisePoints(
-        hand.landmarks,
-        isPresent: hand.isPresent,
-        keyPrefix: 'hand:$stableId',
-        timestamp: timestamp,
-        smooth: true,
-        canonicalWorld: canonicalWorld,
-      ),
-    );
-  }
+    final handState = _handStateAt(trackingState, sourceHandIndex);
+    final hasTrackedIdentity = handState != null;
+    final trackId =
+        handState?.trackId ??
+        'untracked:${hand.handedness.name}:$sourceHandIndex';
+    final canonicalWorld = _canonicaliseHandWorldCoordinates(hand);
+    final points = <NormalisedLandmark>[];
 
-  List<LandmarkPoint?> _normalisePoints(
-    List<LandmarkPoint?> points, {
-    required bool isPresent,
-    required String keyPrefix,
-    required DateTime timestamp,
-    required bool smooth,
-    Map<int, LandmarkCoordinates> canonicalWorld =
-        const <int, LandmarkCoordinates>{},
-  }) => points
-      .map(
-        (point) => point == null
-            ? null
-            : _normalisePoint(
-                point,
-                groupIsPresent: isPresent,
-                key: '$keyPrefix:${point.index}',
-                timestamp: timestamp,
-                smooth: smooth,
-                canonicalWorld: canonicalWorld[point.index],
-              ),
-      )
-      .toList(growable: false);
-
-  LandmarkPoint _normalisePoint(
-    LandmarkPoint point, {
-    required bool groupIsPresent,
-    required String key,
-    required DateTime timestamp,
-    required bool smooth,
-    LandmarkCoordinates? canonicalWorld,
-  }) {
-    final anchor = _anchor;
-    if (!groupIsPresent || anchor == null || !_isUsable(point)) {
-      _history.remove(key);
-      return _copyPoint(
-        point,
-        canonicalWorld:
-            groupIsPresent && point.confidence >= config.confidenceThreshold
-            ? canonicalWorld
-            : null,
+    for (final entry in hand.landmarks.asMap().entries) {
+      var observation = _Observation.fromHand(entry.key, entry.value);
+      if (entry.key == 0 &&
+          !_isUsableObservation(observation) &&
+          _isUsablePoseWristSubstitute(handState)) {
+        final substitute = handState!.poseWristSubstituteCoordinates!;
+        observation = _Observation(
+          index: 0,
+          x: substitute.x,
+          y: substitute.y,
+          z: substitute.z ?? 0,
+          visibility: handState.poseWristSubstituteVisibility!,
+          source: LandmarkSource.poseWristSubstitution,
+        );
+      }
+      points.add(
+        _normaliseObservation(
+          observation,
+          key: 'hand:$trackId:${entry.key}',
+          timestamp: timestamp,
+          smooth: true,
+          canonicalWorldCoordinates: canonicalWorld[entry.key],
+          temporalEnabled: hasTrackedIdentity,
+        ),
       );
     }
 
-    final image = point.imageCoordinates!;
-    final candidate = LandmarkCoordinates(
-      x: (image.x - anchor.centre.x) / anchor.shoulderWidth,
-      y: (image.y - anchor.centre.y) / anchor.shoulderWidth,
+    return NormalisedHand(
+      sourceHandIndex: sourceHandIndex,
+      trackId: trackId,
+      landmarks: points,
     );
-    final previous = _history[key];
+  }
+
+  NormalisedLandmark _normaliseObservation(
+    _Observation observation, {
+    required String key,
+    required DateTime timestamp,
+    required bool smooth,
+    LandmarkCoordinates? canonicalWorldCoordinates,
+    bool temporalEnabled = true,
+  }) {
+    final anchor = _anchor;
+    if (anchor == null || !_isUsableObservation(observation)) {
+      _history.remove(key);
+      return NormalisedLandmark(
+        index: observation.index,
+        canonicalWorldCoordinates: _isUsableObservation(observation)
+            ? canonicalWorldCoordinates
+            : null,
+        source: observation.source,
+      );
+    }
+
+    final candidate = LandmarkCoordinates(
+      x: (observation.x - anchor.centre.x) / anchor.shoulderWidth,
+      y: (observation.y - anchor.centre.y) / anchor.shoulderWidth,
+    );
+    final previous = temporalEnabled ? _history[key] : null;
     final elapsedSeconds = previous == null
         ? null
         : timestamp.difference(previous.timestamp).inMicroseconds /
@@ -775,38 +776,25 @@ class LandmarkNormalisationService {
       }
     }
 
-    _history[key] = _PointHistory(
-      position: position,
-      velocity: velocity,
-      timestamp: timestamp,
-    );
-    _seenHistoryKeys.add(key);
-    return _copyPoint(
-      point,
-      normalised: position,
+    if (temporalEnabled) {
+      _history[key] = _PointHistory(
+        position: position,
+        velocity: velocity,
+        timestamp: timestamp,
+      );
+      _seenHistoryKeys.add(key);
+    } else {
+      _history.remove(key);
+    }
+    return NormalisedLandmark(
+      index: observation.index,
+      normalisedCoordinates: position,
       velocity: velocity,
       acceleration: acceleration,
-      canonicalWorld: canonicalWorld,
+      canonicalWorldCoordinates: canonicalWorldCoordinates,
+      source: observation.source,
     );
   }
-
-  LandmarkPoint _copyPoint(
-    LandmarkPoint source, {
-    LandmarkCoordinates? normalised,
-    LandmarkCoordinates? velocity,
-    LandmarkCoordinates? acceleration,
-    LandmarkCoordinates? canonicalWorld,
-  }) => LandmarkPoint(
-    index: source.index,
-    confidence: source.confidence,
-    imageCoordinates: source.imageCoordinates,
-    normalisedCoordinates: normalised,
-    worldCoordinates: source.worldCoordinates,
-    canonicalWorldCoordinates: canonicalWorld,
-    velocity: velocity,
-    acceleration: acceleration,
-    source: source.source,
-  );
 
   LandmarkCoordinates _lowPass(
     LandmarkCoordinates previous,
@@ -819,11 +807,14 @@ class LandmarkNormalisationService {
   }
 
   Map<int, LandmarkCoordinates> _canonicaliseHandWorldCoordinates(
-    HandLandmarkGroup hand,
+    TrackedHand hand,
   ) {
-    final wrist = _usableWorldPoint(hand.pointAt(0));
-    final indexMcp = _usableWorldPoint(hand.pointAt(5));
-    final pinkyMcp = _usableWorldPoint(hand.pointAt(17));
+    if (hand.landmarks.length <= 17) {
+      return const <int, LandmarkCoordinates>{};
+    }
+    final wrist = _usableWorldPoint(hand.landmarks[0]);
+    final indexMcp = _usableWorldPoint(hand.landmarks[5]);
+    final pinkyMcp = _usableWorldPoint(hand.landmarks[17]);
     if (wrist == null || indexMcp == null || pinkyMcp == null) {
       return const <int, LandmarkCoordinates>{};
     }
@@ -840,11 +831,11 @@ class LandmarkNormalisationService {
     if (yAxis == null) return const <int, LandmarkCoordinates>{};
 
     final result = <int, LandmarkCoordinates>{};
-    for (final point in hand.landmarks.whereType<LandmarkPoint>()) {
-      final world = _usableWorldPoint(point);
+    for (final entry in hand.landmarks.asMap().entries) {
+      final world = _usableWorldPoint(entry.value);
       if (world == null) continue;
       final relative = _subtract3d(world, wrist);
-      result[point.index] = LandmarkCoordinates(
+      result[entry.key] = LandmarkCoordinates(
         x: _dot3d(relative, xAxis),
         y: _dot3d(relative, yAxis),
         z: _dot3d(relative, zAxis),
@@ -853,28 +844,55 @@ class LandmarkNormalisationService {
     return result;
   }
 
-  LandmarkCoordinates? _usableWorldPoint(LandmarkPoint? point) {
-    final world = point?.worldCoordinates;
-    return point != null &&
-            point.confidence >= config.confidenceThreshold &&
-            world != null &&
-            world.z != null &&
-            world.isFinite
-        ? world
-        : null;
+  LandmarkCoordinates? _usableWorldPoint(HandLandmark point) {
+    if (point.visibility < config.confidenceThreshold ||
+        point.worldX == null ||
+        point.worldY == null ||
+        point.worldZ == null ||
+        !point.worldX!.isFinite ||
+        !point.worldY!.isFinite ||
+        !point.worldZ!.isFinite) {
+      return null;
+    }
+    return LandmarkCoordinates(
+      x: point.worldX!,
+      y: point.worldY!,
+      z: point.worldZ!,
+    );
   }
 
-  bool _isUsable(LandmarkPoint? point) =>
+  TrackedHandState? _handStateAt(
+    TrackingStateResult? state,
+    int sourceHandIndex,
+  ) {
+    if (state == null) return null;
+    for (final hand in state.hands) {
+      if (hand.sourceHandIndex == sourceHandIndex) return hand;
+    }
+    return null;
+  }
+
+  bool _isUsablePoseWristSubstitute(TrackedHandState? state) =>
+      state?.poseWristSubstituteCoordinates?.isFinite == true &&
+      (state?.poseWristSubstituteVisibility ?? 0) >= config.confidenceThreshold;
+
+  bool _isUsableObservation(_Observation point) =>
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
+
+  bool _isUsableShoulder(NormalizedPoint? point) =>
       point != null &&
-      point.confidence >= config.confidenceThreshold &&
-      point.imageCoordinates?.isFinite == true;
+      point.visibility >= config.confidenceThreshold &&
+      point.x.isFinite &&
+      point.y.isFinite &&
+      point.z.isFinite;
 }
 
-/// Synchronous pipeline facade for Harold's output and Esther's future input.
-///
-/// It intentionally exposes no queueing stream adapter. The 30 FPS capture
-/// owner can call [process] only for its newest frame and drop older frames
-/// under load, as required by the PLN.
+/// Synchronous facade used between Harold's Stage 1/2 stream and the future
+/// segmentation stage. It performs no camera, MediaPipe, network, UI,
+/// segmentation, or classification work.
 class TrackingStateNormalisationService {
   TrackingStateNormalisationService({
     TrackingStateNormalisationConfig config =
@@ -909,6 +927,48 @@ class _HandTrack {
       : rightProbabilityTotal / handednessObservationCount;
 }
 
+class _Observation {
+  const _Observation({
+    required this.index,
+    required this.x,
+    required this.y,
+    required this.z,
+    required this.visibility,
+    this.source = LandmarkSource.mediaPipe,
+  });
+
+  factory _Observation.fromHand(int index, HandLandmark point) => _Observation(
+    index: index,
+    x: point.x,
+    y: point.y,
+    z: point.z,
+    visibility: point.visibility,
+  );
+
+  factory _Observation.fromPose(PoseLandmark point) => _Observation(
+    index: point.index,
+    x: point.x,
+    y: point.y,
+    z: point.z,
+    visibility: point.visibility,
+  );
+
+  factory _Observation.fromFace(FaceLandmark point) => _Observation(
+    index: point.index,
+    x: point.x,
+    y: point.y,
+    z: point.z,
+    visibility: point.visibility,
+  );
+
+  final int index;
+  final double x;
+  final double y;
+  final double z;
+  final double visibility;
+  final LandmarkSource source;
+}
+
 class _ShoulderMeasurement {
   const _ShoulderMeasurement({
     required this.centre,
@@ -941,6 +1001,13 @@ class _PointHistory {
   final LandmarkCoordinates position;
   final LandmarkCoordinates? velocity;
   final DateTime timestamp;
+}
+
+PoseLandmark? _poseAt(List<PoseLandmark> points, int index) {
+  for (final point in points) {
+    if (point.index == index) return point;
+  }
+  return null;
 }
 
 double _unit(double value) => value.clamp(0.0, 1.0).toDouble();

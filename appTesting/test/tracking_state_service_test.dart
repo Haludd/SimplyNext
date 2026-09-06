@@ -1,408 +1,453 @@
-import 'package:apptesting/models/landmark_frame.dart';
+import 'package:apptesting/models/face_tracking_models.dart';
+import 'package:apptesting/models/hand_tracking_models.dart';
+import 'package:apptesting/models/state_normalisation_models.dart';
+import 'package:apptesting/models/tracking_models.dart';
 import 'package:apptesting/services/tracking_state_normalisation_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'fixtures/landmark_frame_fixtures.dart';
+
 void main() {
-  group('TrackingStateService', () {
-    test('represents an entirely absent observation without throwing', () {
+  group('TrackingStateService temporal identity', () {
+    test('keeps track IDs when Harold changes the hand-list order', () {
       final service = TrackingStateService();
+      final firstInput = LandmarkFrameFixtures.fullyTrackedFrame();
+      final firstState = _trackingState(service.process(firstInput));
 
-      final output = service.process(_frame(frameIndex: 1));
+      final reorderedInput = LandmarkFrameFixtures.copyFrame(
+        firstInput,
+        timestamp: LandmarkFrameFixtures.atFrame(1),
+        hands: firstInput.hands.reversed.toList(growable: false),
+      );
+      final reordered = service.process(reorderedInput);
+      final reorderedState = _trackingState(reordered);
 
-      expect(output.trackingStatus, TrackingStatus.absent);
-      expect(output.trackingQuality, 0);
-      expect(output.hands, isEmpty);
-      expect(output.trackingIssues, contains(TrackingIssue.noLandmarks));
-      expect(output.trackingIssues, contains(TrackingIssue.noHands));
-      expect(output.trackingIssues, contains(TrackingIssue.missingShoulders));
+      expect(reordered.hands[0].handedness, Handedness.right);
+      expect(reordered.hands[1].handedness, Handedness.left);
+      expect(reorderedState.hands[0].trackId, firstState.hands[1].trackId);
+      expect(reorderedState.hands[1].trackId, firstState.hands[0].trackId);
+      expect(reorderedState.hands[0].sourceHandIndex, 0);
+      expect(reorderedState.hands[1].sourceHandIndex, 1);
+      expect(reorderedState.trackingEpoch, firstState.trackingEpoch);
     });
 
-    test('keeps identity when MediaPipe hand order changes', () {
+    test('uses handedness-aware global matching while hands cross', () {
       final service = TrackingStateService();
-      final first = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.30, handedness: Handedness.left),
-            _hand(x: 0.70, handedness: Handedness.right),
-          ],
-        ),
+      final firstInput = LandmarkFrameFixtures.haroldFrame(
+        hands: <TrackedHand>[
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.left,
+            wristX: 0.30,
+          ),
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.right,
+            wristX: 0.70,
+          ),
+        ],
       );
-      final second = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 33,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.69, handedness: Handedness.right),
-            _hand(x: 0.31, handedness: Handedness.left),
-          ],
-        ),
+      final firstState = _trackingState(service.process(firstInput));
+
+      final crossedInput = LandmarkFrameFixtures.copyFrame(
+        firstInput,
+        timestamp: LandmarkFrameFixtures.atFrame(1),
+        hands: <TrackedHand>[
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.left,
+            wristX: 0.55,
+          ),
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.right,
+            wristX: 0.45,
+          ),
+        ],
       );
+      final crossedState = _trackingState(service.process(crossedInput));
 
-      expect(second.hands[0].trackId, first.hands[1].trackId);
-      expect(second.hands[1].trackId, first.hands[0].trackId);
-    });
-
-    test('uses global handedness-aware matching when hands cross', () {
-      final service = TrackingStateService();
-      final first = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.30, handedness: Handedness.left),
-            _hand(x: 0.70, handedness: Handedness.right),
-          ],
-        ),
-      );
-      final crossed = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 33,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.55, handedness: Handedness.left),
-            _hand(x: 0.45, handedness: Handedness.right),
-          ],
-        ),
-      );
-
-      expect(crossed.hands[0].trackId, first.hands[0].trackId);
-      expect(crossed.hands[1].trackId, first.hands[1].trackId);
-    });
-
-    test('a single contradictory observation does not flip handedness', () {
-      final service = TrackingStateService();
-      final first = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.70, handedness: Handedness.right),
-          ],
-        ),
-      );
-      final second = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 33,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.69, handedness: Handedness.left),
-          ],
-        ),
-      );
-
-      expect(first.hands.single.handedness, Handedness.right);
-      expect(second.hands.single.trackId, first.hands.single.trackId);
-      expect(second.hands.single.handedness, Handedness.right);
-      expect(second.hands.single.handednessRunningAverage, closeTo(0.5, 1e-9));
-      expect(second.hands.single.handednessObservationCount, 2);
-    });
-
-    test('retains duplicate handedness observations and marks uncertainty', () {
-      final service = TrackingStateService();
-
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.30, handedness: Handedness.right),
-            _hand(x: 0.70, handedness: Handedness.right),
-          ],
-        ),
-      );
-
-      expect(output.hands, hasLength(2));
-      expect(output.hands.map((hand) => hand.trackId).toSet(), hasLength(2));
-      expect(output.hands.every((hand) => hand.handednessUncertain), isTrue);
+      expect(crossedState.hands[0].trackId, firstState.hands[0].trackId);
+      expect(crossedState.hands[1].trackId, firstState.hands[1].trackId);
       expect(
-        output.trackingIssues,
-        contains(TrackingIssue.handednessUncertain),
+        crossedState.hands.map((state) => state.stableHandedness),
+        <Handedness>[Handedness.left, Handedness.right],
       );
     });
 
-    test('uses only an observed pose wrist to repair a hand wrist', () {
+    test('keeps stable handedness and updates the running average after one raw label flip', () {
       final service = TrackingStateService();
-      final pose = _pose(includeWrists: true);
-      final lowConfidenceWrist = HandLandmarkGroup(
-        isPresent: true,
-        rawHandedness: Handedness.left,
-        handednessScore: 0.9,
-        landmarks: <LandmarkPoint?>[_point(0, 0.10, 0.10, confidence: 0.1)],
+      final firstInput = LandmarkFrameFixtures.haroldFrame(
+        hands: <TrackedHand>[
+          LandmarkFrameFixtures.realisticHand(
+            handedness: Handedness.right,
+            handednessConfidence: 0.90,
+            wristX: 0.70,
+          ),
+        ],
       );
+      final firstHandState = _trackingState(service.process(firstInput))
+          .hands
+          .single;
 
-      final repaired = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: pose,
-          hands: <HandLandmarkGroup>[lowConfidenceWrist],
-        ),
+      final flippedRawHand = LandmarkFrameFixtures.realisticHand(
+        handedness: Handedness.left,
+        handednessConfidence: 0.90,
+        wristX: 0.69,
       );
-
-      final wrist = repaired.hands.single.pointAt(0)!;
-      expect(wrist.source, LandmarkSource.poseWristSubstitution);
-      expect(wrist.imageCoordinates!.x, closeTo(0.30, 1e-9));
-      expect(wrist.imageCoordinates!.y, closeTo(0.70, 1e-9));
-      expect(wrist.worldCoordinates, isNull);
-    });
-
-    test('uses stable identity for wrist repair after a raw label flip', () {
-      final service = TrackingStateService();
-      final firstPoints = List<LandmarkPoint?>.filled(6, null);
-      firstPoints[0] = _point(0, 0.30, 0.70);
-      firstPoints[5] = _point(5, 0.32, 0.60);
-      final first = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(includeWrists: true),
-          hands: <HandLandmarkGroup>[
-            HandLandmarkGroup(
-              isPresent: true,
-              rawHandedness: Handedness.left,
-              handednessScore: 0.9,
-              landmarks: firstPoints,
-            ),
-          ],
-        ),
+      final flippedInput = LandmarkFrameFixtures.copyFrame(
+        firstInput,
+        timestamp: LandmarkFrameFixtures.atFrame(1),
+        hands: <TrackedHand>[flippedRawHand],
       );
+      final flipped = service.process(flippedInput);
+      final flippedHandState = _trackingState(flipped).hands.single;
 
-      final flippedPoints = List<LandmarkPoint?>.filled(6, null);
-      flippedPoints[0] = _point(0, 0.70, 0.70, confidence: 0.1);
-      flippedPoints[5] = _point(5, 0.33, 0.60);
-      final second = service.process(
-        _frame(
-          frameIndex: 2,
-          milliseconds: 33,
-          pose: _pose(includeWrists: true),
-          hands: <HandLandmarkGroup>[
-            HandLandmarkGroup(
-              isPresent: true,
-              rawHandedness: Handedness.right,
-              handednessScore: 0.9,
-              landmarks: flippedPoints,
-            ),
-          ],
-        ),
-      );
-
-      expect(second.hands.single.trackId, first.hands.single.trackId);
-      expect(second.hands.single.handedness, Handedness.left);
+      expect(flipped.hands.single.handedness, Handedness.left);
+      expect(flipped.hands.single.confidence, 0.90);
+      expect(flippedHandState.trackId, firstHandState.trackId);
+      expect(flippedHandState.stableHandedness, Handedness.right);
       expect(
-        second.hands.single.pointAt(0)!.source,
-        LandmarkSource.poseWristSubstitution,
+        flippedHandState.rightHandednessRunningAverage,
+        closeTo(0.50, 1e-12),
       );
-      expect(second.hands.single.pointAt(0)!.imageCoordinates!.x, 0.30);
-    });
-
-    test('does not invent a wrist when no measured substitute exists', () {
-      final service = TrackingStateService();
-      final hand = HandLandmarkGroup(
-        isPresent: true,
-        rawHandedness: Handedness.left,
-        handednessScore: 0.9,
-        landmarks: <LandmarkPoint?>[_point(0, 0.10, 0.10, confidence: 0.1)],
-      );
-
-      final output = service.process(
-        _frame(frameIndex: 1, pose: _pose(), hands: <HandLandmarkGroup>[hand]),
-      );
-
-      final wrist = output.hands.single.pointAt(0)!;
-      expect(wrist.source, LandmarkSource.mediaPipe);
-      expect(wrist.confidence, 0.1);
-      expect(wrist.imageCoordinates!.x, 0.10);
-    });
-
-    test('treats group presence flags as authoritative', () {
-      final service = TrackingStateService();
-      final stalePose = _pose();
-      final staleHand = _hand(x: 0.3, handedness: Handedness.left);
-
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: LandmarkGroup(isPresent: false, landmarks: stalePose.landmarks),
-          hands: <HandLandmarkGroup>[staleHand.copyWith(isPresent: false)],
-        ),
-      );
-
-      expect(output.trackingStatus, TrackingStatus.absent);
-      expect(output.canNormalise, isFalse);
-      expect(output.hands.single.trackId, isNull);
-    });
-
-    test('penalises incomplete landmark groups in tracking quality', () {
-      final service = TrackingStateService();
-
-      final output = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.3, handedness: Handedness.left),
-          ],
-        ),
-      );
-
-      expect(output.trackingQuality, lessThan(0.5));
-      expect(output.trackingStatus, TrackingStatus.degraded);
+      expect(flippedHandState.handednessObservationCount, 2);
     });
 
     test(
-      'reports tracked for complete high-confidence pose and hand groups',
+      'retains duplicate labels and marks both derived states uncertain',
       () {
         final service = TrackingStateService();
-
-        final output = service.process(
-          _frame(
-            frameIndex: 1,
-            pose: _completePose(),
-            hands: <HandLandmarkGroup>[
-              _completeHand(x: 0.3, handedness: Handedness.left),
-            ],
-          ),
+        final input = LandmarkFrameFixtures.haroldFrame(
+          hands: <TrackedHand>[
+            LandmarkFrameFixtures.realisticHand(
+              handedness: Handedness.right,
+              wristX: 0.30,
+            ),
+            LandmarkFrameFixtures.realisticHand(
+              handedness: Handedness.right,
+              wristX: 0.70,
+            ),
+          ],
         );
 
-        expect(output.trackingQuality, closeTo(1, 1e-9));
-        expect(output.trackingStatus, TrackingStatus.tracked);
+        final output = service.process(input);
+        final state = _trackingState(output);
+
+        expect(output.hands, hasLength(2));
+        expect(
+          output.hands.map((hand) => hand.handedness),
+          everyElement(Handedness.right),
+        );
+        expect(state.hands.map((hand) => hand.trackId).toSet(), hasLength(2));
+        expect(
+          state.hands.map((hand) => hand.handednessUncertain),
+          everyElement(isTrue),
+        );
+        expect(state.issues, contains(TrackingIssue.handednessUncertain));
       },
     );
 
-    test('expires a missing hand track after the configured frame count', () {
+    test('stores a pose-wrist substitute only in TrackedHandState and preserves raw landmark zero', () {
       final service = TrackingStateService();
-      final first = service.process(
-        _frame(
-          frameIndex: 1,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.3, handedness: Handedness.left),
-          ],
-        ),
+      final rawHand = LandmarkFrameFixtures.realisticHand(
+        handedness: Handedness.left,
+        coordinateOverrides: const <int, NormalizedPoint>{
+          0: NormalizedPoint(x: 0.10, y: 0.10, z: -0.20),
+        },
+        visibilityOverrides: const <int, double>{0: 0.10},
       );
-      for (var index = 2; index <= 17; index += 1) {
+      final input = LandmarkFrameFixtures.haroldFrame(
+        hands: <TrackedHand>[rawHand],
+      );
+
+      final output = service.process(input);
+      final handState = _trackingState(output).hands.single;
+
+      expect(identical(output.hands.single, rawHand), isTrue);
+      expect(
+        identical(output.hands.single.landmarks[0], rawHand.landmarks[0]),
+        isTrue,
+      );
+      expect(output.hands.single.landmarks[0].x, 0.10);
+      expect(output.hands.single.landmarks[0].y, 0.10);
+      expect(output.hands.single.landmarks[0].z, -0.20);
+      expect(output.hands.single.landmarks[0].visibility, 0.10);
+      expect(handState.poseWristSubstituteCoordinates, isNotNull);
+      expect(handState.poseWristSubstituteCoordinates!.x, 0.30);
+      expect(handState.poseWristSubstituteCoordinates!.y, 0.58);
+      expect(handState.poseWristSubstituteCoordinates!.z, -0.03);
+      expect(handState.poseWristSubstituteVisibility, 0.98);
+    });
+
+    test('expires a track only after the configured missing-frame count', () {
+      final service = TrackingStateService(
+        config: const TrackingStateNormalisationConfig(trackExpiryFrames: 2),
+      );
+      final firstInput = LandmarkFrameFixtures.haroldFrame(
+        hands: <TrackedHand>[
+          LandmarkFrameFixtures.realisticHand(handedness: Handedness.left),
+        ],
+      );
+      final firstState = _trackingState(service.process(firstInput));
+      final firstTrackId = firstState.hands.single.trackId;
+
+      for (var offset = 1; offset <= 3; offset += 1) {
         service.process(
-          _frame(
-            frameIndex: index,
-            milliseconds: (index - 1) * 33,
-            pose: _pose(),
+          LandmarkFrameFixtures.copyFrame(
+            firstInput,
+            timestamp: LandmarkFrameFixtures.atFrame(offset),
+            hands: const <TrackedHand>[],
+            handCoordinateAnalysis: const [],
+            leftHandVisible: false,
+            rightHandVisible: false,
           ),
         );
       }
 
       final returned = service.process(
-        _frame(
-          frameIndex: 18,
-          milliseconds: 17 * 33,
-          pose: _pose(),
-          hands: <HandLandmarkGroup>[
-            _hand(x: 0.3, handedness: Handedness.left),
-          ],
+        LandmarkFrameFixtures.copyFrame(
+          firstInput,
+          timestamp: LandmarkFrameFixtures.atFrame(4),
         ),
       );
+      final returnedState = _trackingState(returned);
 
-      expect(returned.hands.single.trackId, isNot(first.hands.single.trackId));
+      expect(returnedState.trackingEpoch, firstState.trackingEpoch);
+      expect(returnedState.hands.single.trackId, isNot(firstTrackId));
+      expect(returnedState.hands.single.trackId, 'hand-2');
+      expect(returnedState.hands.single.handednessObservationCount, 1);
     });
   });
 
-  test('LandmarkFrame JSON preserves grouped absence and metadata', () {
-    final input = _frame(
-      frameIndex: 7,
-      pose: LandmarkGroup(
-        isPresent: true,
-        landmarks: <LandmarkPoint?>[_point(0, 0.1, 0.2), null],
+  group('TrackingStateService tracking epochs', () {
+    final timestampCases = <({String name, DateTime timestamp})>[
+      (name: 'zero time delta', timestamp: LandmarkFrameFixtures.epoch),
+      (
+        name: 'negative time delta',
+        timestamp: LandmarkFrameFixtures.epoch.subtract(
+          const Duration(microseconds: 1),
+        ),
       ),
-      hands: <HandLandmarkGroup>[_hand(x: 0.3, handedness: Handedness.left)],
+      (
+        name: 'time gap above the 250 ms limit',
+        timestamp: LandmarkFrameFixtures.epoch.add(
+          const Duration(milliseconds: 251),
+        ),
+      ),
+    ];
+
+    for (final timestampCase in timestampCases) {
+      test('${timestampCase.name} starts a new tracking epoch', () {
+        final service = TrackingStateService();
+        final firstInput = LandmarkFrameFixtures.fullyTrackedFrame();
+        final firstState = _trackingState(service.process(firstInput));
+
+        final next = service.process(
+          LandmarkFrameFixtures.copyFrame(
+            firstInput,
+            timestamp: timestampCase.timestamp,
+          ),
+        );
+        final nextState = _trackingState(next);
+
+        expect(firstState.trackingEpoch, 0);
+        expect(nextState.trackingEpoch, 1);
+        expect(
+          nextState.hands.map((hand) => hand.handednessObservationCount),
+          everyElement(1),
+        );
+      });
+    }
+
+    test('a temporarily invisible but still-locked subject keeps its epoch and hand tracks', () {
+      final service = TrackingStateService();
+      final firstInput = LandmarkFrameFixtures.fullyTrackedFrame();
+      final firstState = _trackingState(service.process(firstInput));
+
+      final hiddenInput = LandmarkFrameFixtures.copyFrame(
+        firstInput,
+        timestamp: LandmarkFrameFixtures.atFrame(1),
+        leftShoulder: null,
+        rightShoulder: null,
+        leftWrist: null,
+        rightWrist: null,
+        leftHandVisible: false,
+        rightHandVisible: false,
+        trackingConfidence: 0,
+        hands: const <TrackedHand>[],
+        handCoordinateAnalysis: const [],
+        poseLandmarks: const <PoseLandmark>[],
+        faceUpperLandmarks: const <FaceLandmark>[],
+        faceMouthLandmarks: const <FaceLandmark>[],
+        faceExpression: null,
+        subjectTracking: const SubjectTracking(
+          locked: true,
+          visible: false,
+          area: 0,
+          missingFrames: 1,
+        ),
+      );
+      final hiddenState = _trackingState(service.process(hiddenInput));
+
+      final recovered = service.process(
+        LandmarkFrameFixtures.copyFrame(
+          firstInput,
+          timestamp: LandmarkFrameFixtures.atFrame(2),
+        ),
+      );
+      final recoveredState = _trackingState(recovered);
+
+      expect(hiddenState.status, TrackingStatus.absent);
+      expect(hiddenState.trackingEpoch, firstState.trackingEpoch);
+      expect(recoveredState.trackingEpoch, firstState.trackingEpoch);
+      expect(recoveredState.hands[0].trackId, firstState.hands[0].trackId);
+      expect(recoveredState.hands[1].trackId, firstState.hands[1].trackId);
+    });
+
+    test('loss of subject lock starts a new epoch', () {
+      final service = TrackingStateService();
+      final firstInput = LandmarkFrameFixtures.fullyTrackedFrame();
+      final firstState = _trackingState(service.process(firstInput));
+
+      final unlocked = service.process(
+        LandmarkFrameFixtures.copyFrame(
+          firstInput,
+          timestamp: LandmarkFrameFixtures.atFrame(1),
+          subjectTracking: const SubjectTracking(
+            locked: false,
+            visible: false,
+            area: 0,
+            missingFrames: 1,
+          ),
+        ),
+      );
+      final unlockedState = _trackingState(unlocked);
+
+      final relocked = service.process(
+        LandmarkFrameFixtures.copyFrame(
+          firstInput,
+          timestamp: LandmarkFrameFixtures.atFrame(2),
+        ),
+      );
+      final relockedState = _trackingState(relocked);
+
+      expect(firstState.trackingEpoch, 0);
+      expect(unlockedState.trackingEpoch, 1);
+      expect(
+        unlockedState.hands.map((hand) => hand.handednessObservationCount),
+        everyElement(1),
+      );
+      expect(relockedState.trackingEpoch, 1);
+      expect(
+        relockedState.hands.map((hand) => hand.handednessObservationCount),
+        everyElement(2),
+      );
+    });
+  });
+
+  test('canonical JSON projection excludes the namespaced Stage 3 result', () {
+    final input = LandmarkFrameFixtures.fullyTrackedFrame();
+    final output = TrackingStateService().process(input);
+    final json = output.toJson();
+
+    expect(output.trackingState, isNotNull);
+    expect(output.normalisation, isNull);
+    expect(json, input.toJson());
+    expect(json, isNot(contains('tracking_state')));
+    expect(json, isNot(contains('trackingState')));
+    expect(json, isNot(contains('tracking_epoch')));
+    expect(json, isNot(contains('tracking_status')));
+  });
+
+  test('canonical JSON projection keeps Harold exact key nesting', () {
+    final json = LandmarkFrameFixtures.noSubjectFrame().toJson();
+
+    expect(json.keys.toList(), <String>[
+      'timestamp',
+      'tracking_confidence',
+      'left_shoulder',
+      'right_shoulder',
+      'hands',
+      'hand_coordinate_analysis',
+      'face_expression',
+      'subject_tracking',
+      'landmark_worlds',
+    ]);
+    expect(json['left_shoulder'], isNull);
+    expect(json['right_shoulder'], isNull);
+    expect(json['hands'], isEmpty);
+    expect(json['face_expression'], isNull);
+
+    final subject = json['subject_tracking']! as Map<String, dynamic>;
+    expect(subject, <String, dynamic>{
+      'locked': false,
+      'visible': true,
+      'area': 0.0,
+      'missing_frames': 0,
+    });
+
+    final worlds = json['landmark_worlds']! as Map<String, dynamic>;
+    expect(worlds.keys.toList(), <String>[
+      'left_hand',
+      'right_hand',
+      'pose',
+      'face',
+    ]);
+    for (final side in const <String>['left_hand', 'right_hand']) {
+      final hand = worlds[side]! as Map<String, dynamic>;
+      expect(hand.keys.toList(), <String>[
+        'handedness',
+        'confidence',
+        'finger_status',
+        'landmarks',
+      ]);
+      expect(hand['landmarks'], isEmpty);
+    }
+    expect((worlds['pose']! as Map<String, dynamic>).keys, <String>[
+      'landmarks',
+    ]);
+    expect((worlds['face']! as Map<String, dynamic>).keys.toList(), <String>[
+      'upper',
+      'mouth',
+      'emotion',
+    ]);
+  });
+
+  test('canonical fixture uses Harold curated face names and defaults', () {
+    final frame = LandmarkFrameFixtures.fullyTrackedFrame();
+
+    expect(
+      frame.faceUpperLandmarks
+          .map((point) => '${point.index}:${point.name}')
+          .toList(),
+      LandmarkFrameFixtures.faceUpperIndices
+          .map(
+            (index) => '$index:${LandmarkFrameFixtures.faceUpperNames[index]}',
+          )
+          .toList(),
     );
-
-    final decoded = LandmarkFrame.fromJson(input.toJson());
-
-    expect(decoded.frameIndex, 7);
-    expect(decoded.timestamp, input.timestamp.toUtc());
-    expect(decoded.pose.isPresent, isTrue);
-    expect(decoded.pose.landmarks, hasLength(2));
-    expect(decoded.pose.landmarks[1], isNull);
-    expect(decoded.hands.single.rawHandedness, Handedness.left);
+    expect(
+      frame.faceMouthLandmarks
+          .map((point) => '${point.index}:${point.name}')
+          .toList(),
+      LandmarkFrameFixtures.faceMouthIndices
+          .map(
+            (index) => '$index:${LandmarkFrameFixtures.faceMouthNames[index]}',
+          )
+          .toList(),
+    );
+    expect(
+      frame.hands,
+      everyElement(
+        predicate<TrackedHand>((hand) {
+          return hand.landmarks.length == 21 && hand.boundingBox.isEmpty;
+        }),
+      ),
+    );
+    expect(frame.faceExpression?.landmarks, isEmpty);
+    expect(frame.featureVector, hasLength(322));
   });
 }
 
-final _epoch = DateTime.utc(2026, 9, 6);
-
-LandmarkFrame _frame({
-  required int frameIndex,
-  int milliseconds = 0,
-  LandmarkGroup pose = const LandmarkGroup.absent(),
-  LandmarkGroup face = const LandmarkGroup.absent(),
-  List<HandLandmarkGroup> hands = const <HandLandmarkGroup>[],
-}) => LandmarkFrame(
-  timestamp: _epoch.add(Duration(milliseconds: milliseconds)),
-  frameIndex: frameIndex,
-  subjectId: 'subject-a',
-  pose: pose,
-  face: face,
-  hands: hands,
-);
-
-LandmarkGroup _pose({bool includeWrists = false}) {
-  final points = List<LandmarkPoint?>.filled(17, null);
-  points[11] = _point(11, 0.40, 0.50);
-  points[12] = _point(12, 0.60, 0.50);
-  if (includeWrists) {
-    points[15] = _point(15, 0.30, 0.70);
-    points[16] = _point(16, 0.70, 0.70);
-  }
-  return LandmarkGroup(isPresent: true, landmarks: points);
+TrackingStateResult _trackingState(LandmarkFrame frame) {
+  final state = frame.trackingState;
+  expect(state, isNotNull);
+  return state!;
 }
-
-LandmarkGroup _completePose() {
-  final points = List<LandmarkPoint?>.filled(25, null);
-  for (final index in <int>[11, 12, 13, 14, 15, 16, 23, 24]) {
-    points[index] = _point(
-      index,
-      index == 11
-          ? 0.40
-          : index == 12
-          ? 0.60
-          : 0.50,
-      0.50 + index * 0.001,
-    );
-  }
-  return LandmarkGroup(isPresent: true, landmarks: points);
-}
-
-HandLandmarkGroup _hand({required double x, required Handedness handedness}) =>
-    HandLandmarkGroup(
-      isPresent: true,
-      rawHandedness: handedness,
-      handednessScore: 0.9,
-      landmarks: <LandmarkPoint?>[_point(0, x, 0.40)],
-    );
-
-HandLandmarkGroup _completeHand({
-  required double x,
-  required Handedness handedness,
-}) => HandLandmarkGroup(
-  isPresent: true,
-  rawHandedness: handedness,
-  handednessScore: 0.9,
-  landmarks: List<LandmarkPoint?>.generate(
-    21,
-    (index) => _point(index, x + index * 0.001, 0.40),
-  ),
-);
-
-LandmarkPoint _point(
-  int index,
-  double x,
-  double y, {
-  double confidence = 1,
-  LandmarkCoordinates? world,
-}) => LandmarkPoint(
-  index: index,
-  confidence: confidence,
-  imageCoordinates: LandmarkCoordinates(x: x, y: y),
-  worldCoordinates: world,
-);

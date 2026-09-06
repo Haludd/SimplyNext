@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from simplynext.agent import (
     DEFAULT_ASSEMBLER_PROMPT_PATH,
@@ -13,6 +14,7 @@ from simplynext.agent import (
     AssemblerGroundingError,
     AssemblerOutputError,
     BedrockLatticeAssemblerNode,
+    DraftEvidence,
     LatticeAssemblerConfig,
 )
 from simplynext.agent.graph import AgentGraphState, AllowedToolExecutor
@@ -93,6 +95,14 @@ def test_versioned_prompt_contains_every_non_invention_rule() -> None:
     assert "Never complete an unfinished utterance." in prompt
     assert "Never fill a missing slot" in prompt
     assert "Return exactly one JSON object and no prose" in prompt
+
+
+def test_draft_gloss_id_uses_the_wire_contract_length_limit() -> None:
+    accepted = DraftEvidence(slot_id="slot-0", gloss_id="G" * 128)
+    assert len(accepted.gloss_id) == 128
+
+    with pytest.raises(ValidationError):
+        DraftEvidence(slot_id="slot-0", gloss_id="G" * 129)
 
 
 def test_configured_prompt_cannot_drop_a_required_safety_rule(tmp_path: Path) -> None:

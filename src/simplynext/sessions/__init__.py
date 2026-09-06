@@ -1,5 +1,6 @@
 """Ephemeral live-session state."""
 
+from .lattice_repair import PendingLatticeRepair
 from .store import (
     BatchTooLarge,
     EphemeralSessionStore,
@@ -22,6 +23,7 @@ __all__ = [
     "InvalidSessionState",
     "InvalidSessionToken",
     "NonMonotonicSequence",
+    "PendingLatticeRepair",
     "SessionExpired",
     "SessionNotFound",
     "SessionSnapshot",

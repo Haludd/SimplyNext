@@ -1,4 +1,8 @@
-"""Compact stage ⑤ → ⑥ gloss-lattice wire contract."""
+"""Authoritative CTR ingress-v1 GlossLattice wire contract.
+
+This module contains only compact classifier output. Signer identity, repair
+continuation, Agent state, and server response events are deliberately separate.
+"""
 
 from __future__ import annotations
 

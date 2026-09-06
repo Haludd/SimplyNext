@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -18,6 +20,12 @@ from simplynext.contracts import (
 
 SESSION_ID = UUID("12345678-1234-5678-1234-567812345678")
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "gloss_lattice_v1.json"
+
+
+def fixture_payload() -> dict[str, Any]:
+    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    return payload
 
 
 def candidate(gloss_id: str, rank: int, confidence: float) -> GlossCandidate:
@@ -85,6 +93,7 @@ def test_lattice_round_trips_as_compact_versioned_json() -> None:
 def test_shared_v1_fixture_matches_the_runtime_contract() -> None:
     parsed = GlossLattice.model_validate_json(FIXTURE_PATH.read_text(encoding="utf-8"))
 
+    assert parsed.model_dump(mode="json") == fixture_payload()
     assert parsed.utterance_id == "utterance-42"
     assert tuple(slot.provenance for slot in parsed.slots) == tuple(GlossProvenance)
     assert len(parsed.model_dump_json().encode("utf-8")) <= MAX_GLOSS_LATTICE_BYTES
@@ -253,3 +262,95 @@ def test_contract_rejects_lattice_over_fixed_byte_ceiling() -> None:
             producer=producer(),
             slots=tuple(oversized_slots),
         )
+
+
+def test_contract_accepts_compact_json_at_exact_byte_ceiling() -> None:
+    payload = fixture_payload()
+    payload["lattice_seq"] = 8
+    payload["utterance_id"] = "u"
+    payload["started_at_ms"] = 0
+    payload["ended_at_ms"] = 640
+    payload["producer"] = {
+        "classifier_id": "c",
+        "classifier_version": "v",
+        "confidence_kind": "calibrated_probability",
+        "calibration_version": "c",
+        "vocabulary_version": "v",
+    }
+    payload["slots"] = []
+    for slot_index in range(64):
+        candidates = [
+            {
+                "gloss_id": f"G{slot_index}_{rank}",
+                "rank": rank,
+                "confidence": 1.0 - rank / 10,
+            }
+            for rank in range(1, 6)
+        ]
+        payload["slots"].append(
+            {
+                "slot_index": slot_index,
+                "slot_id": f"S{slot_index}",
+                "start_ms": slot_index * 10,
+                "end_ms": slot_index * 10 + 9,
+                "candidates": candidates,
+                "resolved_gloss_id": candidates[0]["gloss_id"],
+                "provenance": "classifier_high_confidence",
+            }
+        )
+
+    compact = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    remaining = MAX_GLOSS_LATTICE_BYTES - len(compact)
+    assert remaining > 0
+    for expanded_slot in payload["slots"]:
+        for hypothesis in expanded_slot["candidates"][1:]:
+            available = 128 - len(hypothesis["gloss_id"])
+            added = min(remaining, available)
+            hypothesis["gloss_id"] += "X" * added
+            remaining -= added
+
+    compact = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    assert remaining == 0
+    assert len(compact) == MAX_GLOSS_LATTICE_BYTES
+
+    parsed = GlossLattice.model_validate_json(compact)
+    assert len(parsed.model_dump_json().encode("utf-8")) == MAX_GLOSS_LATTICE_BYTES
+
+    payload["slots"][-1]["candidates"][-1]["gloss_id"] += "X"
+    with pytest.raises(ValidationError, match=str(MAX_GLOSS_LATTICE_BYTES)):
+        GlossLattice.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("path", "field", "value"),
+    (
+        ((), "revision", 0),
+        ((), "subject_id", "signer-a"),
+        ((), "is_final", True),
+        ((), "capture_start_ms", 1_000),
+        ((), "capture_end_ms", 3_000),
+        ((), "produced_ms", 3_100),
+        ((), "quality", {}),
+        (("producer",), "classifier", {}),
+        (("producer",), "segmenter_version", "v1"),
+        (("producer",), "top_k", 5),
+        (("slots", 0), "resolved_gloss", "WATER"),
+        (("slots", 0), "selected_rank", 1),
+        (("slots", 0), "confirmed_at_ms", 1_200),
+        (("slots", 0), "reason_codes", []),
+        (("slots", 0, "candidates", 0), "gloss", "WATER"),
+    ),
+)
+def test_contract_rejects_every_incompatible_v1_field(
+    path: tuple[str | int, ...],
+    field: str,
+    value: object,
+) -> None:
+    payload: Any = fixture_payload()
+    target = payload
+    for component in path:
+        target = target[component]
+    target[field] = value
+
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        GlossLattice.model_validate(payload)

@@ -35,6 +35,7 @@ from simplynext.agent.state import (
     reduce_signer_memory,
 )
 from simplynext.contracts.common import Identifier
+from simplynext.contracts.events import LatticeRepairAction as RepairAction
 from simplynext.contracts.gloss_lattice import GlossLattice
 
 GraphPayload: TypeAlias = dict[str, JsonValue]
@@ -104,15 +105,6 @@ class ConfidentResult(_GraphValue):
 
     kind: Literal["confident"] = "confident"
     payload: GraphPayload
-
-
-class RepairAction(StrEnum):
-    """The four non-guessing actions reserved for stage 9."""
-
-    ASK_REPEAT = "ask_repeat"
-    REQUEST_FINGERSPELLING = "request_fingerspelling"
-    OFFER_TOP_K = "offer_top_k"
-    ESCALATE_HUMAN_INTERPRETER = "escalate_human_interpreter"
 
 
 class RepairResult(_GraphValue):

@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from simplynext.contracts.common import Identifier, SignLanguage
+from simplynext.contracts.common import MAX_IDENTIFIER_CHARACTERS, Identifier, SignLanguage
 from simplynext.contracts.gloss_lattice import GlossLattice, GlossProvenance
 from simplynext.observability.metrics import MetricsRegistry
 from simplynext.recognition import RecognitionCandidate
@@ -40,7 +40,10 @@ if TYPE_CHECKING:
     from simplynext.agent.graph import AgentGraphState, AllowedToolExecutor, GraphPayload
 
 
-GlossToken = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+GlossToken = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_IDENTIFIER_CHARACTERS),
+]
 DraftText = Annotated[str, StringConstraints(min_length=1, max_length=160)]
 ASSEMBLER_DRAFT_SCHEMA_VERSION: Final = "1.0"
 DEFAULT_ASSEMBLER_PROMPT_PATH: Final = Path(__file__).with_name("prompts") / "assembler_v1.txt"

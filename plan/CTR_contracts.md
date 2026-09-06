@@ -17,9 +17,10 @@
 | **Parent**              | [`ARC`](ARC_architecture.md) · [`PLN`](PLN_plan.md) |
 | **Related**             | [`BCT`](../doc/BCT_backend_comparison_test.md)      |
 
-**For the team.** This document freezes the payload emitted by recognition stage ⑤ and consumed by
-backend agent stage ⑥. Frontend and backend implementations may proceed independently when both
-validate against this contract and the shared fixture.
+**For the team.** This document freezes the inbound payload emitted by recognition stage ⑤ and
+consumed by backend agent stage ⑥. Frontend and backend implementations may proceed independently
+when both validate against this contract and the shared fixture. Server responses use the separate
+event contract in [`CTR_S6.2`](#62-outbound-event-family).
 
 **For the assistant.** Existing version 1.0 field names, types, enum values, limits, and semantics
 must not be changed in place. Any incompatible change requires a new schema version, migration
@@ -35,9 +36,10 @@ notes, a new fixture, and coordinated frontend/backend tests.
 
 # 1. AUTHORITY
 ## 1.1. Boundary
-`GlossLattice` is the complete recognition payload that crosses from stage ⑤ to stage ⑥. It
-carries ordered sign slots, each slot's retained top-k closed-vocabulary hypotheses, calibrated
-confidence, session-relative timestamps, and the provenance rung required by
+`GlossLattice` is the complete inbound recognition payload that crosses from stage ⑤ to stage ⑥
+and is the sole authority for ingress version 1.0. It carries ordered sign slots, each slot's
+retained top-k closed-vocabulary hypotheses, calibrated confidence, session-relative timestamps,
+and the provenance rung required by
 [`ARC_S5.7`](ARC_architecture.md#57-the-reverse-direction) decision 19. It implements the fourth
 frozen interface in [`PLN_S3.4`](PLN_plan.md#34-the-frozen-interfaces) and unblocks typed graph
 state in [`PLN_S9.1`](PLN_plan.md#91-t51--typed-graph-state).
@@ -59,6 +61,10 @@ Signer identity is resolved from trusted backend session/authentication context.
 accepted as a `GlossLattice` field. Conversation history, per-signer memory, loop counters, drafts,
 critiques, routes, and final results are backend-owned graph state defined by
 [`PLN_S9.1`](PLN_plan.md#91-t51--typed-graph-state).
+
+Server-to-client messages do not extend this ingress schema. They carry
+`event_schema_version: "1.0"` and validate against the separate `LatticeOutboundEvent` union in
+[`CTR_S6.2`](#62-outbound-event-family).
 
 ---
 
@@ -351,7 +357,51 @@ package. Frontend developers may derive their language model from the output of
 
 
 
-## 6.2. Compatibility
+## 6.2. Outbound Event Family
+The separately versioned executable response contract is `LatticeOutboundEvent` in
+[`src/simplynext/contracts/events.py`](../src/simplynext/contracts/events.py). Every variant carries
+`event_schema_version: "1.0"` and trusted `session_id`; this version is independent of inbound
+`GlossLattice.schema_version`.
+
+The closed union contains six discriminators:
+
+1. **`lattice_ack`**
+   Carries `lattice_seq`, `utterance_id`, `disposition` (`accepted` or `cached`), and `server_ms`.
+2. **`activity`**
+   Carries server activity state and `server_ms`. A `processing` event also carries the correlated
+   `lattice_seq` and `utterance_id`.
+3. **`pong`**
+   Carries `control_seq` and `server_ms`.
+4. **`error`**
+   Carries `code`, safe human-facing `message`, `retryable`, and optional lattice correlation.
+5. **`lattice_result`**
+   Carries `status: "confident"`, display `caption`, optional `tts_text`, calibrated `confidence`,
+   ordered `gloss_id_trace`, complete structured `evidence_trace`, classifier lineage, Agent
+   source/model metadata, and stage latency.
+6. **`lattice_repair_required`**
+   Carries `status: "uncertain"`, `repair_id`, one graph-native repair action, a safe message,
+   confidence, target slots, optional retained choices, reason codes, complete structured evidence,
+   classifier lineage, Agent source/model metadata, and stage latency. It cannot carry `caption` or
+   `tts_text`.
+
+`caption` and `tts_text` are JSON strings. The client displays `caption` and may pass `tts_text` to
+client-side speech synthesis; the backend response contains no MP3, WAV, or other audio file.
+`evidence_trace` preserves each slot index, identifier, time interval, resolved gloss, calibrated
+candidate confidence when one exists, provenance, and retained candidates. A confident event's
+`gloss_id_trace` must exactly equal the resolved evidence order.
+
+Lattice repair actions use the graph names `ask_repeat`, `request_fingerspelling`, `offer_top_k`,
+and `escalate_human_interpreter`. The legacy landmark values `repeat`, `fingerspell`, and
+`choose_candidate` remain confined to the legacy event union and are not aliases in this protocol.
+
+`PendingLatticeRepair` stores repair correlation on the backend. A follow-up is a new frozen-v1
+lattice with the same authenticated session and `utterance_id` and a greater `lattice_seq`.
+Neither signer identity nor a client-controlled `revision` field is accepted on the lattice.
+
+
+
+
+## 6.3. Compatibility
 Version 1.0 is exact and rejects additions. A field rename, type change, enum change, semantic
 change, relaxed identifier syntax, altered timebase, or changed limit requires a new schema
 version. A new version is added beside v1 rather than changing v1 behavior. Both frontend and
@@ -360,11 +410,13 @@ backend must accept the new golden fixture before transport switches to it.
 
 
 
-## 6.3. Acceptance Checks
+## 6.4. Acceptance Checks
 The automated contract checks cover JSON round-trip, the shared fixture, all provenance states,
-candidate rank and confidence order, slot chronology, unknown-field rejection, version rejection,
-landmark exclusion, and the compact byte ceiling. They live in
-[`tests/test_gloss_lattice_contract.py`](../tests/test_gloss_lattice_contract.py).
+candidate rank and confidence order, slot chronology, every incompatible-v1 field, version
+rejection, landmark exclusion, and acceptance at exactly the compact 32,768-byte ceiling. They
+live in [`tests/test_gloss_lattice_contract.py`](../tests/test_gloss_lattice_contract.py). Outbound
+union, text, evidence, repair-action, and server-state checks live in
+[`tests/test_lattice_events.py`](../tests/test_lattice_events.py).
 
 ---
 
@@ -397,3 +449,7 @@ landmark exclusion, and the compact byte ceiling. They live in
    *Change:* Created and froze `GlossLattice` version 1.0. Defined its envelope, producer metadata,
    slots, candidates, provenance semantics, timestamp clock, sequencing, exclusions, 32 KiB limit,
    golden fixture, executable Pydantic model, and acceptance checks.
+2. **2026-09-06** · *Author:* Codex (GPT-5)
+   *Change:* Declared CTR authoritative for ingress only and froze the separately versioned lattice
+   response union, graph-native repair names, structured evidence trace, client-side TTS text
+   semantics, and backend-owned repair-follow-up correlation.

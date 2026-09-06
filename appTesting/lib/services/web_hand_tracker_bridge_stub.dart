@@ -8,7 +8,5 @@ class WebHandTrackerBridge {
 
   Future<void> stop() async {}
 
-  Future<void> endUtterance() async {}
-
   void dispose() {}
 }

@@ -10,6 +10,7 @@ import 'services/local_state_service.dart';
 import 'services/api_client.dart';
 import 'services/sign_analysis_service.dart';
 import 'services/tracking_service.dart';
+import 'services/utterance_stillness_detector.dart';
 
 enum SignBridgePage { onboarding, live, dictionary, settings }
 
@@ -36,6 +37,8 @@ class AppController extends ChangeNotifier {
   final SignAnalysisService signAnalyzer = SignAnalysisService();
   final SimulatedSignSequenceApiClient simulator =
       SimulatedSignSequenceApiClient();
+  final UtteranceStillnessDetector _utteranceStillnessDetector =
+      UtteranceStillnessDetector();
   final String sessionId = 'session-${DateTime.now().millisecondsSinceEpoch}';
 
   late final StreamSubscription<LandmarkFrame> _trackingSubscription;
@@ -49,11 +52,33 @@ class AppController extends ChangeNotifier {
   bool isUnregisteredSign = false;
   List<CustomSign> customSigns = <CustomSign>[];
   SignAnalysisResult? latestAnalysis;
+
+  /// The most recently completed utterance. Each item is one LandmarkFrame;
+  /// this is the handoff for the next processing stage.
+  ///
+  /// NEXT TEAMMATE: after the user presses "Analyse utterance", access the
+  /// captured sequence with:
+  ///
+  ///   final frames = controller.lastUtteranceFrames;
+  ///
+  /// Then read coordinates from `frame.hands`, `frame.poseLandmarks`, and
+  /// `frame.faceUpperLandmarks`/`frame.faceMouthLandmarks`. If serialized data
+  /// is needed, use `controller.lastUtteranceJson` or `frame.toJson()`.
+  List<LandmarkFrame> lastUtteranceFrames = const <LandmarkFrame>[];
   bool analysisInFlight = false;
+  bool _automaticFinishInFlight = false;
   String backendStatus = 'Offline simulation · no backend configured';
   String selectedLanguage = 'ASL';
 
-  void _onTrackingFrame(LandmarkFrame _) {
+  void _onTrackingFrame(LandmarkFrame frame) {
+    if (tracking.isCapturingUtterance && !_automaticFinishInFlight) {
+      if (_utteranceStillnessDetector.update(frame)) {
+        unawaited(analyzeSign(automatic: true));
+      }
+    } else if (!tracking.isCapturingUtterance) {
+      _utteranceStillnessDetector.reset();
+    }
+
     // The camera stream can be continuous, but rebuilding the entire Flutter
     // page for every detector frame is expensive on the web. Keep the latest
     // frame immediately in the tracking service and repaint the UI at a
@@ -74,6 +99,29 @@ class AppController extends ChangeNotifier {
   String get confidenceWindowLabel => tracking.confidenceWindow.windowLabel;
   String get trackingStatus => tracking.status;
   int get utteranceFrameCount => tracking.utteranceFrameCount;
+  bool get isCapturingUtterance => tracking.isCapturingUtterance;
+
+  /// Starts a fresh utterance buffer. Tracking itself remains continuous;
+  /// only frames collected after this point belong to the utterance.
+  void startUtterance() {
+    if (analysisInFlight || tracking.isCapturingUtterance) return;
+    if (latestFrame == null) {
+      backendStatus = 'Start the camera before capturing an utterance';
+      notifyListeners();
+      return;
+    }
+    _utteranceStillnessDetector.reset();
+    tracking.beginUtterance();
+    latestAnalysis = null;
+    backendStatus = 'Capturing LandmarkFrame data locally';
+    notifyListeners();
+  }
+
+  /// JSON-ready handoff for the next processing stage. The source of truth is
+  /// still [lastUtteranceFrames], not this serialized convenience view.
+  List<Map<String, dynamic>> get lastUtteranceJson => lastUtteranceFrames
+      .map((frame) => frame.toJson())
+      .toList(growable: false);
 
   void setLanguage(String language) {
     selectedLanguage = language;
@@ -115,14 +163,27 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> analyzeSign() async {
+  Future<void> analyzeSign({bool automatic = false}) async {
+    if (automatic) _automaticFinishInFlight = true;
+    if (_automaticFinishInFlight && !automatic) return;
+    if (!tracking.isCapturingUtterance) {
+      _automaticFinishInFlight = false;
+      backendStatus = 'Press Start utterance before analysing';
+      notifyListeners();
+      return;
+    }
     final frames = await tracking.finishUtterance();
+    _utteranceStillnessDetector.reset();
+    lastUtteranceFrames = frames;
     latestAnalysis = signAnalyzer.analyze(frames);
-    backendStatus = apiClient == null
+    backendStatus = automatic
+        ? 'Pause detected · processing captured LandmarkFrames'
+        : apiClient == null
         ? 'Preparing offline backend simulation'
         : 'Preparing utterance chunk for backend';
     notifyListeners();
     if (frames.isEmpty) {
+      _automaticFinishInFlight = false;
       backendStatus = 'Waiting for tracked frames';
       notifyListeners();
       return;
@@ -151,6 +212,7 @@ class AppController extends ChangeNotifier {
       backendStatus = 'Backend unavailable · local readout shown';
     } finally {
       analysisInFlight = false;
+      _automaticFinishInFlight = false;
       notifyListeners();
     }
   }
@@ -219,9 +281,9 @@ class AppController extends ChangeNotifier {
   /// Builds one fixed-width sample for personal-sign matching.
   ///
   /// The live API keeps every raw landmark. My Signs additionally stores the
-  /// fixed-width four-world vector: wrist-centred left/right hands, a
-  /// shoulder-centred pose subset, curated face geometry, motion features,
-  /// and facial-expression scores.
+  /// fixed-width local sample: wrist-centred left/right hands, a
+  /// shoulder-centred pose subset, curated face geometry, and facial-
+  /// expression scores. The network contract remains LandmarkFrame JSON.
   List<double>? captureCurrentSignSample() {
     final frame = latestFrame;
     if (frame == null ||
@@ -260,13 +322,7 @@ class AppController extends ChangeNotifier {
       }
     }
 
-    final motion = frame.handMotion;
     final face = frame.faceExpression;
-    vector.addAll(<double>[
-      motion?.averageSpeed ?? 0,
-      motion?.averageAcceleration ?? 0,
-      motion?.averageOpenness ?? 0,
-    ]);
     for (final emotion in deepFaceEmotionLabels) {
       vector.add(face?.emotionScores[emotion] ?? 0);
     }

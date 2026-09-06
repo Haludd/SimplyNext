@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -25,6 +28,11 @@ const _yellow = Color(0xFFFFC857);
 const _red = Color(0xFFFF718A);
 const _muted = Color(0xFF91A6B8);
 const _subtle = Color(0xFF657B8D);
+
+Color _confidenceColor(Color base, double confidence, {double floor = .12}) =>
+    base.withValues(
+      alpha: floor + (1 - floor) * confidence.clamp(0.0, 1.0).toDouble(),
+    );
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -879,9 +887,6 @@ class LandmarkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final pointPaint = Paint()
-      ..color = _cyan
-      ..style = PaintingStyle.fill;
     final linePaint = Paint()
       ..color = _cyan.withValues(alpha: .55)
       ..style = PaintingStyle.stroke
@@ -928,11 +933,15 @@ class LandmarkPainter extends CustomPainter {
     }
     for (final point in visiblePoints) {
       final offset = _offset(point, size);
-      canvas.drawCircle(offset, 5, pointPaint);
+      canvas.drawCircle(
+        offset,
+        5,
+        Paint()..color = _confidenceColor(_cyan, point.visibility),
+      );
       canvas.drawCircle(
         offset,
         10,
-        Paint()..color = _cyan.withValues(alpha: .15),
+        Paint()..color = _confidenceColor(_cyan, point.visibility, floor: .03),
       );
     }
 
@@ -960,14 +969,21 @@ class LandmarkPainter extends CustomPainter {
       canvas.drawLine(
         _worldOffset(first.x, first.y, size),
         _worldOffset(second.x, second.y, size),
-        linePaint,
+        Paint()
+          ..color = _confidenceColor(
+            _cyan,
+            math.min(first.visibility, second.visibility),
+            floor: .15,
+          )
+          ..strokeWidth = 1.2
+          ..style = PaintingStyle.stroke,
       );
     }
     for (final landmark in pose) {
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         3.5,
-        pointPaint,
+        Paint()..color = _confidenceColor(_cyan, landmark.visibility),
       );
     }
 
@@ -978,7 +994,7 @@ class LandmarkPainter extends CustomPainter {
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         2.5,
-        Paint()..color = _yellow,
+        Paint()..color = _confidenceColor(_yellow, landmark.visibility),
       );
     }
     for (final landmark
@@ -986,7 +1002,7 @@ class LandmarkPainter extends CustomPainter {
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         2.5,
-        Paint()..color = _mint,
+        Paint()..color = _confidenceColor(_mint, landmark.visibility),
       );
     }
   }
@@ -1010,27 +1026,36 @@ class HandSkeletonPainter extends CustomPainter {
     final hands = frame?.hands ?? const <TrackedHand>[];
     for (final hand in hands) {
       final color = hand.handedness == Handedness.left ? _mint : _cyan;
-      final linePaint = Paint()
-        ..color = color.withValues(alpha: .8)
-        ..strokeWidth = 2
-        ..style = PaintingStyle.stroke;
-      final pointPaint = Paint()..color = color;
       for (final edge in handLandmarkEdges) {
         if (edge.any((index) => index >= hand.landmarks.length)) continue;
+        final first = hand.landmarks[edge[0]];
+        final second = hand.landmarks[edge[1]];
         canvas.drawLine(
-          _project(hand.landmarks[edge[0]], size),
-          _project(hand.landmarks[edge[1]], size),
-          linePaint,
+          _project(first, size),
+          _project(second, size),
+          Paint()
+            ..color = _confidenceColor(
+              color,
+              math.min(first.visibility, second.visibility),
+              floor: .2,
+            )
+            ..strokeWidth = 2
+            ..style = PaintingStyle.stroke,
         );
       }
       for (final landmark in hand.landmarks) {
         final point = _project(landmark, size);
         final radius = (4.5 - landmark.z.abs() * 8).clamp(2.5, 5.5);
-        canvas.drawCircle(point, radius, pointPaint);
+        canvas.drawCircle(
+          point,
+          radius,
+          Paint()..color = _confidenceColor(color, landmark.visibility),
+        );
         canvas.drawCircle(
           point,
           radius + 4,
-          Paint()..color = color.withValues(alpha: .12),
+          Paint()
+            ..color = _confidenceColor(color, landmark.visibility, floor: .03),
         );
       }
     }
@@ -1162,6 +1187,8 @@ class LiveTranslatorScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 _HandAnalysisCard(controller: controller),
                 const SizedBox(height: 12),
+                _LandmarkSchemaCard(controller: controller),
+                const SizedBox(height: 12),
                 _CaptionCard(controller: controller),
               ],
             ),
@@ -1183,8 +1210,14 @@ class _HandAnalysisCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final frame = controller.latestFrame;
-    final motion = frame?.handMotion;
     final face = frame?.faceExpression;
+    final trackedHands = frame?.hands ?? const <TrackedHand>[];
+    final averageOpenness = trackedHands.isEmpty
+        ? 0.0
+        : trackedHands
+                  .map((hand) => hand.openness)
+                  .reduce((left, right) => left + right) /
+              trackedHands.length;
     int handPointCount(Handedness side) {
       for (final hand in frame?.hands ?? const <TrackedHand>[]) {
         if (hand.handedness == side) return hand.landmarks.length;
@@ -1264,8 +1297,18 @@ class _HandAnalysisCard extends StatelessWidget {
                     : 'locked · hidden',
                 active: subject?.locked == true,
               ),
+              _WorldReadout(
+                label: 'Points',
+                value: '${((frame?.trackingConfidence ?? 0) * 100).round()}%',
+                active: (frame?.trackingConfidence ?? 0) >= 0.6,
+              ),
             ],
           ),
+          if (trackedHands.any((hand) => hand.fingerStatus.isNotEmpty)) ...[
+            const SizedBox(height: 9),
+            for (final hand in trackedHands)
+              if (hand.fingerStatus.isNotEmpty) _FingerStatusRow(hand: hand),
+          ],
           const SizedBox(height: 11),
           Wrap(
             spacing: 12,
@@ -1275,33 +1318,33 @@ class _HandAnalysisCard extends StatelessWidget {
                 label: 'Shape',
                 value: analysis?.gestureLabel ?? 'Not read',
               ),
-              _Metric(label: 'Motion', value: motion?.direction ?? 'Still'),
               _Metric(
                 label: 'Open',
-                value: '${((motion?.averageOpenness ?? 0) * 100).round()}%',
-              ),
-              _Metric(
-                label: 'Velocity',
-                value: (motion?.averageSpeed ?? 0).toStringAsFixed(2),
-              ),
-              _Metric(
-                label: 'Accel.',
-                value: (motion?.averageAcceleration ?? 0).toStringAsFixed(2),
+                value: '${(averageOpenness * 100).round()}%',
               ),
               PrimaryButton(
                 label: controller.analysisInFlight
-                    ? 'Sending…'
-                    : 'Analyse utterance',
-                icon: Icons.insights_outlined,
+                    ? 'Processing…'
+                    : controller.isCapturingUtterance
+                    ? 'Analyse utterance'
+                    : 'Start utterance',
+                icon: controller.isCapturingUtterance
+                    ? Icons.insights_outlined
+                    : Icons.fiber_manual_record,
                 onPressed: controller.analysisInFlight
                     ? null
-                    : controller.analyzeSign,
+                    : controller.isCapturingUtterance
+                    ? controller.analyzeSign
+                    : controller.startUtterance,
               ),
             ],
           ),
           const SizedBox(height: 9),
           Text(
-            analysis?.detail ?? 'The front end groups one utterance into motion chunks before analysis.',
+            analysis?.detail ??
+                (controller.isCapturingUtterance
+                    ? 'Capturing LandmarkFrame coordinates. Analyse when the word or sentence is complete.'
+                    : 'Press Start utterance, sign, then Analyse utterance.'),
             style: const TextStyle(color: _muted, fontSize: 10, height: 1.35),
           ),
           const SizedBox(height: 9),
@@ -1401,6 +1444,138 @@ class _Metric extends StatelessWidget {
   );
 }
 
+class _LandmarkSchemaCard extends StatelessWidget {
+  const _LandmarkSchemaCard({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final frame = controller.latestFrame;
+    final frameJson = frame?.toJson();
+    final jsonText = frameJson == null
+        ? 'Waiting for the first LandmarkFrame...'
+        : const JsonEncoder.withIndent('  ').convert(frameJson);
+    final captureColor = controller.isCapturingUtterance ? _red : _subtle;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _cyan.withValues(alpha: .035),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: _cyan.withValues(alpha: .16)),
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: true,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        iconColor: _cyan,
+        collapsedIconColor: _subtle,
+        title: Row(
+          children: <Widget>[
+            const Icon(Icons.data_object, color: _cyan, size: 17),
+            const SizedBox(width: 8),
+            const Text(
+              'LandmarkFrame schema',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+            const Spacer(),
+            Text(
+              controller.isCapturingUtterance ? 'CAPTURING' : 'PREVIEW',
+              style: TextStyle(
+                color: captureColor,
+                fontSize: 9,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          controller.isCapturingUtterance
+              ? '${controller.utteranceFrameCount} frames stored · auto-finishes after a stable pause'
+              : '${controller.lastUtteranceFrames.length} completed frames · one JSON object shown below',
+          style: const TextStyle(color: _subtle, fontSize: 9),
+        ),
+        children: <Widget>[
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              _WorldReadout(
+                label: 'L hand',
+                value: '${_handPointCount(frame, Handedness.left)} pts',
+                active: _handPointCount(frame, Handedness.left) > 0,
+              ),
+              _WorldReadout(
+                label: 'R hand',
+                value: '${_handPointCount(frame, Handedness.right)} pts',
+                active: _handPointCount(frame, Handedness.right) > 0,
+              ),
+              _WorldReadout(
+                label: 'Pose',
+                value: '${frame?.poseLandmarks.length ?? 0} pts',
+                active: (frame?.poseLandmarks.isNotEmpty ?? false),
+              ),
+              _WorldReadout(
+                label: 'Face',
+                value:
+                    '${frame?.faceUpperLandmarks.length ?? 0} + ${frame?.faceMouthLandmarks.length ?? 0}',
+                active:
+                    (frame?.faceUpperLandmarks.isNotEmpty ?? false) ||
+                    (frame?.faceMouthLandmarks.isNotEmpty ?? false),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Current frame JSON · coordinates, confidence, and tracking state',
+              style: const TextStyle(
+                color: _subtle,
+                fontSize: 9,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 270),
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _background.withValues(alpha: .8),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: SingleChildScrollView(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SelectableText(
+                  jsonText,
+                  style: const TextStyle(
+                    color: _muted,
+                    fontSize: 9,
+                    height: 1.35,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _handPointCount(LandmarkFrame? frame, Handedness side) {
+    for (final hand in frame?.hands ?? const <TrackedHand>[]) {
+      if (hand.handedness == side) return hand.landmarks.length;
+    }
+    return 0;
+  }
+}
+
 class _WorldReadout extends StatelessWidget {
   const _WorldReadout({
     required this.label,
@@ -1431,6 +1606,83 @@ class _WorldReadout extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _FingerStatusRow extends StatelessWidget {
+  const _FingerStatusRow({required this.hand});
+
+  final TrackedHand hand;
+
+  static const _fingerOrder = <String>[
+    'thumb',
+    'index',
+    'middle',
+    'ring',
+    'pinky',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final side = handednessToString(hand.handedness).toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Wrap(
+        spacing: 5,
+        runSpacing: 5,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          Text(
+            '$side fingers',
+            style: const TextStyle(
+              color: _subtle,
+              fontSize: 9,
+              fontFamily: 'monospace',
+            ),
+          ),
+          for (final finger in _fingerOrder)
+            if (hand.fingerStatus[finger] != null)
+              _FingerStatusChip(
+                name: finger,
+                status: hand.fingerStatus[finger]!,
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FingerStatusChip extends StatelessWidget {
+  const _FingerStatusChip({required this.name, required this.status});
+
+  final String name;
+  final FingerTrackingStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status.status) {
+      'observed' => _mint,
+      'uncertain' => _yellow,
+      'not_visible' => _red,
+      _ => _subtle,
+    };
+    final label = name == 'middle'
+        ? 'mid'
+        : name == 'thumb'
+        ? 'thumb'
+        : name;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: .2)),
+      ),
+      child: Text(
+        '$label ${status.displayLabel} ${(status.confidence * 100).round()}%',
+        style: TextStyle(color: color, fontSize: 8, fontFamily: 'monospace'),
+      ),
+    );
+  }
 }
 
 class _StatusPill extends StatelessWidget {

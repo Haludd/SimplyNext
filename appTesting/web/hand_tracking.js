@@ -91,21 +91,6 @@ const DEEPFACE_API_URL =
       'http://127.0.0.1:8000/v1/emotions/analyze'
     : '';
 const DEEPFACE_INTERVAL_MS = 1200;
-const configuredTrackingWebSocketUrl =
-  globalThis.signBridgeTrackingWebSocketUrl;
-const queryTrackingWebSocketUrl = new URLSearchParams(
-  globalThis.location.search,
-).get('tracking_ws');
-const TRACKING_WEBSOCKET_URL =
-  BACKEND_ENABLED
-    ? configuredTrackingWebSocketUrl ||
-      queryTrackingWebSocketUrl ||
-      'ws://127.0.0.1:8001/v1/tracking'
-    : '';
-const TRACKING_CHUNK_INTERVAL_MS = 1000;
-const TRACKING_MAX_BUFFERED_FRAMES = 120;
-const TRACKING_MAX_FRAMES_PER_CHUNK = 36;
-const TRACKING_MAX_SOCKET_BUFFER_BYTES = 2_000_000;
 const queryTrackingFps = Number(
   new URLSearchParams(globalThis.location.search).get('tracking_fps'),
 );
@@ -114,12 +99,25 @@ const TRACKING_FPS = Number.isFinite(queryTrackingFps)
   : 30;
 const DETECTION_INTERVAL_MS = 1000 / TRACKING_FPS;
 const FACE_DETECTION_INTERVAL_MS = 1000 / Math.min(20, TRACKING_FPS);
+const POINT_QUALITY_CANVAS_WIDTH = 192;
 const SUBJECT_MATCH_DISTANCE = 0.32;
 const SUBJECT_FACE_MATCH_DISTANCE = 0.25;
 const SUBJECT_ACQUIRE_STABLE_FRAMES = 12;
 // Use torso/head points for identity matching. Wrists and elbows are omitted
 // because they are expected to move quickly during signing.
 const SUBJECT_ANCHOR_INDICES = [0, 11, 12, 23, 24];
+
+// MediaPipe gives us 21 points for each detected hand. Keep the five fingers
+// as named groups so the app can report the quality of each finger instead of
+// only saying "the hand was detected".
+const FINGER_DEFINITIONS = {
+  thumb: [1, 2, 3, 4],
+  index: [5, 6, 7, 8],
+  middle: [9, 10, 11, 12],
+  ring: [13, 14, 15, 16],
+  pinky: [17, 18, 19, 20],
+};
+const FINGER_HISTORY_LENGTH = 8;
 
 let handLandmarker;
 let poseLandmarker;
@@ -135,16 +133,11 @@ let deepFaceWarningShown = false;
 let deepFaceSubjectGeneration = 0;
 let emotionCanvas;
 let emotionContext;
-let trackingSocket;
-let trackingSocketReconnectTimer;
-let trackingSocketSessionId;
-let trackingSocketFrameCount = 0;
-let trackingSocketChunkCount = 0;
-let trackingSocketWarningShown = false;
-let trackingUtteranceId;
-let trackingChunkSequence = 0;
-let trackingChunkFrames = [];
-let trackingChunkStartedAt = 0;
+let pointQualityCanvas;
+let pointQualityContext;
+let pointQualityPixels;
+let pointQualityWidth = 0;
+let pointQualityHeight = 0;
 let lastProcessedAt = 0;
 let detectionInProgress = false;
 let trackingFrameErrorShown = false;
@@ -153,13 +146,13 @@ let trackingLoopStartedAt = 0;
 let trackingLoopLastLogAt = 0;
 let lastFaceResult;
 let lastFaceProcessedAt = 0;
-let previousHandMotion = {
-  left: null,
-  right: null,
-};
-let previousMotionTimestamp;
 let subjectTrack;
 let subjectAcquire;
+let fingerQualityHistory = {
+  left: {},
+  right: {},
+  unknown: {},
+};
 
 function cameraElements() {
   return Array.from(
@@ -202,28 +195,132 @@ function syncVisibleCameraElement() {
   });
 }
 
+function clamp01(value) {
+  return Math.min(1, Math.max(0, Number(value) || 0));
+}
+
+// MediaPipe's hand landmarks do not expose a visibility score for every
+// joint. Build a small low-resolution copy of the current frame and measure
+// local high-frequency detail around each point. A blurred or covered patch
+// has less detail, so its point confidence is reduced. This is a quality
+// estimate, not a guarantee that the anatomy is visible.
+function preparePointQualityFrame() {
+  pointQualityPixels = null;
+  if (
+    !video ||
+    video.readyState < 2 ||
+    !video.videoWidth ||
+    !video.videoHeight
+  ) {
+    return;
+  }
+  try {
+    pointQualityCanvas ??= document.createElement('canvas');
+    pointQualityWidth = POINT_QUALITY_CANVAS_WIDTH;
+    pointQualityHeight = Math.max(
+      1,
+      Math.round(
+        pointQualityWidth * (video.videoHeight / video.videoWidth),
+      ),
+    );
+    pointQualityCanvas.width = pointQualityWidth;
+    pointQualityCanvas.height = pointQualityHeight;
+    pointQualityContext ??= pointQualityCanvas.getContext('2d', {
+      willReadFrequently: true,
+    });
+    if (!pointQualityContext) return;
+    pointQualityContext.drawImage(
+      video,
+      0,
+      0,
+      pointQualityWidth,
+      pointQualityHeight,
+    );
+    pointQualityPixels = pointQualityContext.getImageData(
+      0,
+      0,
+      pointQualityWidth,
+      pointQualityHeight,
+    ).data;
+  } catch (error) {
+    // Camera/CORS/browser canvas restrictions should not stop tracking. The
+    // fallback below uses the detector's hand-level confidence only.
+    pointQualityPixels = null;
+  }
+}
+
+function pixelLumaAt(x, y) {
+  if (!pointQualityPixels) return 128;
+  const pixelX = Math.min(pointQualityWidth - 1, Math.max(0, Math.round(x)));
+  const pixelY = Math.min(pointQualityHeight - 1, Math.max(0, Math.round(y)));
+  const offset = (pixelY * pointQualityWidth + pixelX) * 4;
+  return (
+    pointQualityPixels[offset] * 0.299 +
+    pointQualityPixels[offset + 1] * 0.587 +
+    pointQualityPixels[offset + 2] * 0.114
+  );
+}
+
+function localImageConfidence(point) {
+  if (!pointQualityPixels || !validHandPoint(point)) return 0.85;
+  const centerX = clamp01(point.x) * (pointQualityWidth - 1);
+  const centerY = clamp01(point.y) * (pointQualityHeight - 1);
+  let detail = 0;
+  let samples = 0;
+  for (let y = -2; y <= 2; y += 1) {
+    for (let x = -2; x <= 2; x += 1) {
+      const horizontal = Math.abs(
+        pixelLumaAt(centerX + x + 1, centerY + y) -
+          pixelLumaAt(centerX + x - 1, centerY + y),
+      );
+      const vertical = Math.abs(
+        pixelLumaAt(centerX + x, centerY + y + 1) -
+          pixelLumaAt(centerX + x, centerY + y - 1),
+      );
+      detail += horizontal + vertical;
+      samples += 1;
+    }
+  }
+  const averageDetail = detail / Math.max(1, samples);
+  const sharpness = clamp01((averageDetail - 3) / 24);
+  return 0.25 + sharpness * 0.75;
+}
+
+function pointConfidence(point, modelConfidence) {
+  const detectorConfidence = clamp01(modelConfidence);
+  const imageConfidence = localImageConfidence(point);
+  // The detector remains the primary signal, while local image quality can
+  // lower confidence when this exact part of the frame is blurred/covered.
+  return clamp01(
+    detectorConfidence * (0.65 + imageConfidence * 0.35),
+  );
+}
+
 function posePointToJson(point, index, name) {
   if (!point) return null;
+  const modelConfidence = point.visibility ?? point.presence ?? 0;
+  const confidence = pointConfidence(point, modelConfidence);
   return {
     index,
     name,
     x: point.x,
     y: point.y,
     z: point.z ?? 0,
-    visibility: point.visibility ?? point.presence ?? 0,
-    presence: point.presence ?? point.visibility ?? 0,
+    visibility: confidence,
+    presence: confidence,
   };
 }
 
 function facePointToJson(point, index, name) {
   if (!point) return null;
+  const confidence = pointConfidence(point, 0.75);
   return {
     index,
     name,
     x: point.x,
     y: point.y,
     z: point.z ?? 0,
-    visibility: 1,
+    visibility: confidence,
   };
 }
 
@@ -458,248 +555,92 @@ function handBelongsToSubject(hand, subject) {
   );
 }
 
-function motionDirection(dx, dy) {
-  if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return 'still';
-  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
-  return dy > 0 ? 'down' : 'up';
-}
-
-function mostCommon(values) {
-  if (values.length === 0) return 'still';
-  const counts = {};
-  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
-  return Object.entries(counts).reduce((best, current) =>
-    current[1] > best[1] ? current : best,
-  )[0];
-}
-
-function calculateMotion(hands, timestampMs) {
-  const elapsedSeconds = previousMotionTimestamp
-    ? Math.max(0.016, (timestampMs - previousMotionTimestamp) / 1000)
-    : 0.016;
-  previousMotionTimestamp = timestampMs;
-  const speeds = [];
-  const accelerations = [];
-  const directions = [];
-  const perHand = {};
-  const seen = new Set();
-
-  for (const side of ['left', 'right']) {
-    const hand = hands.find((candidate) => candidate.handedness === side);
-    const wrist = hand?.landmarks?.[0];
-    if (!wrist) {
-      previousHandMotion[side] = null;
-      continue;
-    }
-    seen.add(side);
-    const previous = previousHandMotion[side];
-    let velocity = 0;
-    let acceleration = 0;
-    let direction = 'still';
-    if (previous) {
-      const dx = wrist.x - previous.x;
-      const dy = wrist.y - previous.y;
-      const dz = (wrist.z ?? 0) - previous.z;
-      velocity = Math.sqrt(dx * dx + dy * dy + dz * dz) / elapsedSeconds;
-      acceleration = Math.abs(velocity - previous.velocity) / elapsedSeconds;
-      direction = motionDirection(dx, dy);
-      directions.push(direction);
-    }
-    speeds.push(velocity);
-    accelerations.push(acceleration);
-    perHand[side] = {velocity, acceleration, direction};
-    previousHandMotion[side] = {
-      x: wrist.x,
-      y: wrist.y,
-      z: wrist.z ?? 0,
-      velocity,
-    };
-  }
-
-  return {
-    average_speed: speeds.length
-      ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length
-      : 0,
-    average_velocity: speeds.length
-      ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length
-      : 0,
-    peak_velocity: speeds.length ? Math.max(...speeds) : 0,
-    average_acceleration: accelerations.length
-      ? accelerations.reduce((sum, value) => sum + value, 0) / accelerations.length
-      : 0,
-    peak_acceleration: accelerations.length ? Math.max(...accelerations) : 0,
-    direction: mostCommon(directions),
-    per_hand: perHand,
-    tracked_hands: seen.size,
-  };
-}
-
-function wireFrameFromFrame(frame) {
-  return {
-    timestamp: new Date(frame.timestamp_ms).toISOString(),
-    tracking_confidence: frame.processing_confidence,
-    hands: frame.hands,
-    face_expression: frame.face
-      ? {
-          label: frame.face.label,
-          confidence: frame.face.confidence,
-          emotion_scores: frame.face.emotion_scores,
-        }
-      : null,
-    left_shoulder: frame.left_shoulder,
-    right_shoulder: frame.right_shoulder,
-    landmark_worlds: frame.landmark_worlds,
-    hand_motion: frame.hand_motion,
-    subject_tracking: frame.subject_tracking,
-  };
-}
-
-function summarizeChunk(frames) {
-  const motions = frames
-    .map((frame) => frame.hand_motion)
-    .filter((motion) => motion != null);
-  const average = (values) =>
-    values.length
-      ? values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length
-      : 0;
-  const speeds = motions.map((motion) => motion.average_velocity ?? motion.average_speed ?? 0);
-  const accelerations = motions.map((motion) => motion.average_acceleration ?? 0);
-  const directions = motions.map((motion) => motion.direction ?? 'still');
-  const perHand = {};
-  for (const side of ['left', 'right']) {
-    const values = motions
-      .map((motion) => motion.per_hand?.[side])
-      .filter((motion) => motion != null);
-    const sideSpeeds = values.map((motion) => motion.velocity ?? 0);
-    const sideAccelerations = values.map((motion) => motion.acceleration ?? 0);
-    perHand[side] = {
-      average_velocity: average(sideSpeeds),
-      peak_velocity: sideSpeeds.length ? Math.max(...sideSpeeds) : 0,
-      average_acceleration: average(sideAccelerations),
-      peak_acceleration: sideAccelerations.length
-        ? Math.max(...sideAccelerations)
-        : 0,
-    };
-  }
-  return {
-    frame_count: frames.length,
-    average_velocity: average(speeds),
-    peak_velocity: speeds.length ? Math.max(...speeds) : 0,
-    average_acceleration: average(accelerations),
-    peak_acceleration: accelerations.length ? Math.max(...accelerations) : 0,
-    direction: mostCommon(directions),
-    per_hand: perHand,
-  };
-}
-
-function beginUtterance() {
-  trackingUtteranceId = `utterance-${Date.now()}`;
-  trackingChunkSequence = 0;
-  trackingChunkFrames = [];
-  trackingChunkStartedAt = 0;
-  previousHandMotion = {left: null, right: null};
-  previousMotionTimestamp = null;
-}
-
-function sendUtteranceStart() {
-  if (!trackingSocket || trackingSocket.readyState !== WebSocket.OPEN) return;
-  trackingSocket.send(
-    JSON.stringify({
-      type: 'utterance_start',
-      session_id: trackingSocketSessionId,
-      utterance_id: trackingUtteranceId,
-    }),
+function validHandPoint(point) {
+  return (
+    point &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y) &&
+    Number.isFinite(point.z ?? 0)
   );
 }
 
-function sendTrackingChunk(force = false) {
-  if (
-    !trackingSocket ||
-    trackingSocket.readyState !== WebSocket.OPEN ||
-    trackingChunkFrames.length === 0 ||
-    trackingSocket.bufferedAmount > TRACKING_MAX_SOCKET_BUFFER_BYTES
-  ) {
-    return false;
-  }
-  const entries = trackingChunkFrames.slice(
-    0,
-    TRACKING_MAX_FRAMES_PER_CHUNK,
+function distanceBetweenPoints(first, second) {
+  return Math.hypot(
+    first.x - second.x,
+    first.y - second.y,
+    (first.z ?? 0) - (second.z ?? 0),
   );
-  const latestQueued = trackingChunkFrames[trackingChunkFrames.length - 1];
-  if (
-    !force &&
-    latestQueued.timestamp_ms - trackingChunkFrames[0].timestamp_ms <
-      TRACKING_CHUNK_INTERVAL_MS
-  ) {
-    return false;
-  }
-  const latest = entries[entries.length - 1];
-  const frames = entries.map((entry) => entry.wire);
-  const startedAt = new Date(entries[0].timestamp_ms).toISOString();
-  const endedAt = new Date(latest.timestamp_ms).toISOString();
-  const chunk = {
-    type: 'chunk',
-    session_id: trackingSocketSessionId,
-    utterance_id: trackingUtteranceId,
-    chunk_id: `${trackingUtteranceId}-chunk-${++trackingChunkSequence}`,
-    started_at: startedAt,
-    ended_at: endedAt,
-    frame_count: frames.length,
-    frames,
-    features: summarizeChunk(entries.map((entry) => entry.frame)),
-  };
-  try {
-    trackingSocket.send(JSON.stringify(chunk));
-    trackingSocketFrameCount += frames.length;
-    trackingSocketChunkCount += 1;
-    trackingChunkFrames.splice(0, entries.length);
-    trackingChunkStartedAt = trackingChunkFrames.length
-      ? trackingChunkFrames[0].timestamp_ms
-      : 0;
-    return true;
-  } catch (error) {
-    console.warn('Unable to send tracking chunk over WebSocket.', error);
-    return false;
-  }
 }
 
-function flushTrackingChunks() {
-  // The pending queue is bounded, so flushing it cannot grow memory without
-  // limit after a reconnect or a short backend outage.
-  let attempts = 0;
-  while (
-    trackingChunkFrames.length > 0 &&
-    attempts < 10 &&
-    sendTrackingChunk(true)
-  ) {
-    attempts += 1;
-  }
+function palmScale(landmarks) {
+  const wrist = landmarks[0];
+  const palmPoints = [landmarks[5], landmarks[9], landmarks[17]].filter(
+    validHandPoint,
+  );
+  if (!validHandPoint(wrist) || palmPoints.length === 0) return 0.1;
+  const average =
+    palmPoints.reduce(
+      (sum, point) => sum + distanceBetweenPoints(wrist, point),
+      0,
+    ) / palmPoints.length;
+  return Math.max(0.04, average);
 }
 
-function queueTrackingFrame(frame) {
-  if (!BACKEND_ENABLED) return;
-  if (!trackingChunkStartedAt) trackingChunkStartedAt = frame.timestamp_ms;
-  trackingChunkFrames.push({
-    timestamp_ms: frame.timestamp_ms,
-    frame,
-    wire: wireFrameFromFrame(frame),
-  });
-  if (trackingChunkFrames.length > TRACKING_MAX_BUFFERED_FRAMES) {
-    const dropped =
-      trackingChunkFrames.length - TRACKING_MAX_BUFFERED_FRAMES;
-    trackingChunkFrames.splice(0, dropped);
-    trackingChunkStartedAt = trackingChunkFrames[0]?.timestamp_ms ?? 0;
-    if (!trackingSocketWarningShown) {
-      console.warn(
-        'Tracking WebSocket is behind; dropping old unsent frames to keep capture continuous.',
-      );
-      trackingSocketWarningShown = true;
-    }
+function fingerObservation(landmarks, indices, handConfidence) {
+  const points = indices.map((index) => landmarks[index]);
+  if (points.some((point) => !validHandPoint(point))) {
+    return {score: 0, status: 'not_visible'};
   }
-  // Chunks, rather than individual frames, are the transport unit for live
-  // utterance analysis. Flutter still receives every browser event locally so
-  // the overlay remains smooth.
-  sendTrackingChunk(false);
+
+  const scale = palmScale(landmarks);
+  const segmentLengths = points.slice(1).map((point, index) =>
+    distanceBetweenPoints(point, points[index]),
+  );
+  const minimumSegment = scale * 0.012;
+  const maximumSegment = scale * 1.4;
+  const plausibleGeometry = segmentLengths.every(
+    (length) => length >= minimumSegment && length <= maximumSegment,
+  );
+  const pointVisibility = points.reduce(
+    (minimum, point) => Math.min(minimum, point.visibility ?? 1),
+    1,
+  );
+  const confidence = Math.min(1, Math.max(0, Number(handConfidence) || 0));
+  const geometryScore = plausibleGeometry ? 1 : 0.25;
+  const score = confidence * 0.65 + pointVisibility * 0.15 + geometryScore * 0.2;
+  const status = score >= 0.72
+    ? 'observed'
+    : score >= 0.4
+      ? 'uncertain'
+      : 'not_visible';
+  return {score, status};
+}
+
+function fingerStatusesForHand(landmarks, handConfidence, handedness) {
+  const side = ['left', 'right'].includes(handedness) ? handedness : 'unknown';
+  const history = fingerQualityHistory[side] ?? {};
+  const statuses = {};
+  for (const [finger, indices] of Object.entries(FINGER_DEFINITIONS)) {
+    const observation = fingerObservation(landmarks, indices, handConfidence);
+    const values = history[finger] ?? [];
+    values.push(observation.score);
+    history[finger] = values.slice(-FINGER_HISTORY_LENGTH);
+    const average =
+      history[finger].reduce((sum, value) => sum + value, 0) /
+      history[finger].length;
+    const status = average >= 0.72
+      ? 'observed'
+      : average >= 0.4
+        ? 'uncertain'
+        : 'not_visible';
+    statuses[finger] = {
+      status,
+      confidence: Number(average.toFixed(3)),
+      evidence_frames: history[finger].length,
+    };
+  }
+  fingerQualityHistory[side] = history;
+  return statuses;
 }
 
 function subjectFaceCrop(faceLandmarks, subject, sourceWidth, sourceHeight) {
@@ -849,77 +790,48 @@ function deepFaceToJson(result) {
   };
 }
 
-function connectTrackingSocket() {
-  if (
-    !TRACKING_WEBSOCKET_URL ||
-    typeof WebSocket === 'undefined' ||
-    !started ||
-    (trackingSocket &&
-      (trackingSocket.readyState === WebSocket.CONNECTING ||
-        trackingSocket.readyState === WebSocket.OPEN))
-  ) {
-    return;
-  }
-
-  trackingSocket = new WebSocket(TRACKING_WEBSOCKET_URL);
-  trackingSocket.addEventListener('open', () => {
-    trackingSocket.send(
-      JSON.stringify({
-        type: 'start',
-        session_id: trackingSocketSessionId,
-      }),
-    );
-    sendUtteranceStart();
-    flushTrackingChunks();
-    console.info('SignBridge utterance WebSocket connected.');
-  });
-  trackingSocket.addEventListener('message', (event) => {
-    try {
-      const message = JSON.parse(event.data);
-      if (message.type === 'frame_ack' || message.type === 'chunk_ack') {
-        trackingSocketFrameCount = message.frames_received ?? trackingSocketFrameCount;
-        trackingSocketChunkCount = message.chunks_received ?? trackingSocketChunkCount;
-      }
-    } catch (_) {
-      // Ignore non-JSON diagnostic messages from a compatible server.
-    }
-  });
-  trackingSocket.addEventListener('error', (error) => {
-    if (!trackingSocketWarningShown) {
-      console.warn('Coordinate WebSocket unavailable.', error);
-      trackingSocketWarningShown = true;
-    }
-  });
-  trackingSocket.addEventListener('close', () => {
-    trackingSocket = null;
-    if (started) {
-      clearTimeout(trackingSocketReconnectTimer);
-      trackingSocketReconnectTimer = setTimeout(connectTrackingSocket, 2000);
-    }
-  });
-}
-
 function dispatchFrame(result, poseResult, faceResult, timestampMs) {
+  preparePointQualityFrame();
   const handednesses = result.handednesses ?? result.handedness ?? [];
   const allHands = (result.landmarks ?? []).map((landmarks, index) => {
     const category = handednesses[index]?.[0];
     const world = result.worldLandmarks?.[index] ?? [];
+    const handedness = category?.categoryName?.toLowerCase() ?? 'unknown';
+    const confidence = category?.score ?? 0;
     return {
-      handedness: category?.categoryName?.toLowerCase() ?? 'unknown',
-      confidence: category?.score ?? 0,
-      landmarks: landmarks.map((landmark, landmarkIndex) => ({
-        x: landmark.x,
-        y: landmark.y,
-        z: landmark.z ?? 0,
-        world_x: world[landmarkIndex]?.x,
-        world_y: world[landmarkIndex]?.y,
-        world_z: world[landmarkIndex]?.z,
-        visibility: 1,
-      })),
+      handedness,
+      confidence,
+      landmarks: Array.from({length: 21}, (_, landmarkIndex) => {
+        const landmark = landmarks[landmarkIndex];
+        const valid = validHandPoint(landmark);
+        return {
+          // Keep the fixed 21-point schema, but make an absent point explicit
+          // with zero confidence instead of dereferencing null and killing the
+          // continuous capture loop.
+          x: valid ? landmark.x : 0,
+          y: valid ? landmark.y : 0,
+          z: valid ? landmark.z ?? 0 : 0,
+          world_x: valid ? world[landmarkIndex]?.x : undefined,
+          world_y: valid ? world[landmarkIndex]?.y : undefined,
+          world_z: valid ? world[landmarkIndex]?.z : undefined,
+          visibility: valid ? pointConfidence(landmark, confidence) : 0,
+        };
+      }),
     };
   });
   const subject = selectSubjectPose(poseResult);
-  const hands = allHands.filter((hand) => handBelongsToSubject(hand, subject));
+  // Filter by the locked subject before updating finger histories. A second
+  // person's hand must not contaminate the signer's per-finger smoothing.
+  const hands = allHands
+    .filter((hand) => handBelongsToSubject(hand, subject))
+    .map((hand) => ({
+      ...hand,
+      finger_status: fingerStatusesForHand(
+        hand.landmarks,
+        hand.confidence,
+        hand.handedness,
+      ),
+    }));
   const leftHand = hands.find((hand) => hand.handedness === 'left');
   const rightHand = hands.find((hand) => hand.handedness === 'right');
   const pose = subject?.visible === false ? [] : subject?.landmarks ?? [];
@@ -941,14 +853,11 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
     FACE_MOUTH_LANDMARKS,
     facePointToJson,
   );
-  const hasShoulders =
-    leftShoulder?.visibility >= 0.45 && rightShoulder?.visibility >= 0.45;
   if (subject?.visible !== true) {
     deepFaceSubjectGeneration += 1;
     deepFaceEmotion = null;
   }
   const face = deepFaceToJson(deepFaceEmotion);
-  const handMotion = calculateMotion(hands, timestampMs);
   const subjectTracking = subject
     ? {
         locked: subject.locked === true,
@@ -969,6 +878,7 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
     left_hand: {
       handedness: 'left',
       confidence: leftHand?.confidence ?? 0,
+      finger_status: leftHand?.finger_status ?? {},
       landmarks: (leftHand?.landmarks ?? []).map((landmark, index) => ({
         index,
         x: landmark.x,
@@ -983,6 +893,7 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
     right_hand: {
       handedness: 'right',
       confidence: rightHand?.confidence ?? 0,
+      finger_status: rightHand?.finger_status ?? {},
       landmarks: (rightHand?.landmarks ?? []).map((landmark, index) => ({
         index,
         x: landmark.x,
@@ -1004,21 +915,43 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
     },
   };
 
+  let confidenceTotal = 0;
+  let expectedPointCount = 0;
+  const addConfidenceGroup = (points, expectedCount) => {
+    if (expectedCount <= 0) return;
+    confidenceTotal += points.reduce(
+      (sum, point) => sum + clamp01(point.visibility),
+      0,
+    );
+    expectedPointCount += expectedCount;
+  };
+  for (const hand of hands) {
+    addConfidenceGroup(hand.landmarks, 21);
+  }
+  if (subject?.visible === true) {
+    addConfidenceGroup(poseLandmarks, POSE_LANDMARKS.length);
+  }
+  if (faceResult?.faceLandmarks?.length > 0 && subject?.visible === true) {
+    addConfidenceGroup(
+      [...faceUpper, ...faceMouth],
+      FACE_UPPER_LANDMARKS.length + FACE_MOUTH_LANDMARKS.length,
+    );
+  }
+  const overallPointConfidence = expectedPointCount > 0
+    ? clamp01(confidenceTotal / expectedPointCount)
+    : 0;
+
   const frame = {
     timestamp_ms: timestampMs,
-    processing_confidence: hands.length > 0
-      ? 0.95
-      : hasShoulders
-        ? 0.8
-        : faceUpper.length > 0 || faceMouth.length > 0
-          ? 0.7
-          : 0,
+    // This score is the mean confidence of every point in the active worlds.
+    // Missing points count as zero against that world's expected budget.
+    processing_confidence: overallPointConfidence,
+    point_confidence: overallPointConfidence,
     hands,
     face,
     left_shoulder: leftShoulder,
     right_shoulder: rightShoulder,
     landmark_worlds: landmarkWorlds,
-    hand_motion: handMotion,
     subject_tracking: subjectTracking,
   };
   window.dispatchEvent(
@@ -1026,7 +959,6 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
       detail: JSON.stringify(frame),
     }),
   );
-  queueTrackingFrame(frame);
   void requestDeepFaceEmotion(subject, faceLandmarks);
 }
 
@@ -1156,24 +1088,6 @@ function waitForCameraElement(timeoutMs = 3000) {
   });
 }
 
-function endUtterance() {
-  if (!started) return Promise.resolve();
-  const endedUtteranceId = trackingUtteranceId;
-  flushTrackingChunks();
-  if (trackingSocket && trackingSocket.readyState === WebSocket.OPEN) {
-    trackingSocket.send(
-      JSON.stringify({
-        type: 'utterance_end',
-        session_id: trackingSocketSessionId,
-        utterance_id: endedUtteranceId,
-      }),
-    );
-  }
-  beginUtterance();
-  sendUtteranceStart();
-  return Promise.resolve();
-}
-
 async function start() {
   if (started) return;
   // A hot restart or an interrupted startup can leave an old stream or
@@ -1218,10 +1132,6 @@ async function start() {
   }
 
   started = true;
-  trackingSocketSessionId = `session-${Date.now()}`;
-  trackingSocketFrameCount = 0;
-  trackingSocketChunkCount = 0;
-  trackingSocketWarningShown = false;
   trackingFrameErrorShown = false;
   lastProcessedAt = 0;
   lastFaceResult = undefined;
@@ -1232,44 +1142,12 @@ async function start() {
   trackingLoopLastLogAt = trackingLoopStartedAt;
   subjectTrack = null;
   subjectAcquire = null;
-  beginUtterance();
-  connectTrackingSocket();
+  fingerQualityHistory = {left: {}, right: {}, unknown: {}};
   processFrame();
 }
 
 async function stop() {
-  const wasStarted = started;
-  if (wasStarted) {
-    flushTrackingChunks();
-    if (trackingSocket && trackingSocket.readyState === WebSocket.OPEN) {
-      trackingSocket.send(
-        JSON.stringify({
-          type: 'utterance_end',
-          session_id: trackingSocketSessionId,
-          utterance_id: trackingUtteranceId,
-        }),
-      );
-    }
-  }
   started = false;
-  clearTimeout(trackingSocketReconnectTimer);
-  if (trackingSocket) {
-    if (trackingSocket.readyState === WebSocket.OPEN) {
-      trackingSocket.send(
-        JSON.stringify({
-          type: 'end',
-          session_id: trackingSocketSessionId,
-        }),
-      );
-    }
-    if (
-      trackingSocket.readyState === WebSocket.OPEN ||
-      trackingSocket.readyState === WebSocket.CONNECTING
-    ) {
-      trackingSocket.close();
-    }
-  }
-  trackingSocket = null;
   if (animationFrame) cancelAnimationFrame(animationFrame);
   stream?.getTracks().forEach((track) => track.stop());
   stream = null;
@@ -1284,11 +1162,6 @@ async function stop() {
   handLandmarker = null;
   poseLandmarker = null;
   faceLandmarker = null;
-  trackingUtteranceId = null;
-  trackingChunkFrames = [];
-  trackingChunkStartedAt = 0;
-  previousHandMotion = {left: null, right: null};
-  previousMotionTimestamp = null;
   lastProcessedAt = 0;
   lastFaceResult = undefined;
   lastFaceProcessedAt = 0;
@@ -1298,10 +1171,11 @@ async function stop() {
   trackingLoopLastLogAt = 0;
   subjectTrack = null;
   subjectAcquire = null;
+  fingerQualityHistory = {left: {}, right: {}, unknown: {}};
 }
 
 globalThis.addEventListener('pagehide', () => {
   void stop();
 });
 
-window.signBridgeHandTracker = { start, stop, endUtterance };
+window.signBridgeHandTracker = { start, stop };

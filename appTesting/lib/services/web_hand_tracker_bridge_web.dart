@@ -51,16 +51,6 @@ class WebHandTrackerBridge {
     }
   }
 
-  Future<void> endUtterance() async {
-    final tracker = globalContext['signBridgeHandTracker'];
-    if (tracker == null) return;
-    final promise = (tracker as JSObject).callMethodVarArgs<JSPromise<JSAny?>>(
-      'endUtterance'.toJS,
-      const <JSAny?>[],
-    );
-    await promise.toDart;
-  }
-
   void dispose() {
     if (_eventListener != null) {
       web.window.removeEventListener('signbridge-hand-frame', _eventListener);

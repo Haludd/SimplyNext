@@ -23,7 +23,11 @@ The generated platform files already include the permission descriptions require
 
 ## Hand tracking and sign analysis
 
-Chrome uses MediaPipe Hand Landmarker through `web/hand_tracking.js`. It requests camera permission, tracks up to two hands, and emits 21 points per hand: normalized `x/y`, relative `z`, handedness, confidence, and world-landmark values when available. MediaPipe Pose Landmarker supplies the left and right shoulder points. The preview is mirrored like a selfie camera, and the skeleton overlay applies the same flip so it stays aligned with the displayed hand; the API keeps the original unmirrored coordinates. `HandPoseNormalizer` converts those points into the shared `LandmarkFrame` contract and derives hand openness, movement speed, acceleration, direction, and the dominant hand.
+Chrome uses MediaPipe Hand Landmarker through `web/hand_tracking.js`. It requests camera permission, tracks up to two hands, and emits 21 points per hand: normalized `x/y`, relative `z`, handedness, confidence, and world-landmark values when available. MediaPipe Pose Landmarker supplies the left and right shoulder points. The preview is mirrored like a selfie camera, and the skeleton overlay applies the same flip so it stays aligned with the displayed hand; the API keeps the original unmirrored coordinates. `HandPoseNormalizer` converts those points into the shared `LandmarkFrame` contract. The frame contains coordinate groups, point confidence, subject tracking, and optional face-expression data for the next processing stage.
+
+Each accepted hand also includes `finger_status` for `thumb`, `index`, `middle`, `ring`, and `pinky`. Each entry is a smoothed landmark-quality signal: `observed`, `uncertain`, or `not_visible`, with a confidence and evidence-frame count. It does not claim that a finger is anatomically missing; a hidden or occluded finger can look the same as an absent finger in a single camera frame. The existing subject lock is unchanged, so these per-finger signals still belong only to the locked signer.
+
+Every emitted landmark's `visibility` is also used as a point-confidence estimate. For hand and face points, the browser combines the detector confidence with local image detail from a small camera patch; for pose points, it also uses MediaPipe's visibility/presence value. `processing_confidence` (and the wire-level `tracking_confidence`) is the average over the active worlds, with missing points counted as zero within their world's expected landmark budget. It is a quality score for deciding whether to trust the frame, not a probability that the point is anatomically present.
 
 The overlay is a 3D-style skeleton projection. It is not pretending that a webcam can recover precise metric depth: `z` is relative depth from the hand model, projected onto the 2D camera view. This is the same compact representation that can be used by a later sequence classifier. Native Apple builds can use Vision's `VNDetectHumanHandPoseRequest` behind the same `TrackingService` interface.
 
@@ -39,9 +43,9 @@ and class scores. If the local service is unavailable, hand and shoulder
 tracking continue but the face signal is left empty.
 
 My signs uses the live tracker rather than placeholder samples. Each valid capture
-stores five examples of a fixed 136-value sample: 63 wrist-centred x/y/z values
-for the left hand, 63 for the right hand (zero-filled when that hand is absent),
-three motion values, and seven facial-expression scores. The saved entry also
+stores five examples of a fixed local coordinate sample: wrist-centred x/y/z values
+for the left and right hands, curated pose/face coordinates, and facial-expression
+scores. The saved entry also
 keeps its selected language, coordinate-space label, and face signal for audit
 and later matching. One-handed signs are accepted; both hands are not required.
 The My signs page includes the ASL reference cards from the seed lexicon and
@@ -54,10 +58,50 @@ The live pipeline is:
 Chrome camera
   → MediaPipe 21-point hand tracker
   → body/hand normalizer + 3D-style skeleton
-  → local feature readout
-  → POST captured sequence to the sign model API
-  → validated gloss/caption + confidence
+  → LandmarkFrame JSON
+  → local utterance buffer: List<LandmarkFrame>
+  → handoff to the next processing stage
 ```
+
+### Capture boundaries and handoff
+
+Tracking and camera detection run continuously after the camera starts. They
+do not automatically decide that a word or sentence has begun, because a
+pause can occur inside a sign or between signs. The reliable first version
+uses an explicit boundary:
+
+1. Press **Start utterance**. The frontend clears its utterance buffer and
+   starts storing new frames.
+2. Sign one word or sentence. Every accepted frame is stored as one
+   `LandmarkFrame` while the live preview continues.
+3. Press **Analyse utterance** when the utterance is complete. The frontend
+   also has an automatic safety boundary: after movement has been observed,
+   a visible, locked subject whose hands remain still for about one second is
+   automatically finished. The manual button remains available because a
+   still hand position can be meaningful in sign language.
+4. The frontend stops storing frames and exposes the completed
+   `List<LandmarkFrame>` as `AppController.lastUtteranceFrames`.
+
+Frames received before Start or after Analyse are still available for the
+live preview, but are not included in that utterance. The next stage should
+consume `lastUtteranceFrames` (or the list returned by
+`TrackingService.finishUtterance()`) and then use `LandmarkFrame.toJson()` for
+serialization. `AppController.lastUtteranceJson` is also available as a
+convenience view. There is no WebSocket in this capture handoff and this
+change does not require editing the backend folder.
+
+The schema deliberately stores landmarks, not a guessed translation:
+
+```dart
+final List<LandmarkFrame> utteranceFrames = <LandmarkFrame>[];
+```
+
+Each `LandmarkFrame` contains its timestamp, frame/point confidence,
+left/right hand worlds (21 landmarks per detected hand), curated pose points,
+curated upper-face and mouth points, handedness/finger quality, and subject
+tracking information. A word or sentence is therefore a time-ordered list of
+these frames. Velocity, acceleration, classifier labels, and camera images
+are not part of this frontend handoff schema.
 
 ## Sending tracking data to the backend
 
@@ -82,7 +126,10 @@ Chrome. The service validates and stores the exact sequence contract and
 returns a conservative heuristic candidate until a trained classifier is
 plugged in. See `backend/README.md` for the endpoint and test commands.
 
-The app buffers the recent normalized frames. Selecting **Analyse sign** posts this payload:
+The app can optionally post the completed sequence if a later integration
+enables `SIGNBRIDGE_ENABLE_BACKEND`; this is separate from capture and is not
+needed for the `appTesting` handoff. Selecting **Analyse utterance** creates
+the payload below from the completed LandmarkFrame list:
 
 ```json
 {
@@ -106,13 +153,6 @@ The app buffers the recent normalized frames. Selecting **Analyse sign** posts t
           ]
         }
       ],
-      "hand_motion": {
-        "average_speed": 0.08,
-        "average_acceleration": 0.03,
-        "average_openness": 0.74,
-        "direction": "up-right",
-        "dominant_hand": "right"
-      },
       "hand_coordinate_analysis": [
         {
           "handedness": "right",
@@ -190,7 +230,7 @@ The backend should validate the schema, store the sequence and model version, re
 
 For uncertain output, return `status: "needs_review"` or `status: "unknown"` with top candidates rather than inventing a sentence. The Flutter controller falls back to its local feature result when the API is not configured or is unavailable.
 
-When `SIGNBRIDGE_API_URL` is not supplied, **Analyse sign** uses an offline
+When `SIGNBRIDGE_API_URL` is not supplied, **Analyse utterance** uses an offline
 simulation. It builds the same `SignSequencePayload`, waits briefly to mimic a
 service call, runs the local feature readout, and returns a clearly labelled
 `simulated` result. No camera frame or coordinate is sent over the network.

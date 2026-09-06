@@ -7,9 +7,12 @@ abstract class TrackingService {
   LandmarkFrame? get latestFrame;
   TrackingSampleBuffer get confidenceWindow;
   List<LandmarkFrame> get recentFrames;
+  List<LandmarkFrame> get utteranceFrames;
   int get utteranceFrameCount;
+  bool get isCapturingUtterance;
   String get status;
   Future<void> start();
+  void beginUtterance();
   Future<List<LandmarkFrame>> finishUtterance();
   void ingest(LandmarkFrame frame);
   void dispose();
@@ -52,6 +55,8 @@ class DemoTrackingService implements TrackingService {
   final List<LandmarkFrame> _recentFrames = <LandmarkFrame>[];
   final List<LandmarkFrame> _utteranceFrames = <LandmarkFrame>[];
   LandmarkFrame? _latestFrame;
+  bool _capturingUtterance = false;
+  String _status = 'Demo tracking';
   late final Timer _timer;
 
   @override
@@ -68,18 +73,34 @@ class DemoTrackingService implements TrackingService {
       List<LandmarkFrame>.unmodifiable(_recentFrames);
 
   @override
+  List<LandmarkFrame> get utteranceFrames =>
+      List<LandmarkFrame>.unmodifiable(_utteranceFrames);
+
+  @override
   int get utteranceFrameCount => _utteranceFrames.length;
 
   @override
-  String get status => 'Demo tracking';
+  bool get isCapturingUtterance => _capturingUtterance;
+
+  @override
+  String get status => _status;
 
   @override
   Future<void> start() async {}
 
   @override
+  void beginUtterance() {
+    _utteranceFrames.clear();
+    _capturingUtterance = true;
+    _status = 'Capturing LandmarkFrame data';
+  }
+
+  @override
   Future<List<LandmarkFrame>> finishUtterance() async {
     final frames = List<LandmarkFrame>.unmodifiable(_utteranceFrames);
     _utteranceFrames.clear();
+    _capturingUtterance = false;
+    _status = 'Demo tracking · ready for next utterance';
     return frames;
   }
 
@@ -87,7 +108,7 @@ class DemoTrackingService implements TrackingService {
   void ingest(LandmarkFrame frame) {
     _latestFrame = frame;
     _recentFrames.add(frame);
-    _utteranceFrames.add(frame);
+    if (_capturingUtterance) _utteranceFrames.add(frame);
     if (_recentFrames.length > 180) _recentFrames.removeAt(0);
     if (_utteranceFrames.length > 600) _utteranceFrames.removeAt(0);
     _confidenceWindow.add(frame.trackingConfidence, frame.timestamp);

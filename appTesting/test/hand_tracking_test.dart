@@ -9,6 +9,8 @@ import 'package:apptesting/models/face_tracking_models.dart';
 import 'package:apptesting/models/tracking_models.dart';
 import 'package:apptesting/services/api_client.dart';
 import 'package:apptesting/services/hand_pose_normalizer.dart';
+import 'package:apptesting/services/tracking_service.dart';
+import 'package:apptesting/services/utterance_stillness_detector.dart';
 
 void main() {
   test('normalizes a detected hand into a skeleton frame', () {
@@ -23,6 +25,13 @@ void main() {
           z: -.01 * index,
         ),
       ),
+      fingerStatus: <String, FingerTrackingStatus>{
+        'index': const FingerTrackingStatus(
+          status: 'uncertain',
+          confidence: .42,
+          evidenceFrames: 8,
+        ),
+      },
     );
     final frame = HandPoseNormalizer().normalize(
       HandTrackingFrame(
@@ -38,7 +47,6 @@ void main() {
     expect(frame.hands.single.landmarks, hasLength(21));
     expect(frame.rightHandVisible, isTrue);
     expect(frame.shouldersVisible, isTrue);
-    expect(frame.handMotion?.dominantHand, Handedness.right);
     expect(frame.handCoordinateAnalysis.single.jointCount, 21);
     expect(
       frame.handCoordinateAnalysis.single.coordinateSpace,
@@ -46,11 +54,21 @@ void main() {
     );
     expect(frame.toJson()['hands'], hasLength(1));
     expect(frame.toJson()['hand_coordinate_analysis'], hasLength(1));
-    expect(frame.featureVector, hasLength(324));
+    expect(frame.hands.single.fingerStatus['index']?.displayLabel, 'uncertain');
+    final roundTrip = TrackedHand.fromJson(hand.toJson());
+    expect(roundTrip.fingerStatus['index']?.confidence, .42);
+    expect(frame.featureVector, hasLength(322));
+    expect(frame.toJson()['hand_motion'], isNull);
+    expect(frame.toJson()['feature_vector'], isNull);
     final worlds = frame.toJson()['landmark_worlds'] as Map<String, dynamic>;
     expect(
       worlds.keys,
       containsAll(<String>['left_hand', 'right_hand', 'pose', 'face']),
+    );
+    expect(
+      ((worlds['right_hand'] as Map<String, dynamic>)['finger_status']
+          as Map<String, dynamic>)['index'],
+      isNotNull,
     );
   });
 
@@ -72,6 +90,31 @@ void main() {
     expect(payload['language'], 'ASL');
     expect(payload['frame_count'], 1);
     expect(payload['frames'], hasLength(1));
+  });
+
+  test('uses per-point confidence when calculating frame confidence', () {
+    final hand = TrackedHand(
+      handedness: Handedness.right,
+      confidence: .9,
+      landmarks: List<HandLandmark>.generate(
+        21,
+        (index) => HandLandmark(
+          x: .4 + index * .005,
+          y: .5 - index * .004,
+          z: -.01 * index,
+          visibility: .2,
+        ),
+      ),
+    );
+    final frame = HandPoseNormalizer().normalize(
+      HandTrackingFrame(
+        timestamp: DateTime.utc(2026, 9, 5),
+        processingConfidence: .4,
+        hands: <TrackedHand>[hand],
+      ),
+    );
+
+    expect(frame.trackingConfidence, closeTo(.3, .0001));
   });
 
   test(
@@ -108,6 +151,8 @@ void main() {
         expect(request.url.path, '/v1/sign-sequences/analyze');
         expect(sentHand['landmarks'], hasLength(21));
         expect((geometry.single as Map<String, dynamic>)['joint_count'], 21);
+        expect(sentFrame['hand_motion'], isNull);
+        expect(sentFrame['feature_vector'], isNull);
         return http.Response(
           jsonEncode(<String, dynamic>{
             'status': 'confident',
@@ -200,4 +245,77 @@ void main() {
     expect(result.status, 'simulated');
     expect(result.detail, contains('no network request sent'));
   });
+
+  test('captures only the frames between start and finish', () async {
+    final tracking = DemoTrackingService();
+    final frame = LandmarkFrame(timestamp: DateTime.utc(2026, 9, 5));
+
+    tracking.ingest(frame);
+    expect(tracking.isCapturingUtterance, isFalse);
+    expect(tracking.utteranceFrames, isEmpty);
+
+    tracking.beginUtterance();
+    tracking.ingest(frame);
+    expect(tracking.isCapturingUtterance, isTrue);
+    expect(tracking.utteranceFrames, hasLength(1));
+    expect(tracking.utteranceFrames.single, same(frame));
+
+    final captured = await tracking.finishUtterance();
+    expect(captured, hasLength(1));
+    expect(captured.single, same(frame));
+    expect(tracking.isCapturingUtterance, isFalse);
+    expect(tracking.utteranceFrames, isEmpty);
+    tracking.dispose();
+  });
+
+  test('detects a sustained pause after movement', () {
+    final detector = UtteranceStillnessDetector(
+      pauseDuration: const Duration(milliseconds: 100),
+      minimumCaptureDuration: const Duration(milliseconds: 0),
+    );
+    final moving = _handFrame(
+      timestamp: DateTime.utc(2026, 9, 5, 0, 0, 0, 0),
+      xOffset: 0,
+    );
+    final moved = _handFrame(
+      timestamp: DateTime.utc(2026, 9, 5, 0, 0, 0, 100),
+      xOffset: .05,
+    );
+    final paused = _handFrame(
+      timestamp: DateTime.utc(2026, 9, 5, 0, 0, 0, 250),
+      xOffset: .05,
+    );
+    final pausedLongEnough = _handFrame(
+      timestamp: DateTime.utc(2026, 9, 5, 0, 0, 0, 350),
+      xOffset: .05,
+    );
+
+    expect(detector.update(moving), isFalse);
+    expect(detector.update(moved), isFalse);
+    expect(detector.update(paused), isFalse);
+    expect(detector.update(pausedLongEnough), isTrue);
+  });
 }
+
+LandmarkFrame _handFrame({
+  required DateTime timestamp,
+  required double xOffset,
+}) => LandmarkFrame(
+  timestamp: timestamp,
+  trackingConfidence: .95,
+  hands: <TrackedHand>[
+    TrackedHand(
+      handedness: Handedness.right,
+      confidence: .95,
+      landmarks: List<HandLandmark>.generate(
+        21,
+        (index) => HandLandmark(
+          x: .4 + xOffset + index * .001,
+          y: .5,
+          z: 0,
+          visibility: .95,
+        ),
+      ),
+    ),
+  ],
+);

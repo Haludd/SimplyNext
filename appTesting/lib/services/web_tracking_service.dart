@@ -20,6 +20,7 @@ class WebTrackingService implements TrackingService {
   LandmarkFrame? _latestFrame;
   StreamSubscription<HandTrackingFrame>? _subscription;
   bool _started = false;
+  bool _capturingUtterance = false;
   String _status = 'Waiting for camera';
 
   @override
@@ -36,7 +37,14 @@ class WebTrackingService implements TrackingService {
       List<LandmarkFrame>.unmodifiable(_recentFrames);
 
   @override
+  List<LandmarkFrame> get utteranceFrames =>
+      List<LandmarkFrame>.unmodifiable(_utteranceFrames);
+
+  @override
   int get utteranceFrameCount => _utteranceFrames.length;
+
+  @override
+  bool get isCapturingUtterance => _capturingUtterance;
 
   @override
   String get status => _status;
@@ -46,6 +54,7 @@ class WebTrackingService implements TrackingService {
     if (_started) return;
     _status = 'Starting hand tracker';
     _utteranceFrames.clear();
+    _capturingUtterance = false;
     _subscription = _bridge.frames.listen(ingestRaw);
     try {
       await _bridge.start();
@@ -62,10 +71,17 @@ class WebTrackingService implements TrackingService {
   void ingestRaw(HandTrackingFrame raw) => ingest(_normalizer.normalize(raw));
 
   @override
+  void beginUtterance() {
+    _utteranceFrames.clear();
+    _capturingUtterance = true;
+    _status = 'Capturing LandmarkFrame data';
+  }
+
+  @override
   Future<List<LandmarkFrame>> finishUtterance() async {
     final frames = List<LandmarkFrame>.unmodifiable(_utteranceFrames);
     _utteranceFrames.clear();
-    await _bridge.endUtterance();
+    _capturingUtterance = false;
     _status = 'MediaPipe four-world tracking · next utterance';
     return frames;
   }
@@ -74,7 +90,7 @@ class WebTrackingService implements TrackingService {
   void ingest(LandmarkFrame frame) {
     _latestFrame = frame;
     _recentFrames.add(frame);
-    _utteranceFrames.add(frame);
+    if (_capturingUtterance) _utteranceFrames.add(frame);
     if (_recentFrames.length > 180) _recentFrames.removeAt(0);
     if (_utteranceFrames.length > 600) _utteranceFrames.removeAt(0);
     _confidenceWindow.add(frame.trackingConfidence, frame.timestamp);

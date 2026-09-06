@@ -153,9 +153,11 @@ class SignAnalysisService {
     }
 
     final tracked = frames.where((frame) => frame.hands.isNotEmpty).toList();
-    final motion = tracked.last.handMotion;
-    final openness = motion?.averageOpenness ?? 0;
-    final speed = motion?.averageSpeed ?? 0;
+    final openness =
+        tracked.last.hands
+            .map((hand) => hand.openness)
+            .reduce((left, right) => left + right) /
+        tracked.last.hands.length;
     final geometry = tracked.last.handCoordinateAnalysis;
     final label = _gestureLabel(openness, tracked.last);
     final confidence =
@@ -170,7 +172,6 @@ class SignAnalysisService {
       glossTrace: <String>[label.toUpperCase()],
       detail:
           '${tracked.length} frames · ${tracked.last.hands.length} hand(s) · '
-          '${speed.toStringAsFixed(2)} motion · '
           '${geometry.isEmpty ? 'no 3D geometry' : '3D coordinates analyzed'}',
     );
   }

@@ -35,7 +35,6 @@ class LandmarkFrame {
     this.hands = const <TrackedHand>[],
     this.handCoordinateAnalysis = const <HandCoordinateAnalysis>[],
     this.faceExpression,
-    this.handMotion,
     this.poseLandmarks = const <PoseLandmark>[],
     this.faceUpperLandmarks = const <FaceLandmark>[],
     this.faceMouthLandmarks = const <FaceLandmark>[],
@@ -55,7 +54,6 @@ class LandmarkFrame {
   final List<TrackedHand> hands;
   final List<HandCoordinateAnalysis> handCoordinateAnalysis;
   final FaceExpressionFeatures? faceExpression;
-  final HandMotionFeatures? handMotion;
   final List<PoseLandmark> poseLandmarks;
   final List<FaceLandmark> faceUpperLandmarks;
   final List<FaceLandmark> faceMouthLandmarks;
@@ -78,7 +76,6 @@ class LandmarkFrame {
         .map((analysis) => analysis.toJson())
         .toList(),
     'face_expression': faceExpression?.toJson(),
-    'hand_motion': handMotion?.toJson(),
     'subject_tracking': subjectTracking?.toJson(),
     'landmark_worlds': <String, dynamic>{
       'left_hand': _handWorld(Handedness.left),
@@ -98,7 +95,6 @@ class LandmarkFrame {
         'emotion': faceExpression?.toJson(),
       },
     },
-    'feature_vector': featureVector,
   };
 
   Map<String, dynamic> _handWorld(Handedness side) {
@@ -112,6 +108,7 @@ class LandmarkFrame {
     return <String, dynamic>{
       'handedness': handednessToString(side),
       'confidence': hand?.confidence ?? 0,
+      'finger_status': fingerStatusesToJson(hand?.fingerStatus ?? const {}),
       'landmarks':
           hand?.landmarks
               .asMap()

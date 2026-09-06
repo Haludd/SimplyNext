@@ -45,6 +45,64 @@ String handednessToString(Handedness value) => switch (value) {
   Handedness.unknown => 'unknown',
 };
 
+/// Quality of the landmarks for one named finger.
+///
+/// This describes what the tracker can currently see. It is deliberately not
+/// called "missing": a hidden finger and an anatomically absent finger can
+/// look identical in a camera frame.
+class FingerTrackingStatus {
+  const FingerTrackingStatus({
+    required this.status,
+    required this.confidence,
+    this.evidenceFrames = 0,
+  });
+
+  final String status;
+  final double confidence;
+  final int evidenceFrames;
+
+  bool get isObserved => status == 'observed';
+
+  String get displayLabel => switch (status) {
+    'observed' => 'seen',
+    'uncertain' => 'uncertain',
+    'not_visible' => 'not visible',
+    _ => status,
+  };
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'status': status,
+    'confidence': confidence,
+    'evidence_frames': evidenceFrames,
+  };
+
+  factory FingerTrackingStatus.fromJson(Map<String, dynamic> json) =>
+      FingerTrackingStatus(
+        status: json['status'] as String? ?? 'not_visible',
+        confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+        evidenceFrames: (json['evidence_frames'] as num?)?.toInt() ?? 0,
+      );
+}
+
+Map<String, FingerTrackingStatus> _fingerStatusesFromJson(Object? value) {
+  if (value is! Map) return const <String, FingerTrackingStatus>{};
+  final statuses = <String, FingerTrackingStatus>{};
+  value.forEach((key, nestedValue) {
+    if (nestedValue is Map) {
+      statuses[key.toString()] = FingerTrackingStatus.fromJson(
+        Map<String, dynamic>.from(nestedValue),
+      );
+    }
+  });
+  return statuses;
+}
+
+Map<String, dynamic> fingerStatusesToJson(
+  Map<String, FingerTrackingStatus> statuses,
+) => <String, dynamic>{
+  for (final entry in statuses.entries) entry.key: entry.value.toJson(),
+};
+
 class HandLandmark {
   const HandLandmark({
     required this.x,
@@ -91,12 +149,14 @@ class TrackedHand {
     required this.confidence,
     required this.landmarks,
     this.boundingBox = const <double>[],
+    this.fingerStatus = const <String, FingerTrackingStatus>{},
   });
 
   final Handedness handedness;
   final double confidence;
   final List<HandLandmark> landmarks;
   final List<double> boundingBox;
+  final Map<String, FingerTrackingStatus> fingerStatus;
 
   HandLandmark? get wrist => landmarks.isEmpty ? null : landmarks.first;
 
@@ -121,6 +181,7 @@ class TrackedHand {
     'confidence': confidence,
     'bounding_box': boundingBox,
     'landmarks': landmarks.map((landmark) => landmark.toJson()).toList(),
+    'finger_status': fingerStatusesToJson(fingerStatus),
   };
 
   factory TrackedHand.fromJson(Map<String, dynamic> json) => TrackedHand(
@@ -132,44 +193,8 @@ class TrackedHand {
     landmarks: (json['landmarks'] as List<dynamic>? ?? <dynamic>[])
         .map((value) => HandLandmark.fromJson(value as Map<String, dynamic>))
         .toList(),
+    fingerStatus: _fingerStatusesFromJson(json['finger_status']),
   );
-}
-
-class HandMotionFeatures {
-  const HandMotionFeatures({
-    this.averageSpeed = 0,
-    this.averageAcceleration = 0,
-    this.averageOpenness = 0,
-    this.direction = 'still',
-    this.dominantHand = Handedness.unknown,
-  });
-
-  final double averageSpeed;
-  final double averageAcceleration;
-  final double averageOpenness;
-  final String direction;
-  final Handedness dominantHand;
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'average_speed': averageSpeed,
-    'average_acceleration': averageAcceleration,
-    'average_openness': averageOpenness,
-    'direction': direction,
-    'dominant_hand': handednessToString(dominantHand),
-  };
-
-  factory HandMotionFeatures.fromJson(Map<String, dynamic> json) =>
-      HandMotionFeatures(
-        averageSpeed:
-            (json['average_speed'] as num?)?.toDouble() ??
-            (json['average_velocity'] as num?)?.toDouble() ??
-            0,
-        averageAcceleration:
-            (json['average_acceleration'] as num?)?.toDouble() ?? 0,
-        averageOpenness: (json['average_openness'] as num?)?.toDouble() ?? 0,
-        direction: json['direction'] as String? ?? 'still',
-        dominantHand: handednessFromString(json['dominant_hand'] as String?),
-      );
 }
 
 /// One of the curated MediaPipe Pose points sent across the app boundary.
@@ -262,7 +287,6 @@ class HandTrackingFrame {
     this.poseLandmarks = const <PoseLandmark>[],
     this.faceUpperLandmarks = const <FaceLandmark>[],
     this.faceMouthLandmarks = const <FaceLandmark>[],
-    this.handMotion,
     this.subjectTracking,
     this.processingConfidence = 0,
   });
@@ -275,7 +299,6 @@ class HandTrackingFrame {
   final List<PoseLandmark> poseLandmarks;
   final List<FaceLandmark> faceUpperLandmarks;
   final List<FaceLandmark> faceMouthLandmarks;
-  final HandMotionFeatures? handMotion;
   final SubjectTracking? subjectTracking;
   final double processingConfidence;
 
@@ -286,7 +309,6 @@ class HandTrackingFrame {
     'face': face?.toJson(),
     'left_shoulder': leftShoulder?.toJson(),
     'right_shoulder': rightShoulder?.toJson(),
-    'hand_motion': handMotion?.toJson(),
     'subject_tracking': subjectTracking?.toJson(),
     'landmark_worlds': _landmarkWorldsJson(
       hands: hands,
@@ -318,7 +340,6 @@ class HandTrackingFrame {
       poseLandmarks: worlds.pose,
       faceUpperLandmarks: worlds.faceUpper,
       faceMouthLandmarks: worlds.faceMouth,
-      handMotion: _motionFromJson(json['hand_motion']),
       subjectTracking: _subjectFromJson(json['subject_tracking']),
       hands: rawHands.isNotEmpty ? rawHands : worlds.hands,
     );
@@ -332,9 +353,6 @@ FaceExpressionFeatures? _faceFromJson(Object? value) =>
     value is Map<String, dynamic>
     ? FaceExpressionFeatures.fromJson(value)
     : null;
-
-HandMotionFeatures? _motionFromJson(Object? value) =>
-    value is Map<String, dynamic> ? HandMotionFeatures.fromJson(value) : null;
 
 SubjectTracking? _subjectFromJson(Object? value) =>
     value is Map<String, dynamic> ? SubjectTracking.fromJson(value) : null;
@@ -377,6 +395,7 @@ _LandmarkWorlds _parseLandmarkWorlds(Object? value) {
           handedness: handednessFromString(side),
           confidence: (world['confidence'] as num?)?.toDouble() ?? 0,
           landmarks: landmarks,
+          fingerStatus: _fingerStatusesFromJson(world['finger_status']),
         ),
       );
     }
@@ -418,6 +437,7 @@ Map<String, dynamic> _landmarkWorldsJson({
     return <String, dynamic>{
       'handedness': handednessToString(side),
       'confidence': hand?.confidence ?? 0,
+      'finger_status': fingerStatusesToJson(hand?.fingerStatus ?? const {}),
       'landmarks':
           hand?.landmarks
               .asMap()

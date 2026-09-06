@@ -365,17 +365,6 @@ def test_raw_size_binary_origin_and_auth_boundaries(client: TestClient) -> None:
         pass
     assert missing_session.value.code == 4404
 
-    wrong_kind_session = _create_session(client)
-    wrong_kind_path = f"/v1/sessions/{wrong_kind_session['session_id']}/landmarks"
-    with (
-        pytest.raises(WebSocketDisconnect) as wrong_kind,
-        client.websocket_connect(
-            wrong_kind_path,
-            headers=_headers(wrong_kind_session),
-        ),
-    ):
-        pass
-    assert wrong_kind.value.code == 4409
     assert _close_code(SessionExpired("expired")) == 4408
     assert _close_code(InvalidSessionState("wrong stream")) == 4409
 

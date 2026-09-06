@@ -1,4 +1,4 @@
-"""Structured logging that never serializes landmark or camera payloads."""
+"""Structured logging that never serializes client perception payloads."""
 
 from __future__ import annotations
 

@@ -1,285 +1,134 @@
-**GLOSS LATTICE CONTRACT**
-
-
-
-
+**SIMPLYNEXT GLOSSLATTICE V1 CONTRACT**
 
 # METADATA
-<details>
-<summary>Document code, status, review date, and usage instructions.</summary>
 
-| Field                   | Value                                               |
-| :---------------------- | :-------------------------------------------------- |
-| **Code**                | `CTR`                                               |
-| **Status**              | Frozen                                              |
-| **Last reviewed**       | 2026-09-06                                          |
-| **Source of truth for** | The version 1.0 `GlossLattice` wire contract        |
-| **Parent**              | [`ARC`](ARC_architecture.md) · [`PLN`](PLN_plan.md) |
-| **Related**             | [`BCT`](../doc/BCT_backend_comparison_test.md)      |
-
-**For the team.** This document freezes the inbound payload emitted by recognition stage ⑤ and
-consumed by backend agent stage ⑥. Frontend and backend implementations may proceed independently
-when both validate against this contract and the shared fixture. Server responses use the separate
-event contract in [`CTR_S6.2`](#62-outbound-event-family).
-
-**For the assistant.** Existing version 1.0 field names, types, enum values, limits, and semantics
-must not be changed in place. Any incompatible change requires a new schema version, migration
-notes, a new fixture, and coordinated frontend/backend tests.
-
-</details>
-
----
-
-
-
-
-
-# 1. AUTHORITY
-## 1.1. Boundary
-`GlossLattice` is the complete inbound recognition payload that crosses from stage ⑤ to stage ⑥
-and is the sole authority for ingress version 1.0. It carries ordered sign slots, each slot's
-retained top-k closed-vocabulary hypotheses, calibrated confidence, session-relative timestamps,
-and the provenance rung required by
-[`ARC_S5.7`](ARC_architecture.md#57-the-reverse-direction) decision 19. It implements the fourth
-frozen interface in [`PLN_S3.4`](PLN_plan.md#34-the-frozen-interfaces) and unblocks typed graph
-state in [`PLN_S9.1`](PLN_plan.md#91-t51--typed-graph-state).
-
-The contract is independent of a WebSocket URL. One UTF-8 WebSocket text message contains one JSON
-object conforming to this document. The authenticated route binds the message to a server session;
-the payload does not replace authentication or session authorization.
-
-
-
-
-## 1.2. Exclusions
-The payload contains no camera frames, images, landmarks, feature windows, tensors, embeddings,
-base64 data, prompts, conversation history, signer memory, or model drafts. This is the compact
-boundary required by [`PLN_S8.4`](PLN_plan.md#84-t44--the-lattice-with-provenance) and the missing
-boundary identified by [`BCT_S4.5`](../doc/BCT_backend_comparison_test.md#45-wp4--recognition).
-
-Signer identity is resolved from trusted backend session/authentication context. It is not
-accepted as a `GlossLattice` field. Conversation history, per-signer memory, loop counters, drafts,
-critiques, routes, and final results are backend-owned graph state defined by
-[`PLN_S9.1`](PLN_plan.md#91-t51--typed-graph-state).
-
-Server-to-client messages do not extend this ingress schema. They carry
-`event_schema_version: "1.0"` and validate against the separate `LatticeOutboundEvent` union in
-[`CTR_S6.2`](#62-outbound-event-family).
-
----
-
-
-
-
-
-# 2. WIRE OBJECT
-## 2.1. Encoding and Limits
-The sender emits compact JSON in a single UTF-8 WebSocket text message. The receiver rejects a raw
-message larger than **32,768 bytes before JSON parsing**, then validates the decoded object. The
-canonical Python serialization is `GlossLattice.model_dump_json()`.
-
-Version 1.0 applies these fixed limits:
-
-| Item                   | Limit   |
-| :--------------------- | :------ |
-| Slots per lattice      | 1–64    |
-| Candidates per slot    | 0–5     |
-| Identifier length      | 1–128   |
-| Compact payload size   | 32 KiB  |
-| Confidence             | 0.0–1.0 |
-| Millisecond integers   | 0–2⁵³−1 |
-
-An identifier begins with an ASCII letter or digit and thereafter contains only ASCII letters,
-digits, `_`, `.`, `:`, or `-`. Identifiers are opaque and case-sensitive. A gloss identifier is a
-closed-vocabulary lexicon key, not display text and not a natural-language instruction.
-
-
-
-
-## 2.2. Envelope Fields
-1. **`type`** · *Type:* string literal · *Required:* yes · *Value:* `gloss_lattice`
-   *Meaning:* WebSocket union discriminator.
-2. **`schema_version`** · *Type:* string literal · *Required:* yes · *Value:* `1.0`
-   *Meaning:* Exact wire-schema version. No other value is accepted by the v1 model.
-3. **`session_id`** · *Type:* UUID string · *Required:* yes
-   *Meaning:* Session correlation value. It must equal the authenticated route/session value.
-4. **`lattice_seq`** · *Type:* integer · *Required:* yes · *Range:* 0–2⁵³−1
-   *Meaning:* Monotonically increasing lattice-message sequence within one session.
-5. **`utterance_id`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Stable identity of the logical signed utterance.
-6. **`language`** · *Type:* enum · *Required:* yes · *Values:* `sgsl`, `asl`
-   *Meaning:* Sign-language vocabulary used by the producer.
-7. **`timebase`** · *Type:* string literal · *Required:* yes
-   *Value:* `session_monotonic_ms`
-   *Meaning:* Every timestamp is elapsed monotonic milliseconds from the capture clock origin
-   established for the session. Values are neither Unix time nor wall-clock time.
-8. **`started_at_ms`** · *Type:* integer · *Required:* yes · *Range:* 0–2⁵³−1
-   *Meaning:* Inclusive utterance start on the session timebase.
-9. **`ended_at_ms`** · *Type:* integer · *Required:* yes · *Range:* 0–2⁵³−1
-   *Meaning:* Exclusive utterance end on the session timebase; greater than `started_at_ms`.
-10. **`producer`** · *Type:* `GlossLatticeProducer` · *Required:* yes
-    *Meaning:* Reproducibility metadata for the recognizer, calibration, and vocabulary.
-11. **`slots`** · *Type:* ordered array of `GlossSlot` · *Required:* yes
-    *Meaning:* One to sixty-four chronological, non-overlapping sign positions.
-
-
-
-
-## 2.3. Producer Fields
-1. **`classifier_id`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Stable classifier family or artifact identity.
-2. **`classifier_version`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Exact classifier artifact version.
-3. **`confidence_kind`** · *Type:* string literal · *Required:* yes
-   *Value:* `calibrated_probability`
-   *Meaning:* Declares that candidate confidence is calibrated probability, never raw softmax,
-   distance, margin, logit, or an uncalibrated model score.
-4. **`calibration_version`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Exact calibration artifact or procedure version used for every confidence value.
-5. **`vocabulary_version`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Exact closed-vocabulary version against which every `gloss_id` resolves.
-
-
-
-
-## 2.4. Slot Fields
-1. **`slot_index`** · *Type:* integer · *Required:* yes · *Range:* 0–63
-   *Meaning:* Zero-based position. Values are contiguous and match array order.
-2. **`slot_id`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Stable slot identity, unique within the utterance.
-3. **`start_ms`** · *Type:* integer · *Required:* yes
-   *Meaning:* Inclusive slot start on the envelope's timebase.
-4. **`end_ms`** · *Type:* integer · *Required:* yes
-   *Meaning:* Exclusive slot end; greater than `start_ms`.
-5. **`candidates`** · *Type:* ordered array of `GlossCandidate` · *Required:* yes
-   *Meaning:* Zero to five retained classifier hypotheses. Empty is valid for an unresolved or
-   fingerspelled slot.
-6. **`resolved_gloss_id`** · *Type:* identifier or `null` · *Required:* yes
-   *Meaning:* Selected gloss after applying the provenance rules in [`CTR_S3.2`](#32-resolution).
-7. **`provenance`** · *Type:* `GlossProvenance` · *Required:* yes
-   *Meaning:* How `resolved_gloss_id` was obtained, or why it is absent.
-
-
-
-
-## 2.5. Candidate Fields
-1. **`gloss_id`** · *Type:* identifier · *Required:* yes
-   *Meaning:* Opaque, case-sensitive key in `producer.vocabulary_version`.
-2. **`rank`** · *Type:* integer · *Required:* yes · *Range:* 1–5
-   *Meaning:* One-based hypothesis rank. Ranks are contiguous and match array order.
-3. **`confidence`** · *Type:* finite number · *Required:* yes · *Range:* 0.0–1.0
-   *Meaning:* Calibrated confidence produced by `producer.calibration_version`.
-
-Candidate confidence values are non-increasing in array order. Candidate gloss identifiers are
-unique within a slot. The values are not required to sum to one because retained top-k entries may
-exclude probability mass. Every value is a calibrated probability produced by the declared
-`calibration_version`; raw softmax, distance, margin, logit, or another uncalibrated score is a
-contract violation. The contract does not set a high-confidence threshold; stage ⑤ applies the
-threshold derived by [`PLN_S8.3`](PLN_plan.md#83-t43--confidence-calibration).
-
----
-
-
-
-
-
-# 3. INVARIANTS
-## 3.1. Time and Order
-Every slot uses the envelope's `session_monotonic_ms` clock and represents the half-open interval
-`[start_ms, end_ms)`. All slot intervals lie inside `[started_at_ms, ended_at_ms)`. Slot indices are
-contiguous from zero, slot identifiers are unique, and adjacent slot intervals never overlap. Gaps
-between slots are valid.
-
-
-
-
-## 3.2. Resolution
-The four wire values are fixed:
-
-1. **`classifier_high_confidence`**
-   `candidates` contains at least one entry and `resolved_gloss_id` equals the rank-1 candidate.
-   The producer asserts that its separately calibrated acceptance policy cleared the slot.
-2. **`top_k_signer_confirmed`**
-   `resolved_gloss_id` equals one retained candidate. The signer-confirmation interaction, not the
-   classifier score, authorizes that selection.
-3. **`fingerspelled`**
-   `resolved_gloss_id` contains the canonical lexicon/fingerspelling key. Retained classifier
-   candidates may be empty or preserved for audit, and the resolved key need not be among them.
-4. **`unresolved`**
-   `resolved_gloss_id` is `null`. Low-confidence candidates may be retained so stage ⑨ can offer
-   top-k repair without treating one as signed intent.
-
-Every slot carries exactly one provenance value. A non-`unresolved` slot carries a non-null
-`resolved_gloss_id`; an `unresolved` slot cannot carry one. These constraints prevent a low-score
-hypothesis from silently becoming a signer's asserted words.
-
-
-
-
-## 3.3. Strictness
-Unknown fields are rejected at every object level. Models are immutable after validation. NaN,
-positive infinity, and negative infinity are invalid confidence values. Numeric strings and JSON
-booleans are not coerced into integer or confidence fields, and surrounding identifier whitespace
-is rejected rather than trimmed. The same `(session_id, lattice_seq)` pair identifies one
-immutable message; reuse with different content is a protocol error.
-
----
-
-
-
-
-
-# 4. TRANSPORT
-## 4.1. Session Binding
-The backend validates `session_id` against the authenticated WebSocket path and token before
-constructing graph state. A valid UUID in the payload does not grant access. The backend also
-derives signer identity from trusted session context and does not infer it from an utterance or
-slot identifier.
-
-
-
-
-## 4.2. Sequencing
-`lattice_seq` increases within a session; gaps are permitted. An exact retransmission of an already
-accepted `(session_id, lattice_seq)` message is idempotent and must not start a second graph run. A
-different payload that reuses the pair is rejected. `utterance_id` remains stable if a later
-message represents an explicitly accepted revision; revision acceptance is backend policy rather
-than a v1 payload field.
-
-
-
-
-## 4.3. Receiver Order
-The receiver applies checks in this order:
-
-1. Authorize the WebSocket session and enforce the raw 32 KiB message limit.
-2. Decode exactly one JSON object and validate `GlossLattice` with unknown fields forbidden.
-3. Require the payload `session_id` to equal the authenticated session.
-4. Apply sequence/idempotency checks.
-5. Construct typed graph state with trusted signer context held separately.
-
----
-
-
-
-
-
-# 5. EXAMPLE
-## 5.1. Complete Version 1.0 Message
-This example deliberately contains all four provenance rungs. The checked-in machine-readable copy
-is [`tests/fixtures/gloss_lattice_v1.json`](../tests/fixtures/gloss_lattice_v1.json).
+| Field | Value |
+| :---- | :---- |
+| **Code** | `CTR` |
+| **Status** | Frozen v1 |
+| **Last reviewed** | 2026-09-06 |
+| **Executable authority** | `src/simplynext/contracts/` and contract/transport tests |
+| **Fixture** | `tests/fixtures/gloss_lattice_v1.json` |
+
+# 1. PROTOCOL SUMMARY
+
+The protocol has one HTTP negotiation request followed by one authenticated JSON WebSocket. The
+client sends `GlossLattice` or `control` messages. The server sends a discriminated event union.
+No raw video, landmark, tensor, binary, audio, or unversioned payload is part of this contract.
+
+| Property | Value |
+| :------- | :---- |
+| Lattice schema | `1.0` |
+| Event schema | `1.0` |
+| Stream kind | `gloss_lattice` |
+| WebSocket encoding | UTF-8 text JSON only |
+| Maximum WebSocket message | 32,768 bytes |
+| Maximum slots per lattice | 64 |
+| Maximum candidates per slot | 5 |
+| Languages represented by v1 | `sgsl`, `asl` |
+| Timebase | `session_monotonic_ms` |
+| Idempotency key | `(session_id, lattice_seq)` plus canonical payload digest |
+
+All models reject unknown fields. Contract identifiers contain 1–128 characters, start with an
+ASCII alphanumeric character, and otherwise contain only ASCII alphanumerics, `_`, `.`, `:`, or
+`-`. Confidence is finite and lies in `[0, 1]`.
+
+# 2. SESSION NEGOTIATION
+
+## 2.1. Create session
+
+`POST /v1/sessions` with `Content-Type: application/json`:
+
+```json
+{
+  "language": "sgsl",
+  "schema_version": "1.0",
+  "stream_kind": "gloss_lattice",
+  "client": {
+    "platform": "android",
+    "app_version": "1.0.0",
+    "device_model": "example-device"
+  },
+  "detector": {
+    "name": "mediapipe-holistic",
+    "version": "1.0.0",
+    "delegate": "gpu"
+  },
+  "producer": {
+    "classifier_id": "temporal_classifier",
+    "classifier_version": "1.3.0",
+    "confidence_kind": "calibrated_probability",
+    "calibration_version": "temperature_v2",
+    "vocabulary_version": "sgsl_demo_v1"
+  }
+}
+```
+
+The deployment accepts only the configured language and exact configured producer profile. Client
+platform is `ios`, `android`, or `test`; detector delegate is `cpu`, `gpu`, `core_ml`, `nnapi`, or
+`unknown`.
+
+A successful request returns HTTP `201`, `Cache-Control: no-store`, and:
+
+```json
+{
+  "session_id": "12345678-1234-5678-1234-567812345678",
+  "stream_token": "opaque-random-capability-at-least-32-characters",
+  "token_type": "Bearer",
+  "stream_kind": "gloss_lattice",
+  "websocket_path": "/v1/sessions/12345678-1234-5678-1234-567812345678/lattices",
+  "created_at": "2026-09-06T12:00:00Z",
+  "expires_at": "2026-09-06T12:05:00Z",
+  "lattice_schema_version": "1.0",
+  "max_lattice_message_bytes": 32768,
+  "max_lattice_slots": 64,
+  "max_candidates_per_slot": 5
+}
+```
+
+The token is returned once. The client must keep it in memory, never log or persist it, and use it
+as `Authorization: Bearer <stream_token>` for the WebSocket and session deletion.
+
+## 2.2. End session over HTTP
+
+`DELETE /v1/sessions/{session_id}` with the bearer header returns HTTP `204`. An active socket must
+be ended or closed first; deletion during active Agent processing is rejected.
+
+# 3. WEBSOCKET CONNECTION
+
+Construct `wss://<host><websocket_path>` in production and send the bearer header during upgrade.
+Native clients may omit `Origin`. Browser clients must send an origin in the configured allow-list.
+Only one active WebSocket may claim a session.
+
+On acceptance the first event is:
+
+```json
+{
+  "event_schema_version": "1.0",
+  "session_id": "12345678-1234-5678-1234-567812345678",
+  "type": "activity",
+  "state": "idle",
+  "lattice_seq": null,
+  "utterance_id": null,
+  "server_ms": 1788696000000
+}
+```
+
+# 4. CLIENT-TO-SERVER MESSAGES
+
+## 4.1. GlossLattice
 
 ```json
 {
   "type": "gloss_lattice",
   "schema_version": "1.0",
   "session_id": "12345678-1234-5678-1234-567812345678",
-  "lattice_seq": 7,
-  "utterance_id": "utterance-42",
+  "lattice_seq": 0,
+  "utterance_id": "utterance-0",
   "language": "sgsl",
   "timebase": "session_monotonic_ms",
   "started_at_ms": 1000,
-  "ended_at_ms": 3000,
+  "ended_at_ms": 1700,
   "producer": {
     "classifier_id": "temporal_classifier",
     "classifier_version": "1.3.0",
@@ -306,150 +155,177 @@ is [`tests/fixtures/gloss_lattice_v1.json`](../tests/fixtures/gloss_lattice_v1.j
       "start_ms": 1350,
       "end_ms": 1700,
       "candidates": [
-        {"gloss_id": "PLEASE", "rank": 1, "confidence": 0.57},
-        {"gloss_id": "THANK_YOU", "rank": 2, "confidence": 0.31}
+        {"gloss_id": "PLEASE", "rank": 1, "confidence": 0.92}
       ],
-      "resolved_gloss_id": "THANK_YOU",
-      "provenance": "top_k_signer_confirmed"
-    },
-    {
-      "slot_index": 2,
-      "slot_id": "slot-2",
-      "start_ms": 1800,
-      "end_ms": 2200,
-      "candidates": [],
-      "resolved_gloss_id": "J-O-H-N",
-      "provenance": "fingerspelled"
-    },
-    {
-      "slot_index": 3,
-      "slot_id": "slot-3",
-      "start_ms": 2300,
-      "end_ms": 2600,
-      "candidates": [
-        {"gloss_id": "TOMORROW", "rank": 1, "confidence": 0.42},
-        {"gloss_id": "YESTERDAY", "rank": 2, "confidence": 0.38}
-      ],
-      "resolved_gloss_id": null,
-      "provenance": "unresolved"
+      "resolved_gloss_id": "PLEASE",
+      "provenance": "classifier_high_confidence"
     }
   ]
 }
 ```
 
-Whitespace is included for review only. Production transport uses the compact serialization.
+Lattice invariants:
 
----
+- `lattice_seq` is non-negative, JavaScript-safe, and strictly increases for new content in a
+  session.
+- Utterance and slot time ranges are positive, chronological, non-overlapping, and contained in
+  the utterance range.
+- `slot_index` and candidate `rank` are contiguous from zero and one respectively.
+- Candidates are unique and ordered by non-increasing confidence.
+- `classifier_high_confidence` resolves to rank 1.
+- `top_k_signer_confirmed` resolves to a retained candidate.
+- `fingerspelled` has a resolved gloss; it may be outside retained candidates.
+- `unresolved` has a null resolved gloss.
+- Language and producer match both negotiation and deployment configuration.
 
+An identical retry with the same sequence and content replays the cached terminal event. Reusing
+the sequence with different content is an error. A later lattice for the same `utterance_id` is
+accepted only when it validly answers the immediately pending repair.
 
+## 4.2. Control message
 
+```json
+{
+  "type": "control",
+  "session_id": "12345678-1234-5678-1234-567812345678",
+  "control_seq": 1,
+  "action": "ping",
+  "client_ms": 1788696000000
+}
+```
 
+`control_seq` strictly increases. `action` is `ping` or `end`. `ping` returns `pong`; `end` erases
+the session and closes the socket with code `1000`.
 
-# 6. IMPLEMENTATION
-## 6.1. Python Model
-The executable contract lives in
-[`src/simplynext/contracts/gloss_lattice.py`](../src/simplynext/contracts/gloss_lattice.py) and is
-re-exported from `simplynext.contracts`. Backend code imports `GlossLattice` from that public
-package. Frontend developers may derive their language model from the output of
-`GlossLattice.model_json_schema()` but preserve the cross-field invariants in
-[`CTR_S3`](#3-invariants), which JSON Schema alone does not express fully.
+# 5. SERVER-TO-CLIENT EVENTS
 
+Every event includes `event_schema_version: "1.0"`, `session_id`, and a `type` discriminator.
 
+| `type` | Purpose | Required distinguishing fields |
+| :----- | :------ | :----------------------------- |
+| `lattice_ack` | Atomic acceptance/replay acknowledgement | `lattice_seq`, `utterance_id`, `disposition: accepted|cached`, `server_ms` |
+| `activity` | Stream state | `state: idle|processing`; processing also carries lattice correlation |
+| `pong` | Ping response | `control_seq`, `server_ms` |
+| `error` | Protocol/session/capacity failure | `code`, `message`, `retryable`, optional lattice correlation |
+| `lattice_result` | Confident grounded text | shared terminal fields plus `status`, `caption`, `tts_text`, `confidence`, `gloss_id_trace` |
+| `lattice_repair_required` | Fail-closed interaction | shared terminal fields plus `status`, `repair_id`, `action`, `message`, `confidence`, targets/choices/reasons |
 
+The normal event order for new work is `lattice_ack` → `activity(processing)` → one terminal event
+→ `activity(idle)`. A completed replay is `lattice_ack(cached)` → cached terminal event →
+`activity(idle)`.
 
-## 6.2. Outbound Event Family
-The separately versioned executable response contract is `LatticeOutboundEvent` in
-[`src/simplynext/contracts/events.py`](../src/simplynext/contracts/events.py). Every variant carries
-`event_schema_version: "1.0"` and trusted `session_id`; this version is independent of inbound
-`GlossLattice.schema_version`.
+## 5.1. Shared terminal fields
 
-The closed union contains six discriminators:
+Both terminal events contain:
 
-1. **`lattice_ack`**
-   Carries `lattice_seq`, `utterance_id`, `disposition` (`accepted` or `cached`), and `server_ms`.
-2. **`activity`**
-   Carries server activity state and `server_ms`. A `processing` event also carries the correlated
-   `lattice_seq` and `utterance_id`.
-3. **`pong`**
-   Carries `control_seq` and `server_ms`.
-4. **`error`**
-   Carries `code`, safe human-facing `message`, `retryable`, and optional lattice correlation.
-5. **`lattice_result`**
-   Carries `status: "confident"`, display `caption`, optional `tts_text`, calibrated `confidence`,
-   ordered `gloss_id_trace`, complete structured `evidence_trace`, classifier lineage, Agent
-   source/model metadata, and stage latency.
-6. **`lattice_repair_required`**
-   Carries `status: "uncertain"`, `repair_id`, one graph-native repair action, a safe message,
-   confidence, target slots, optional retained choices, reason codes, complete structured evidence,
-   classifier lineage, Agent source/model metadata, and stage latency. It cannot carry `caption` or
-   `tts_text`.
+- `lattice_seq` and `utterance_id` correlation;
+- `evidence_trace`: one ordered item for every lattice slot, containing slot timing, resolved gloss,
+  resolved confidence where applicable, provenance, and all retained candidates;
+- `classifier_version`;
+- nullable `agent_source` and `agent_model_version`;
+- `latency_ms`, keyed by bounded identifiers.
 
-`caption` and `tts_text` are JSON strings. The client displays `caption` and may pass `tts_text` to
-client-side speech synthesis; the backend response contains no MP3, WAV, or other audio file.
-`evidence_trace` preserves each slot index, identifier, time interval, resolved gloss, calibrated
-candidate confidence when one exists, provenance, and retained candidates. A confident event's
-`gloss_id_trace` must exactly equal the resolved evidence order.
+The evidence trace is the “gloss trace”: a structured audit trail showing which discrete gloss
+identifiers and alternatives supported or blocked the sentence. It is JSON data, not natural-language
+reasoning or hidden model chain-of-thought.
 
-Lattice repair actions use the graph names `ask_repeat`, `request_fingerspelling`, `offer_top_k`,
-and `escalate_human_interpreter`. The legacy landmark values `repeat`, `fingerspell`, and
-`choose_candidate` remain confined to the legacy event union and are not aliases in this protocol.
+## 5.2. Confident result
 
-`PendingLatticeRepair` stores repair correlation on the backend. A follow-up is a new frozen-v1
-lattice with the same authenticated session and `utterance_id` and a greater `lattice_seq`.
-Neither signer identity nor a client-controlled `revision` field is accepted on the lattice.
+```json
+{
+  "event_schema_version": "1.0",
+  "session_id": "12345678-1234-5678-1234-567812345678",
+  "type": "lattice_result",
+  "status": "confident",
+  "lattice_seq": 0,
+  "utterance_id": "utterance-0",
+  "evidence_trace": [
+    {
+      "slot_index": 0,
+      "slot_id": "slot-0",
+      "start_ms": 1000,
+      "end_ms": 1300,
+      "resolved_gloss_id": "WATER",
+      "confidence": 0.96,
+      "provenance": "classifier_high_confidence",
+      "candidates": [
+        {"gloss_id": "WATER", "rank": 1, "confidence": 0.96},
+        {"gloss_id": "WHAT", "rank": 2, "confidence": 0.02}
+      ]
+    },
+    {
+      "slot_index": 1,
+      "slot_id": "slot-1",
+      "start_ms": 1350,
+      "end_ms": 1700,
+      "resolved_gloss_id": "PLEASE",
+      "confidence": 0.92,
+      "provenance": "classifier_high_confidence",
+      "candidates": [
+        {"gloss_id": "PLEASE", "rank": 1, "confidence": 0.92}
+      ]
+    }
+  ],
+  "classifier_version": "1.3.0",
+  "agent_source": "bedrock_graph",
+  "agent_model_version": "configured-model-id",
+  "latency_ms": {"agent": 240, "total": 245},
+  "caption": "Water, please.",
+  "tts_text": "Water, please.",
+  "confidence": 0.92,
+  "gloss_id_trace": ["WATER", "PLEASE"]
+}
+```
 
+`caption` and `tts_text` are UTF-8 JSON strings, not files. `tts_text` is optional text for the
+client device's speech synthesizer. The backend does not generate an audio file or stream.
 
+A confident event cannot contain unresolved evidence, and `gloss_id_trace` must exactly match the
+resolved gloss sequence in `evidence_trace`.
 
+## 5.3. Repair required
 
-## 6.3. Compatibility
-Version 1.0 is exact and rejects additions. A field rename, type change, enum change, semantic
-change, relaxed identifier syntax, altered timebase, or changed limit requires a new schema
-version. A new version is added beside v1 rather than changing v1 behavior. Both frontend and
-backend must accept the new golden fixture before transport switches to it.
+`action` is one of:
 
+- `ask_repeat`;
+- `request_fingerspelling`;
+- `offer_top_k`;
+- `escalate_human_interpreter`.
 
+The event has `status: "uncertain"` and deliberately has no `caption`, `tts_text`, or
+`gloss_id_trace`. `offer_top_k` has exactly one target slot and choices copied exactly from that
+slot's retained candidates. Other actions have no choices.
 
+## 5.4. Error codes
 
-## 6.4. Acceptance Checks
-The automated contract checks cover JSON round-trip, the shared fixture, all provenance states,
-candidate rank and confidence order, slot chronology, every incompatible-v1 field, version
-rejection, landmark exclusion, and acceptance at exactly the compact 32,768-byte ceiling. They
-live in [`tests/test_gloss_lattice_contract.py`](../tests/test_gloss_lattice_contract.py). Outbound
-union, text, evidence, repair-action, and server-state checks live in
-[`tests/test_lattice_events.py`](../tests/test_lattice_events.py).
+`invalid_message`, `unauthorized`, `session_not_found`, `session_expired`,
+`invalid_session_state`, `non_monotonic_sequence`, `rate_limited`, and `internal_error`.
+`retryable` is authoritative for the immediate message. It does not override session expiry or a
+terminal WebSocket close.
 
----
+# 6. CLOSE BEHAVIOR
 
+| Code | Meaning |
+| :--- | :------ |
+| `1000` | Client ended the session normally |
+| `1001` | Server idle timeout |
+| `1008` | Repeated invalid messages/policy violation |
+| `1009` | Message exceeds 32 KiB |
+| `1011` | Internal stream failure after fail-closed handling |
+| `4401` | Missing/invalid bearer or session mismatch |
+| `4403` | Browser origin rejected |
+| `4404` | Session absent |
+| `4408` | Session expired |
+| `4409` | Invalid session state |
 
+# 7. CHANGE CONTROL
 
-
-
-# 7. SOURCES
-1. **[`ARC_S5.7`](ARC_architecture.md#57-the-reverse-direction)**
-   *Use:* Four-state forward provenance ladder and signer-confirmed top-k repair.
-2. **[`ARC_S6.1`](ARC_architecture.md#61-pipeline)**
-   *Use:* Stage ⑤ top-k calibrated classifier output and stage ⑥ lattice consumer boundary.
-3. **[`PLN_S3.4`](PLN_plan.md#34-the-frozen-interfaces)**
-   *Use:* Required `GlossLattice` contents, compact JSON rule, and exclusion of landmarks.
-4. **[`PLN_S8.4`](PLN_plan.md#84-t44--the-lattice-with-provenance)**
-   *Use:* Per-slot provenance requirement and per-token uncertainty measurement.
-5. **[`PLN_S9.1`](PLN_plan.md#91-t51--typed-graph-state)**
-   *Use:* Graph-state consumer and separation of lattice from backend-owned memory and loop state.
-6. **[`BCT_S4.5`](../doc/BCT_backend_comparison_test.md#45-wp4--recognition)**
-   *Use:* Verified gap: the earlier backend dropped timestamps, provenance, and all but top-1.
-
----
-
-
-
-
+The v1 schema is frozen. Any incompatible field, discriminator, semantic, or limit change requires
+a new schema version and parallel client/server support. Compatible bug fixes must update source
+models, fixtures, contract tests, transport tests, this document, and client models together.
 
 # 8. CHANGE LOG
-1. **2026-09-06** · *Author:* Codex (GPT-5)
-   *Change:* Created and froze `GlossLattice` version 1.0. Defined its envelope, producer metadata,
-   slots, candidates, provenance semantics, timestamp clock, sequencing, exclusions, 32 KiB limit,
-   golden fixture, executable Pydantic model, and acceptance checks.
-2. **2026-09-06** · *Author:* Codex (GPT-5)
-   *Change:* Declared CTR authoritative for ingress only and froze the separately versioned lattice
-   response union, graph-native repair names, structured evidence trace, client-side TTS text
-   semantics, and backend-owned repair-follow-up correlation.
+
+| Date | Change |
+| :--- | :----- |
+| 2026-09-06 | Rewritten to match the implemented GlossLattice-only HTTP/WebSocket contract. |

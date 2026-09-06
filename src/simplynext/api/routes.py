@@ -1,4 +1,4 @@
-"""Short-lived HTTP endpoints outside the landmark streaming loop."""
+"""HTTP endpoints outside the GlossLattice streaming loop."""
 
 from __future__ import annotations
 
@@ -11,9 +11,6 @@ from simplynext import __version__
 from simplynext.contracts import (
     SessionCreateRequest,
     SessionCreateResponse,
-    StreamKind,
-    TranslationResult,
-    UtteranceRequest,
 )
 from simplynext.runtime import RuntimeServices
 from simplynext.sessions import (
@@ -26,7 +23,6 @@ from simplynext.sessions import (
 
 health_router = APIRouter(tags=["service"])
 api_router = APIRouter(tags=["translation"])
-replay_router = APIRouter(tags=["development replay"])
 
 
 def services_from_request(request: Request) -> RuntimeServices:
@@ -99,10 +95,7 @@ async def create_session(
             status_code=422,
             detail=f"this deployment is configured for {model_language.value}",
         )
-    if (
-        payload.stream_kind is StreamKind.GLOSS_LATTICE
-        and payload.producer != services.lattice_translation.approved_producer
-    ):
+    if payload.producer != services.lattice_translation.approved_producer:
         raise HTTPException(
             status_code=422,
             detail="producer profile is not approved for this deployment",
@@ -130,29 +123,6 @@ async def delete_session(
         raise _http_session_error(exc) from exc
     services.metrics.increment("sessions_deleted")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@replay_router.post("/utterances", response_model=TranslationResult)
-async def translate_utterance(
-    payload: UtteranceRequest,
-    request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-) -> TranslationResult:
-    """Authenticated development-only replay seam for classified hypotheses."""
-
-    services = services_from_request(request)
-    token = _bearer_token(authorization)
-    try:
-        snapshot = await services.sessions.authenticate(payload.session_id, token)
-    except SessionStoreError as exc:
-        raise _http_session_error(exc) from exc
-    if snapshot.language is not payload.language:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="payload language does not match the session",
-        )
-    services.metrics.increment("utterance_requests")
-    return await services.translation.process_hypotheses(payload)
 
 
 def _bearer_token(value: str | None) -> str:

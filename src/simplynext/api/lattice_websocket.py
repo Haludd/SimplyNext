@@ -31,7 +31,6 @@ from simplynext.contracts import (
     LatticeRepairRequiredEvent,
     LatticeTerminalEvent,
     StreamControlMessage,
-    StreamKind,
 )
 from simplynext.runtime import RuntimeServices
 from simplynext.sessions import (
@@ -69,11 +68,10 @@ async def lattice_socket(websocket: WebSocket, session_id: UUID) -> None:
     stream_id = uuid4()
     try:
         session = await services.sessions.claim_stream(
-            session_id,
-            token,
-            stream_id,
-            expected_kind=StreamKind.GLOSS_LATTICE,
-        )
+        session_id,
+        token,
+        stream_id,
+    )
     except SessionStoreError as exc:
         await websocket.close(code=_close_code(exc), reason=exc.message)
         return

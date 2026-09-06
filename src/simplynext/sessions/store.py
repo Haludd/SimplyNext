@@ -1,4 +1,4 @@
-"""Thread-safe in-memory storage for ephemeral live recognition sessions."""
+"""Thread-safe in-memory storage for ephemeral GlossLattice sessions."""
 
 from __future__ import annotations
 
@@ -17,9 +17,6 @@ from simplynext.contracts import (
     ControlAction,
     GlossLattice,
     GlossLatticeProducer,
-    LandmarkBatch,
-    LandmarkFrame,
-    LandmarkLayout,
     LatticeRepairRequiredEvent,
     LatticeTerminalEvent,
     SessionCreateRequest,
@@ -36,7 +33,6 @@ from .lattice_repair import PendingLatticeRepair
 class SessionState(StrEnum):
     READY = "ready"
     STREAMING = "streaming"
-    PAUSED = "paused"
     ENDED = "ended"
 
 
@@ -68,10 +64,6 @@ class InvalidSessionState(SessionStoreError):
 
 class NonMonotonicSequence(SessionStoreError):
     code = "non_monotonic_sequence"
-
-
-class BatchTooLarge(SessionStoreError):
-    code = "batch_too_large"
 
 
 class TooManySessions(SessionStoreError):
@@ -108,33 +100,11 @@ class SessionSnapshot:
     created_at: datetime
     last_seen_at: datetime
     expires_at: datetime
-    last_batch_seq: int | None
-    last_frame_seq: int | None
-    last_capture_ms: int | None
     last_control_seq: int | None
-    buffered_frames: int
-    total_frames_received: int
-    client_dropped_frames: int
-    server_evicted_frames: int
     stream_kind: StreamKind
-    producer: GlossLatticeProducer | None
+    producer: GlossLatticeProducer
     last_lattice_seq: int | None
     lattice_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class IngestReceipt:
-    session_id: UUID
-    batch_seq: int
-    last_frame_seq: int
-    received_frames: int
-    buffered_frames: int
-    client_dropped_frames: int
-    server_evicted_frames: int
-
-    @property
-    def dropped_frames(self) -> int:
-        return self.client_dropped_frames + self.server_evicted_frames
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,14 +134,7 @@ class _SessionRecord:
     created_at: datetime
     last_seen_at: datetime
     expires_at: datetime
-    frames: deque[LandmarkFrame]
-    last_batch_seq: int = -1
-    last_frame_seq: int = -1
-    last_capture_ms: int = -1
     last_control_seq: int = -1
-    total_frames_received: int = 0
-    client_dropped_frames: int = 0
-    server_evicted_frames: int = 0
     active_stream_id: UUID | None = None
     active_lattice_seq: int | None = None
     last_lattice_seq: int = -1
@@ -182,23 +145,14 @@ class _SessionRecord:
 
 
 class EphemeralSessionStore:
-    """Bounded live-session state with no persistence or plaintext token storage.
-
-    Public methods are asynchronous for direct use by FastAPI handlers. A
-    ``threading.RLock`` protects the underlying records as well, so multiple event
-    loops or worker threads cannot interleave mutations inside one process.
-    """
+    """Bounded live-session state with no persistence or plaintext token storage."""
 
     def __init__(
         self,
         *,
         ttl_seconds: int = 900,
-        buffer_frames: int = 600,
-        max_batch_frames: int = 8,
-        target_fps: int = 20,
         max_sessions: int = 128,
-        websocket_path_template: str = "/v1/sessions/{session_id}/landmarks",
-        lattice_websocket_path_template: str = "/v1/sessions/{session_id}/lattices",
+        websocket_path_template: str = "/v1/sessions/{session_id}/lattices",
         max_lattice_message_bytes: int = MAX_GLOSS_LATTICE_BYTES,
         max_lattices_per_session: int = 100,
         max_lattices_per_minute: int = 30,
@@ -209,18 +163,10 @@ class EphemeralSessionStore:
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
-        if buffer_frames <= 0:
-            raise ValueError("buffer_frames must be positive")
-        if not 1 <= max_batch_frames <= 32:
-            raise ValueError("max_batch_frames must be between 1 and 32")
-        if not 1 <= target_fps <= 60:
-            raise ValueError("target_fps must be between 1 and 60")
         if max_sessions < 1:
             raise ValueError("max_sessions must be positive")
         if "{session_id}" not in websocket_path_template:
             raise ValueError("websocket_path_template must contain {session_id}")
-        if "{session_id}" not in lattice_websocket_path_template:
-            raise ValueError("lattice_websocket_path_template must contain {session_id}")
         if max_lattice_message_bytes != MAX_GLOSS_LATTICE_BYTES:
             raise ValueError("CTR v1 max_lattice_message_bytes must be exactly 32768")
         if max_lattices_per_session < 1:
@@ -231,12 +177,8 @@ class EphemeralSessionStore:
             raise ValueError("max_lattices_per_minute_global must be positive")
 
         self._ttl = timedelta(seconds=ttl_seconds)
-        self._buffer_frames = buffer_frames
-        self._max_batch_frames = max_batch_frames
-        self._target_fps = target_fps
         self._max_sessions = max_sessions
         self._websocket_path_template = websocket_path_template
-        self._lattice_websocket_path_template = lattice_websocket_path_template
         self._max_lattices_per_session = max_lattices_per_session
         self._max_lattices_per_minute = max_lattices_per_minute
         self._max_lattices_per_minute_global = max_lattices_per_minute_global
@@ -253,11 +195,7 @@ class EphemeralSessionStore:
         *,
         signer_id: str | None = None,
     ) -> SessionCreateResponse:
-        """Create a session and return its token exactly once.
-
-        ``signer_id`` comes only from trusted server context. Anonymous sessions get
-        a stable, server-generated signer scope instead of accepting identity on wire.
-        """
+        """Create a session and return its bearer capability exactly once."""
 
         if signer_id is not None and (
             not isinstance(signer_id, str) or not signer_id.strip()
@@ -278,7 +216,6 @@ class EphemeralSessionStore:
             created_at=now,
             last_seen_at=now,
             expires_at=now + self._ttl,
-            frames=deque(maxlen=self._buffer_frames),
         )
         with self._lock:
             self._purge_expired_locked(now)
@@ -288,26 +225,12 @@ class EphemeralSessionStore:
                 raise ValueError("id_factory returned an existing session_id")
             self._records[session_id] = record
 
-        landmark_stream = request.stream_kind is StreamKind.LANDMARKS
-        websocket_path = (
-            self._websocket_path_template
-            if landmark_stream
-            else self._lattice_websocket_path_template
-        ).format(session_id=session_id)
         return SessionCreateResponse(
             session_id=session_id,
             stream_token=token,
-            stream_kind=request.stream_kind,
-            websocket_path=websocket_path,
+            websocket_path=self._websocket_path_template.format(session_id=session_id),
             created_at=now,
             expires_at=record.expires_at,
-            layout=LandmarkLayout() if landmark_stream else None,
-            max_batch_frames=self._max_batch_frames if landmark_stream else None,
-            target_fps=self._target_fps if landmark_stream else None,
-            lattice_schema_version=None if landmark_stream else "1.0",
-            max_lattice_message_bytes=None if landmark_stream else 32_768,
-            max_lattice_slots=None if landmark_stream else 64,
-            max_candidates_per_slot=None if landmark_stream else 5,
         )
 
     async def create_session(
@@ -316,8 +239,6 @@ class EphemeralSessionStore:
         *,
         signer_id: str | None = None,
     ) -> SessionCreateResponse:
-        """Explicit alias used by route modules."""
-
         return await self.create(request, signer_id=signer_id)
 
     async def authenticate(
@@ -329,26 +250,21 @@ class EphemeralSessionStore:
     ) -> SessionSnapshot:
         now = self._now()
         with self._lock:
-            record = self._authorized_record(session_id, token, now, touch=touch)
-            return self._snapshot(record)
+            return self._snapshot(
+                self._authorized_record(session_id, token, now, touch=touch)
+            )
 
     async def claim_stream(
         self,
         session_id: UUID | str,
         token: str,
         stream_id: UUID,
-        *,
-        expected_kind: StreamKind | None = None,
     ) -> SessionSnapshot:
         """Exclusively bind one live WebSocket to a session."""
 
         now = self._now()
         with self._lock:
             record = self._authorized_record(session_id, token, now, touch=True)
-            if expected_kind is not None and record.request.stream_kind is not expected_kind:
-                raise InvalidSessionState(
-                    f"session was negotiated for {record.request.stream_kind.value} input"
-                )
             if record.active_stream_id not in (None, stream_id):
                 raise InvalidSessionState("session already has an active stream")
             record.active_stream_id = stream_id
@@ -360,71 +276,13 @@ class EphemeralSessionStore:
         token: str,
         stream_id: UUID,
     ) -> bool:
-        """Release and erase data only when called by the owning WebSocket."""
-
         now = self._now()
         with self._lock:
             record = self._authorized_record(session_id, token, now, touch=False)
             if record.active_stream_id != stream_id:
                 return False
             record.active_stream_id = None
-            record.frames.clear()
             return True
-
-    async def append_batch(self, batch: LandmarkBatch, token: str) -> IngestReceipt:
-        """Validate and atomically append one ordered landmark batch."""
-
-        now = self._now()
-        with self._lock:
-            record = self._authorized_record(batch.session_id, token, now, touch=True)
-            if record.request.stream_kind is not StreamKind.LANDMARKS:
-                raise InvalidSessionState("session was not negotiated for landmarks")
-            if record.state is SessionState.PAUSED:
-                raise InvalidSessionState("cannot append landmarks while session is paused")
-            if record.state is SessionState.ENDED:
-                raise InvalidSessionState("cannot append landmarks after session end")
-            if len(batch.frames) > self._max_batch_frames:
-                raise BatchTooLarge(
-                    f"batch has {len(batch.frames)} frames; maximum is {self._max_batch_frames}"
-                )
-            if batch.batch_seq <= record.last_batch_seq:
-                raise NonMonotonicSequence(
-                    f"batch_seq must be greater than {record.last_batch_seq}"
-                )
-
-            first = batch.frames[0]
-            if first.seq <= record.last_frame_seq:
-                raise NonMonotonicSequence(
-                    f"frame seq must be greater than {record.last_frame_seq}"
-                )
-            if first.capture_ms <= record.last_capture_ms:
-                raise NonMonotonicSequence(
-                    f"capture_ms must be greater than {record.last_capture_ms}"
-                )
-
-            evicted = max(
-                0,
-                len(record.frames) + len(batch.frames) - self._buffer_frames,
-            )
-            record.frames.extend(batch.frames)
-            record.last_batch_seq = batch.batch_seq
-            record.last_frame_seq = batch.frames[-1].seq
-            record.last_capture_ms = batch.frames[-1].capture_ms
-            record.total_frames_received += len(batch.frames)
-            record.client_dropped_frames += batch.dropped_before
-            record.server_evicted_frames += evicted
-            if record.state is SessionState.READY:
-                record.state = SessionState.STREAMING
-
-            return IngestReceipt(
-                session_id=record.session_id,
-                batch_seq=batch.batch_seq,
-                last_frame_seq=record.last_frame_seq,
-                received_frames=len(batch.frames),
-                buffered_frames=len(record.frames),
-                client_dropped_frames=batch.dropped_before,
-                server_evicted_frames=evicted,
-            )
 
     async def reserve_lattice(
         self,
@@ -525,7 +383,7 @@ class EphemeralSessionStore:
         message: StreamControlMessage,
         token: str,
     ) -> SessionSnapshot:
-        """Apply an ordered session-state transition."""
+        """Apply an ordered lattice-stream control transition."""
 
         now = self._now()
         with self._lock:
@@ -534,56 +392,15 @@ class EphemeralSessionStore:
                 raise NonMonotonicSequence(
                     f"control_seq must be greater than {record.last_control_seq}"
                 )
-
-            action = message.action
-            if action is ControlAction.START:
-                if record.state not in (SessionState.READY, SessionState.STREAMING):
-                    raise InvalidSessionState("start requires a ready or streaming session")
-                record.state = SessionState.STREAMING
-            elif action is ControlAction.PAUSE:
-                if record.state is not SessionState.STREAMING:
-                    raise InvalidSessionState("pause requires a streaming session")
-                record.state = SessionState.PAUSED
-            elif action is ControlAction.RESUME:
-                if record.state is not SessionState.PAUSED:
-                    raise InvalidSessionState("resume requires a paused session")
-                record.state = SessionState.STREAMING
-            elif action is ControlAction.COMMIT:
-                if record.state is not SessionState.STREAMING:
-                    raise InvalidSessionState("commit requires a streaming session")
-            elif action is ControlAction.END:
+            if message.action is ControlAction.END:
                 if record.state is SessionState.ENDED:
                     raise InvalidSessionState("session is already ended")
                 record.state = SessionState.ENDED
-                record.frames.clear()
-            elif action is ControlAction.CLEAR_LIVE_DATA:
-                record.frames.clear()
-            elif action is ControlAction.PING:
-                if record.state is SessionState.ENDED:
-                    raise InvalidSessionState("session is ended")
+            elif record.state is SessionState.ENDED:
+                raise InvalidSessionState("session is ended")
 
             record.last_control_seq = message.control_seq
             return self._snapshot(record)
-
-    async def get_live_frames(
-        self,
-        session_id: UUID | str,
-        token: str,
-    ) -> tuple[LandmarkFrame, ...]:
-        now = self._now()
-        with self._lock:
-            record = self._authorized_record(session_id, token, now, touch=True)
-            return tuple(record.frames)
-
-    async def clear_live_data(self, session_id: UUID | str, token: str) -> int:
-        """Erase buffered landmarks while preserving anti-replay sequence state."""
-
-        now = self._now()
-        with self._lock:
-            record = self._authorized_record(session_id, token, now, touch=True)
-            cleared = len(record.frames)
-            record.frames.clear()
-            return cleared
 
     async def delete(
         self,
@@ -601,16 +418,10 @@ class EphemeralSessionStore:
                 raise InvalidSessionState("close the active stream before deleting its session")
             if record.active_lattice_seq is not None:
                 raise InvalidSessionState("cannot delete a session during Agent processing")
-            record.frames.clear()
-            record.lattice_records.clear()
-            record.latest_lattice_seq_by_utterance.clear()
-            record.pending_repairs.clear()
-            record.lattice_received_at.clear()
+            self._erase_record(record)
             del self._records[record.session_id]
 
     async def purge_expired(self) -> int:
-        """Erase every expired session and return the number removed."""
-
         now = self._now()
         with self._lock:
             return self._purge_expired_locked(now)
@@ -632,11 +443,7 @@ class EphemeralSessionStore:
         if record is None:
             raise SessionNotFound("session does not exist")
         if now >= record.expires_at and record.active_lattice_seq is None:
-            record.frames.clear()
-            record.lattice_records.clear()
-            record.latest_lattice_seq_by_utterance.clear()
-            record.pending_repairs.clear()
-            record.lattice_received_at.clear()
+            self._erase_record(record)
             del self._records[canonical_id]
             raise SessionExpired("session has expired")
         if not isinstance(token, str) or not hmac.compare_digest(
@@ -656,14 +463,16 @@ class EphemeralSessionStore:
             if now >= record.expires_at and record.active_lattice_seq is None
         ]
         for session_id in expired_ids:
-            record = self._records[session_id]
-            record.frames.clear()
-            record.lattice_records.clear()
-            record.latest_lattice_seq_by_utterance.clear()
-            record.pending_repairs.clear()
-            record.lattice_received_at.clear()
+            self._erase_record(self._records[session_id])
             del self._records[session_id]
         return len(expired_ids)
+
+    @staticmethod
+    def _erase_record(record: _SessionRecord) -> None:
+        record.lattice_records.clear()
+        record.latest_lattice_seq_by_utterance.clear()
+        record.pending_repairs.clear()
+        record.lattice_received_at.clear()
 
     @staticmethod
     def _canonical_id(session_id: UUID | str) -> UUID:
@@ -696,8 +505,6 @@ class EphemeralSessionStore:
 
     @staticmethod
     def _validate_lattice_session(record: _SessionRecord, lattice: GlossLattice) -> None:
-        if record.request.stream_kind is not StreamKind.GLOSS_LATTICE:
-            raise InvalidSessionState("session was not negotiated for gloss lattices")
         if lattice.language is not record.request.language:
             raise LatticeConflict("lattice language does not match the session")
         if lattice.producer != record.request.producer:
@@ -750,8 +557,6 @@ class EphemeralSessionStore:
                     "a later message for an utterance requires a preceding repair response"
                 )
 
-        if record.state is SessionState.PAUSED:
-            raise InvalidSessionState("cannot submit a lattice while session is paused")
         if record.state is SessionState.ENDED:
             raise InvalidSessionState("cannot submit a lattice after session end")
         if len(record.lattice_records) >= self._max_lattices_per_session:
@@ -780,14 +585,7 @@ class EphemeralSessionStore:
             created_at=record.created_at,
             last_seen_at=record.last_seen_at,
             expires_at=record.expires_at,
-            last_batch_seq=None if record.last_batch_seq < 0 else record.last_batch_seq,
-            last_frame_seq=None if record.last_frame_seq < 0 else record.last_frame_seq,
-            last_capture_ms=None if record.last_capture_ms < 0 else record.last_capture_ms,
             last_control_seq=None if record.last_control_seq < 0 else record.last_control_seq,
-            buffered_frames=len(record.frames),
-            total_frames_received=record.total_frames_received,
-            client_dropped_frames=record.client_dropped_frames,
-            server_evicted_frames=record.server_evicted_frames,
             stream_kind=record.request.stream_kind,
             producer=record.request.producer,
             last_lattice_seq=None if record.last_lattice_seq < 0 else record.last_lattice_seq,

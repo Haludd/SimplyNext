@@ -1,694 +1,143 @@
-**SIMPLYNEXT**
+**SIMPLYNEXT BACKEND**
 
+SimplyNext is an uncertainty-aware translation backend for a client-side sign-recognition
+pipeline. The client sends compact, versioned `GlossLattice` JSON. The backend returns exactly one
+terminal outcome per accepted lattice: grounded caption/TTS text or a repair instruction. It does
+not ingest raw camera frames, landmarks, or feature tensors.
 
+# 1. CURRENT STATUS
 
+The local backend vertical slice is implemented and tested:
 
+- strict GlossLattice v1 contracts;
+- ephemeral bearer-authenticated sessions;
+- bounded WebSocket transport with acknowledgement, replay, rate limits, and controls;
+- confidence and producer-profile policy gates;
+- a bounded LangGraph assembler → critic → confident/repair flow;
+- deterministic no-spend mode and optional guarded Amazon Bedrock Converse mode;
+- payload-free structured logs and in-process metrics;
+- unit, integration, and end-to-end protocol tests.
 
-# METADATA
-<details>
-<summary>Document code, status, review date, and usage instructions.</summary>
+The repository is not yet a hosted production service. Live Bedrock verification, container
+packaging, Railway controls, and real client integration remain. Follow
+`plan/BPP_backend_production_plan.md` in that order.
 
-| Field                   | Value                                         |
-| :---------------------- | :-------------------------------------------- |
-| **Code**                | `RDM`                                         |
-| **Status**              | Live                                          |
-| **Last reviewed**       | 2026-09-05                                    |
-| **Source of truth for** | Onboarding, environment setup, project status |
-| **Related**             | [`RIX`](ref_index.md) · [`CLD`](CLAUDE.md)    |
+# 2. WHY `src/simplynext/` IS INTENTIONAL
 
-**Summary.** Real-time sign-language translation from ordinary camera video, with no gloves and no
-wearables. Built for the SimplifyNext Agentic AI Hackathon 2026.
+This project uses Python's standard `src` layout. `src/` prevents accidental imports from the
+checkout; `simplynext/` is the stable package namespace. Flattening its children into `src/` would
+create generic top-level packages such as `agent`, `api`, and `contracts`, weaken packaging
+isolation, and require callers to abandon `simplynext.*` imports.
 
-**For the team.** This is the human entry point. [`RIX`](ref_index.md) records where every document
-lives and how to cite any section of it; read it before this file. Sections
-[`RDM_S3`](#3-product-summary) and [`RDM_S7`](#7-aws-setup) carry placeholders marking unfinished
-work.
+# 3. REQUIREMENTS
 
-**For the assistant.** This file must let a judge run the code from a clean clone (`D3_p42`).
-Update [`RDM_S9`](#9-project-status) whenever a component changes state, and replace each
-placeholder as its update trigger fires.
+- Python 3.11–3.13; Python 3.12 is the tested deployment target.
+- A virtual environment with `pip`.
+- Optional: AWS credentials and Bedrock model access for live model mode.
 
-</details>
-
----
-
-
-
-
-
-# 1. TABLE OF CONTENTS
-1.  [**Table of contents**](#1-table-of-contents) — this table
-2.  [**Quick start**](#2-quick-start) — first-session reading order, by role
-3.  [**Product summary**](#3-product-summary) — the problem, the product, the design invariant
-4.  [**Repository layout**](#4-repository-layout) — directory tree and document codes
-5.  [**Reading order**](#5-reading-order) — full onboarding sequence with time estimates
-6.  [**Environment and installation**](#6-environment-and-installation) — prerequisites, setup,
-    API flow and project structure
-7.  [**AWS setup**](#7-aws-setup) — account registration, sandbox lease, budget cap
-8.  [**Working conventions**](#8-working-conventions) — document, addressing and git conventions
-9.  [**Project status**](#9-project-status) — what exists, what does not, what is blocked
-10. [**Glossary**](#10-glossary) — document codes and domain terms
-11. [**Credits and sources**](#11-credits-and-sources) — attribution and licensing
-
----
-
-
-
-
-
-# 2. QUICK START
-## 2.1. First Session
-1. **[`RIX`](ref_index.md)** · *Time:* 5 min
-   *Focus:* How the repository addresses and formats itself
-2. **[`SCR`](plan/scribbles.md)** · *Time:* 3 min
-   *Focus:* The product intent, unedited
-3. **[`JCR_S1`](plan/JCR_judging_criteria.md#1-the-score-at-a-glance),
-   [`JCR_S8`](plan/JCR_judging_criteria.md#8-self-scoring-checklist)** · *Time:* 7 min
-   *Focus:* The scoring model and the pre-submission checklist
-
-
-
-
-## 2.2. By Role
-1. **Vision pipeline**
-   [`MPS`](doc/MPS_mediapipe_synthesis.md) and [`APS`](doc/APS_apple_synthesis.md), then
-   [`ARC_S6.5`](plan/ARC_architecture.md#65-perception-engineering-rules) and
-   [`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
-2. **Agent layer**
-   [`TRN_S2`](doc/TRN_training_synthesis.md#2-d1--llm-foundations-agents-prompting-bedrock)
-   through
-   [`TRN_S4`](doc/TRN_training_synthesis.md#4-d3--framing-classes-practices-case-studies),
-   then [`ARC_S6`](plan/ARC_architecture.md#6-the-recommended-architecture)
-3. **Deck and video**
-   [`JCR_S4`](plan/JCR_judging_criteria.md#4-problem-statement),
-   [`JCR_S6`](plan/JCR_judging_criteria.md#6-the-10-slide-deck),
-   [`JCR_S7`](plan/JCR_judging_criteria.md#7-the-5-minute-demo-video)
-4. **Risk and evaluation**
-   [`RSK_S10`](plan/RSK_risk_register.md#10-top-ten-risks) — the top ten
-5. **AWS ownership**
-   [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget)
-
-Before writing any document or code: [`CLD_S3`](CLAUDE.md#3-document-rules) and
-[`CLD_S5`](CLAUDE.md#5-conduct-on-this-project).
-
----
-
-
-
-
-
-# 3. PRODUCT SUMMARY
-## 3.1. The Problem
-A communication barrier persists between people with hearing loss and people without it. Signers
-either rely on an interpreter — Singapore's national association lists **2 Deaf and more than 6
-hearing staff interpreters**, supported by 55 community interpreters on an ad-hoc basis
-[[SADeaf]](https://sadeaf.org.sg/faqconc_cat/sl_interpreter/) — or fall back on typing, which
-breaks the flow of conversation.
-
-
-
-
-## 3.2. The Product
-SimplyNext reads sign language from an ordinary camera and produces conversational text or audio.
-In the intended end-to-end system, the Flutter client performs camera capture and MediaPipe
-landmark extraction. A nearby Python backend receives only canonical landmark coordinates, then
-performs body-relative normalization, utterance segmentation, closed-vocabulary recognition and
-confidence gating. An optional AWS Bedrock layer receives only compact accepted gloss evidence for
-bounded caption assembly and critique. **Where confidence is low, the backend refuses to guess and
-requests a repair instead.**
-
-That last property is the design invariant. For an assistive tool, a fluent wrong sentence
-attributed to a deaf person is worse than no sentence at all.
-
-Technical direction and supporting evidence: [`ARC`](plan/ARC_architecture.md).
-
-> **Placeholder — problem statement.**
-> **Missing:** the POV problem statement in `D3_p6` format, naming one person at one moment.
-> **Update trigger:** the four open questions in
-> [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team)
-> are answered, in particular the scenario and the named person.
-> **Owner:** team.
-
----
-
-
-
-
-
-# 4. REPOSITORY LAYOUT
-```text
-SimplyNext/
-├── README.md               RDM      human entry point
-├── ref_index.md            RIX      registry · addressing scheme · formatting rules
-├── CLAUDE.md               CLD      rules for AI agents
-│
-├── plan/                            what the team is building  ← source of truth
-│   ├── scribbles.md        SCR      raw ideation, product intent
-│   ├── JCR_judging_criteria.md      how the submission is scored
-│   ├── ARC_architecture.md          technical direction, sourced
-│   ├── RSK_risk_register.md         136 catalogued risks
-|   └── PLN_plan.md                  execution plan: 9 packages, 50 tasks
-│
-├── doc/                             reference material and syntheses
-│   ├── [D1..D6]*.pdf                training decks (read-only originals)
-│   ├── TRN_training_synthesis.md    all six decks, condensed
-│   ├── APS_apple_synthesis.md       Apple HandPose, in short
-│   ├── MPS_mediapipe_synthesis.md   MediaPipe, in short  ← the dependency
-│   ├── DHS_depthai_synthesis.md     DepthAI hand tracker, in short
-│   └── OPS_openpose_synthesis.md    OpenPose, in short  ← and why it was rejected
-│
-└── ref_repo/                        four third-party clones. THE CLONES ARE GIT-IGNORED
-    ├── apple/APR_apple_report.md            tracked — Apple, in full
-    ├── google-mediapipe/MPR_mediapipe_report.md      tracked — MediaPipe, in full
-    ├── depthai-hand-tracker/DHR_depthai_report.md    tracked — DepthAI, in full
-    └── openpose/OPR_openpose_report.md               tracked — OpenPose, in full
-```
-From backend branch:
-|-- pyproject.toml                   package, dependencies and tool configuration
-|-- requirements.txt                 compatible pip runtime install entry point
-|-- .env.example                     non-secret runtime configuration
-|-- main.py                          clean-clone compatibility entry point
-|-- src/simplynext/
-|   |-- contracts/                   strict HTTP and WebSocket schemas
-|   |-- sessions/                    bounded ephemeral session state
-|   |-- pipeline/                    normalization and segmentation
-|   |-- recognition/                 calibrated closed-vocabulary recognition
-|   |-- agent/                       deterministic or bounded Bedrock assembly
-|   |-- api/                         HTTP, WebSocket and body-size controls
-|   `-- observability/               payload-free JSON logs and metrics
-|-- tests/                           unit and end-to-end protocol tests
-|-- data/                            local model bundles and consent-controlled data
-|-- docs/                            generated developer documentation
-|-- plan/                            what the team is building; source of truth
-|-- doc/                             reference material and syntheses
-`-- ref_repo/                        third-party clones; clones are git-ignored
-```
-
-`src/`, `tests/` and `data/` do not exist yet — see [`RDM_S9`](#9-project-status).
-
----
-
-
-
-
-
-# 5. READING ORDER
-Full onboarding sequence for someone joining the team cold. Roughly two and a half hours end
-to end.
-
-1. **[`RIX`](ref_index.md)** · *Time:* 5 min
-   *Purpose:* How to find and cite everything else
-2. **[`SCR`](plan/scribbles.md)** · *Time:* 3 min
-   *Purpose:* The original idea, unedited
-3. **[`JCR`](plan/JCR_judging_criteria.md)** · *Time:* 20 min
-   *Purpose:* The specification the submission is graded against
-4. **[`ARC`](plan/ARC_architecture.md)** · *Time:* 30 min
-   *Purpose:* What is being built, and why the obvious approach fails
-5. **[`PLN`](plan/PLN_plan.md)** · *Time:* 20 min
-   *Purpose:* How it gets built, in what order, and what is cut first
-6. **[`RSK_S10`](plan/RSK_risk_register.md#10-top-ten-risks)** · *Time:* 10 min
-   *Purpose:* The ten risks that matter most
-7. **[`MPS`](doc/MPS_mediapipe_synthesis.md)** · *Time:* 5 min
-   *Purpose:* The perception library the project depends on, and its four traps
-8. **[`LTS`](doc/LTS_signlang_literature_synthesis.md)** · *Time:* 10 min
-   *Purpose:* What the field already knows, what data exists, and what does not
-9. **[`TRN`](doc/TRN_training_synthesis.md)** · *Time:* 30 min
-   *Purpose:* The six training decks, condensed
-10. **[`CLD`](CLAUDE.md)** · *Time:* 10 min
-    *Purpose:* Working rules
-
-Then the remaining repository syntheses, 5 minutes each. **Tracking:**
-[`APS`](doc/APS_apple_synthesis.md) for the segmentation state machine,
-[`DHS`](doc/DHS_depthai_synthesis.md) for the tracking fixes, and
-[`OPS`](doc/OPS_openpose_synthesis.md) for the rejected alternative. **Translation:**
-[`SLS`](doc/SLS_slrt_synthesis.md) for the published accuracy numbers,
-[`SAS`](doc/SAS_sam_slr_synthesis.md) for the landmark budget and the depth-camera answer,
-[`SPS`](doc/SPS_sign_pose_synthesis.md) for the pose library,
-[`SSS`](doc/SSS_spoken_to_signed_synthesis.md) for the reverse direction, and
-[`STS`](doc/STS_sign_translator_synthesis.md) for the correct MediaPipe Tasks setup.
-
-Deep dives, as needed: the ten full reports in `ref_repo/`, each beside the clone it describes —
-[`RIX_S2.1`](ref_index.md#21-live-documents) lists them — and the remainder of
-[`RSK`](plan/RSK_risk_register.md).
-
----
-
-
-
-
-
-# 6. ENVIRONMENT AND INSTALLATION
-> **Note:** a runnable first-draft Python backend now exists. The current Flutter prototype still
-> emits demonstration landmarks; real camera capture and on-device MediaPipe extraction remain to
-> be connected to this API.
-
-
-
-
-## 6.1. Prerequisites
-| Tool                               | Purpose                                         |
-| :--------------------------------- | :---------------------------------------------- |
-| **Git**                            | Version control — https://git-scm.com/install/  |
-| **Python 3.11–3.13**               | Backend runtime and bundled `pip`               |
-| **`uv`** *(optional)*              | Used only by the separate training labs         |
-| A Flutter landmark integration     | Required only for live end-to-end use; still pending |
-| An AWS account with Bedrock access | Optional bounded caption assembly               |
-
-Installing `uv`:
+# 4. INSTALLATION
 
 ```bash
-# Linux / macOS
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-
-
-
-## 6.2. Getting the Repository
-```bash
-git clone <this-repo>
-cd SimplyNext
-```
-
-**The ten reference clones under `ref_repo/` are not in this repository.** `.gitignore` excludes
-them and tracks only the ten report documents beside them —
-[`RIX_S5.2`](ref_index.md#52-what-version-control-tracks). To obtain one, clone it into the
-sub-directory the report's provenance section names:
-
-```bash
-# tracking/
-git clone https://github.com/google-ai-edge/mediapipe.git \
-    ref_repo/tracking/google-mediapipe/mediapipe
-git clone https://github.com/geaxgx/depthai_hand_tracker.git \
-    ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker
-git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git \
-    ref_repo/tracking/openpose/openpose
-
-# translation/
-git clone https://github.com/FangyunWei/SLRT.git \
-    ref_repo/translation/slrt/SLRT
-git clone https://github.com/jackyjsy/CVPR21Chal-SLR.git \
-    ref_repo/translation/sam-slr/CVPR21Chal-SLR
-git clone https://github.com/sign-language-processing/pose.git \
-    ref_repo/translation/sign-pose/pose
-git clone https://github.com/sign-language-processing/spoken-to-signed-translation.git \
-    ref_repo/translation/spoken-to-signed/spoken-to-signed-translation
-git clone https://github.com/sign-language-processing/sign-language-processing.github.io.git \
-    ref_repo/translation/signlang-literature/sign-language-processing.github.io
-git clone https://github.com/sign-language-translator/sign-language-translator.git \
-    ref_repo/translation/sign-translator/sign-language-translator
-```
-
-None of them is part of the build, and **nothing in `src/` may import from `ref_repo/`**.
-
-> **Warning — three of the ten may not be shipped.** OpenPose is licensed for non-commercial
-> research only ([`OPS_S2.1`](doc/OPS_openpose_synthesis.md#21-the-licence)); SLRT carries **no
-> licence file at all** ([`SLS_S2`](doc/SLS_slrt_synthesis.md#2-why-it-cannot-be-used)); and
-> SAM-SLR's licence is self-contradictory and is treated as non-commercial
-> ([`SAS_S2`](doc/SAS_sam_slr_synthesis.md#2-the-licence-contradiction)). They are cited, never
-> used. `pose-format` (MIT), spoken-to-signed (MIT) and `sign-language-translator` (Apache 2.0)
-> are candidate dependencies; the Apple sample is Swift and ships nothing either way.
-
-
-
-
-## 6.3. Training Labs
-The hackathon's own exercises live in a separate repository (`D1`), and are worth running before
-project code:
-
-```bash
-git clone https://github.com/thetsuwin66/agentic_ai_hackathon_2026.git
-cd agentic_ai_hackathon_2026/lab
-uv sync
-uv run 00_check_env.py
-```
-
-Session 1 labs need only a free Groq key (`console.groq.com`, rate-limited, not billed). Bedrock is
-not used until Session 2.
-
-
-
-
-## 6.4. Project Environment
-Linux or macOS:
-
-```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 cp .env.example .env
+```
+
+The committed `requirements.txt` delegates to `pyproject.toml`; `pylock.toml` is the resolved
+dependency lock. Do not commit `.env` or AWS credentials.
+
+# 5. LOCAL OPERATION
+
+Deterministic mode requires an exact caption-template file for readiness:
+
+```bash
+export SIMPLYNEXT_CAPTION_TEMPLATES_PATH=data/caption_templates.example.json
 python main.py
 ```
 
-Windows PowerShell:
+The defaults expose the service on `http://127.0.0.1:8000`. Useful routes are:
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
-python main.py
+| Method | Path | Purpose |
+| :----- | :--- | :------ |
+| `GET` | `/healthz` | Process liveness |
+| `GET` | `/readyz` | Transport and assembler readiness |
+| `GET` | `/metrics` | In-process counters and latency observations |
+| `GET` | `/docs` | OpenAPI UI for HTTP endpoints |
+| `POST` | `/v1/sessions` | Negotiate a lattice stream and bearer capability |
+| `DELETE` | `/v1/sessions/{session_id}` | End an authenticated session |
+| WebSocket | `/v1/sessions/{session_id}/lattices` | Submit lattices and receive events |
+
+Bedrock is disabled by default. The live enablement procedure and required manual AWS values are
+in `plan/BPP_backend_production_plan.md`.
+
+# 6. DATA FLOW
+
+```text
+client classifier
+  -> POST /v1/sessions
+  -> authenticated WSS connection
+  -> GlossLattice JSON
+  -> schema/policy/session checks
+  -> bounded assembler and independent critic
+  -> lattice_result OR lattice_repair_required JSON
+  -> client caption UI / local TTS / repair UI
 ```
 
-The API is then available at `http://127.0.0.1:8000`; interactive contract documentation is at
-`http://127.0.0.1:8000/docs`. A clean install is verified with:
+The server sends text and evidence as JSON over the WebSocket. `tts_text` is text intended for the
+client's speech synthesizer; the server does not send an audio file or audio stream. The
+`evidence_trace` is an ordered audit copy of the lattice slots, resolved glosses, confidence,
+provenance, and retained candidates that supported the decision.
+
+# 7. QUALITY GATES
 
 ```bash
 python -m pytest
-python -m ruff check src tests main.py
+python -m ruff check .
 python -m mypy src
+python -m pip check
 ```
 
-`GET /healthz` returns `200` when the process is healthy. `GET /readyz` intentionally returns `503`
-until both a calibrated recognition bundle and a caption assembler are configured; this means
-captions are disabled, not that the server failed to start. Readiness validates local configuration
-and does not make a paid Bedrock call or prove that AWS credentials and model access work. The
-deterministic caption file shape is demonstrated in `data/caption_templates.example.json`.
+The current verified baseline is 139 passing tests, Ruff clean, strict mypy clean, and a valid
+installed dependency set. Re-run the gates after every change; the number of tests may increase.
 
-> **Warning:** secrets go in `.env`, which is git-ignored. Bedrock uses the standard AWS credential
-> provider chain; credentials are never fields in the application configuration. Never commit a key
-> or the 2FA secret from `D6`.
-
-
-
-
-## 6.5. Required Project Structure
-`D3_p23` states that judges expect a legible hierarchy. The first draft provides:
+# 8. REPOSITORY MAP
 
 ```text
-src/          installable SimplyNext backend package
-docs/         generated or developer documentation placeholder
-data/         local bundles and consent-controlled recordings
-tests/        unit, safety and transport integration tests
-pyproject.toml dependency and tool configuration
-requirements.txt pip runtime installation entry point
-.env.example  committed non-secret settings; .env is ignored
-README.md     clean-clone runbook and project status
+SimplyNext/
+├── src/simplynext/             installable Python package
+│   ├── agent/                  graph, Bedrock nodes, prompts, and read-only tools
+│   ├── api/                    HTTP/WebSocket handlers and middleware
+│   ├── contracts/              strict public wire models
+│   ├── observability/          structured logging and in-process metrics
+│   ├── sessions/               bounded process-local session/replay state
+│   ├── config.py               environment-backed settings
+│   ├── lattice_runtime.py      policy and graph-to-event adapter
+│   ├── main.py                 FastAPI factory and runtime command
+│   └── runtime.py              service container
+├── tests/                      contract, unit, integration, and transport tests
+├── data/                       deterministic caption-template example
+├── plan/                       maintained backend documents
+├── pyproject.toml              dependencies, packaging, and tool configuration
+├── pylock.toml                 resolved dependency lock
+├── requirements.txt            editable install entry point
+└── main.py                     checkout-compatible application entry point
 ```
 
-
-
-
-
-## 6.6. First Draft API
-1. `POST /v1/sessions` negotiates the canonical landmark layout, batch limit, target frame rate,
-   short-lived session identifier and one bearer token. One deployment serves the language selected
-   by `SIMPLYNEXT_RECOGNITION_LANGUAGE`, which defaults to ASL.
-2. The Flutter client opens the returned WebSocket path with that bearer token. Only one active
-   landmark stream may own a session.
-3. Each `landmark_batch` carries ordered frames up to the limit negotiated for that session. The
-   server acknowledges sequence numbers and reports aggregate client-reported plus server-evicted
-   frame loss.
-4. The backend detects signing activity, retains a bounded utterance window, normalizes landmarks
-   relative to the signer, resamples time and asks the configured recognizer for calibrated top-k
-   gloss candidates.
-5. Confidence, margin, coverage, duration, frame loss, vocabulary and calibration gates run before
-   caption assembly. Accepted evidence produces `utterance_result`; anything else produces
-   `repair_required` with a concrete action such as repeat, reposition or fingerspell.
-6. `control` messages support `start`, `pause`, `resume`, `commit`, `clear_live_data`, `ping` and
-   `end`. Invalid or replayed sequence numbers produce typed errors.
-
-Raw camera frames are never accepted by this backend and landmarks are never sent to Bedrock. The
-classified-hypothesis replay endpoint is disabled by default and exists only for authenticated
-development evaluation when `SIMPLYNEXT_ENABLE_HYPOTHESIS_REPLAY_ENDPOINT=true`.
-
----
-
-
-
-
-
-# 7. AWS SETUP
-Full walkthrough: [`TRN_S6`](doc/TRN_training_synthesis.md#6-d6--aws-access-and-budget). Original
-source: `D6`.
-
-
-
-
-## 7.1. Registration and Lease
-1. **One person per team** registers, at `https://d-9667b91afb.awsapps.com/start`.
-2. The username is `hackathon2026,<group-leader-email>` — **note the comma, no spaces**.
-3. Set up 2FA and **share the secret key** with the team so every member can log in.
-4. Applications → *Innovation Sandbox Ignite Hackathon Application* → *Request a new lease* →
-   template **Hackathon 2026**.
-5. **Approval takes up to 2 working days.** The email usually lands in spam and may be blocked
-   entirely; log in periodically to check status rather than waiting for mail.
-6. Enable Bedrock model access for **Claude Haiku 4.5** in **`ap-southeast-1`**. Access is granted
-   per model *and* per region.
-
-
-
-
-## 7.2. The Budget
-> **Warning — this is a kill switch, not a bill.** `D6`: at **US$20** access to the account is
-> **revoked**; at **US$30** the account is **terminated**. One lease per group; additional leases
-> *"would not be granted"* barring exceptions.
-
-Operating rules, argued in [`ARC_S8`](plan/ARC_architecture.md#8-cost-model-against-the-aws-cap):
-
-- All perception runs locally. Nothing at 30 fps reaches Bedrock.
-- The agent is invoked **per utterance**, never per frame.
-- Every loop carries a hard iteration cap held in state.
-- `inputTokens` and `outputTokens` are logged on every call, from the first commit.
-- One named person owns the lease and watches the spend.
-
-SSO sessions expire after 8–12 hours, so each working day starts with
-`aws sso login --profile <name>`.
-
-> **Placeholder — lease status.**
-> **Missing:** who registered the account, the lease approval date, and the current spend.
-> **Update trigger:** confirmation from the registering team member.
-> **Owner:** team.
-
----
-
-
-
-
-
-# 8. WORKING CONVENTIONS
-## 8.1. Documents
-Every `.md` file follows [`RIX_S4`](ref_index.md#4-markdown-formatting-rules): a bold title, a
-collapsible `# METADATA`
-block, `# N. ALL CAPS` sections, `## N.M. Caps Initials Only` sub-sections, graduated blank lines
-before each heading, `---` between sections, tables only where a row fits on one line, sources
-tagged, and uncertainty marked `⚠`.
-
-Any section is referenced from anywhere by its address:
-
-```text
-ARC_S7.1     plan/ARC_architecture.md, section 7.1
-RSK_S7.1     plan/RSK_risk_register.md, section 7.1
-D3_p39       doc/[D3]_..., slide 39
-```
-
-
-
-
-## 8.2. Registering a New Document
-1. Pick a free three-letter code that compresses the document's name.
-2. Name the file `<CODE>_<snake_case_name>.md`.
-3. Add a row to [`RIX_S2.1`](ref_index.md#21-live-documents) **in the same commit**.
-
-
-
-
-## 8.3. Git
-- Never commit `.env`, keys, or the `D6` 2FA secret.
-- Never commit video of a person without documented consent
-  ([`RSK`](plan/RSK_risk_register.md) `HUM-15`).
-- Keep the `ref_index.md` update in the same commit as the change it describes.
-- Check the 5 GB submission limit before adding data or model weights.
-
----
-
-
-
-
-
-# 9. PROJECT STATUS
-1.  **Problem definition**
-    🟡 Idea is clear; the POV problem statement is **not yet written** —
-    [`JCR_S4`](plan/JCR_judging_criteria.md#4-problem-statement)
-2.  **Judging criteria**
-    🟢 Extracted and checklisted — [`JCR`](plan/JCR_judging_criteria.md)
-3.  **Architecture**
-    🟡 Proposed with sources; **16 decisions awaiting team sign-off** —
-    [`ARC_S9`](plan/ARC_architecture.md#9-decisions)
-4.  **Risks**
-    🟢 136 catalogued — [`RSK`](plan/RSK_risk_register.md)
-5.  **Reference repositories**
-    🟢 All four analysed and compared; MediaPipe chosen as the perception layer —
-    [`ARC_S7.2`](plan/ARC_architecture.md#72-the-four-reference-repositories-compared)
-6.  **Training material**
-    🟢 Synthesised — [`TRN`](doc/TRN_training_synthesis.md)
-7.  **Execution plan (`PLN`)**
-    🟡 Written — [`PLN`](plan/PLN_plan.md). **Draft** until the architecture decisions are
-    ratified; thirty-one of its fifty tasks proceed regardless —
-    [`PLN_S2.3`](plan/PLN_plan.md#23-the-lane-that-proceeds-regardless)
-8.  **Implementation (`src/`)**
-    🟡 Runnable first-draft backend: contracts, bounded sessions, WebSocket ingestion, signer-relative
-    normalization, segmentation, template recognition, confidence policy, caption assembly,
-    observability and automated tests
-9.  **Dataset**
-    🔴 Not collected; no calibrated recognition template bundle exists yet
-10. **AWS lease**
-    ⬜ Unconfirmed — see the placeholder in [`RDM_S7.2`](#72-the-budget)
-
-
-
-
-## 9.1. Blocking Questions
-From [`ARC_S9.1`](plan/ARC_architecture.md#91-open-questions-for-the-team). These gate the master
-plan.
-
-1. **Which scenario, and therefore which vocabulary?**
-   The dataset, the demonstration, and the effectiveness score
-2. **SgSL or ASL?**
-   SgSL is the honest choice for a Singapore hackathon and the stronger differentiator; ASL has far
-   more public data
-3. **Who is the named person?**
-   [`JCR_S4.4`](plan/JCR_judging_criteria.md#44-five-pressure-test-questions) question 1, which
-   blocks the problem statement
-4. **Where does the data come from?**
-   Self-recorded, a public dataset, or both
-
----
-
-
-
-
-
-# 10. GLOSSARY
-## 10.1. Document Codes
-1.  **`RIX`**
-    `ref_index.md` — registry, addressing, formatting
-2.  **`CLD`**
-    `CLAUDE.md` — rules for AI agents
-3.  **`RDM`**
-    `README.md` — this file
-4.  **`SCR`**
-    `plan/scribbles.md` — raw ideation
-5.  **`JCR`**
-    `plan/JCR_judging_criteria.md`
-6.  **`ARC`**
-    `plan/ARC_architecture.md`
-7.  **`RSK`**
-    `plan/RSK_risk_register.md`
-8.  **`TRN`**
-    `doc/TRN_training_synthesis.md`
-9.  **`APR` / `APS`**
-    `ref_repo/tracking/apple/APR_apple_report.md` · `doc/APS_apple_synthesis.md`
-10. **`MPR` / `MPS`**
-    `ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md` · `doc/MPS_mediapipe_synthesis.md`
-11. **`DHR` / `DHS`**
-    `ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md` · `doc/DHS_depthai_synthesis.md`
-12. **`OPR` / `OPS`**
-    `ref_repo/tracking/openpose/OPR_openpose_report.md` · `doc/OPS_openpose_synthesis.md`
-13. **`SLR` / `SLS`**
-    `ref_repo/translation/slrt/SLR_slrt_report.md` · `doc/SLS_slrt_synthesis.md`
-14. **`SAR` / `SAS`**
-    `ref_repo/translation/sam-slr/SAR_sam_slr_report.md` · `doc/SAS_sam_slr_synthesis.md`
-15. **`SPR` / `SPS`**
-    `ref_repo/translation/sign-pose/SPR_sign_pose_report.md` · `doc/SPS_sign_pose_synthesis.md`
-16. **`SSR` / `SSS`**
-    `ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md` ·
-    `doc/SSS_spoken_to_signed_synthesis.md`
-17. **`LTR` / `LTS`**
-    `ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md` ·
-    `doc/LTS_signlang_literature_synthesis.md`
-18. **`STR` / `STS`**
-    `ref_repo/translation/sign-translator/STR_sign_translator_report.md` ·
-    `doc/STS_sign_translator_synthesis.md`
-19. **`RAP` `RMP` `RDH` `ROP` `RSL` `RSA` `RSP` `RSS` `RLT` `RST`**
-    The ten clones themselves, git-ignored — [`RIX_S2.3`](ref_index.md#23-source-material)
-20. **`D1`–`D6`**
-    The six training PDFs in `doc/`
-21. **`PLN`**
-    `plan/PLN_plan.md` — execution plan: work packages, tasks, schedule, descoping order
-22. **`TDO` `EVL` `DEC`**
-    Reserved, not yet written — [`RIX_S2.2`](ref_index.md#22-planned-documents)
-
-The repository-code pattern — tag + `R` for a report, tag + `S` for a synthesis — is in
-[`RIX_S3.5`](ref_index.md#35-repository-document-codes). `APL`, `SYN` and `REF` were retired on
-2026-08-30 — [`RIX_S2.4`](ref_index.md#24-retired-codes).
-
-
-
-
-## 10.2. Domain Terms
-1.  **SgSL**
-    Singapore Sign Language. Its own language — a combination of Shanghainese Sign Language, ASL,
-    Signing Exact English and locally developed signs
-2.  **ASL**
-    American Sign Language. Not SgSL, and not interchangeable with it
-3.  **Gloss**
-    A written label for a single sign. **Not** a word of the spoken language
-4.  **Non-manual markers**
-    Grammar carried by the face, head and torso — brow raise, headshake, mouthing. Syntax, not
-    decoration
-5.  **Coarticulation**
-    Signs deforming under the influence of their neighbours. The reason continuous signing is far
-    harder than isolated signs
-6.  **Fingerspelling**
-    Spelling a word letter by letter. Fast, heavily coarticulated, and used for exactly the content
-    that matters most
-7.  **Landmark**
-    One tracked point on the body — MediaPipe emits 21 per hand, 33 for pose, 468 for face
-8.  **Chirality / handedness**
-    Which hand is which. Dominant and non-dominant hands carry different grammatical roles
-9.  **Signing space**
-    The volume in front of the signer where signs are made. Meaningful, and defined relative to the
-    body
-10. **Utterance**
-    One unit of signing bounded by pauses. The unit of agent invocation
-
----
-
-
-
-
-
-# 11. CREDITS AND SOURCES
-- Training material © 2026 SimplifyNext — `doc/[D1]`–`doc/[D6]`.
-**Tracking:**
-
-- `ref_repo/tracking/apple/handpose/` is Apple Inc.'s *Detecting Hand Poses with Vision* sample
-  (WWDC20) — [`APR_S2.2`](ref_repo/tracking/apple/APR_apple_report.md#22-licence).
-- `ref_repo/tracking/google-mediapipe/mediapipe/` is Google's MediaPipe, Apache 2.0 —
-  [`MPR_S2.2`](ref_repo/tracking/google-mediapipe/MPR_mediapipe_report.md#22-licence).
-- `ref_repo/tracking/depthai-hand-tracker/depthai_hand_tracker/` is `geaxgx/depthai_hand_tracker`,
-  MIT — [`DHR_S2.2`](ref_repo/tracking/depthai-hand-tracker/DHR_depthai_report.md#22-licence).
-- `ref_repo/tracking/openpose/openpose/` is CMU's OpenPose, **licensed for non-commercial academic
-  research only**. Cited, never used —
-  [`OPR_S2.2`](ref_repo/tracking/openpose/OPR_openpose_report.md#22-licence).
-
-**Translation:**
-
-- `ref_repo/translation/slrt/SLRT/` is `FangyunWei/SLRT`. ⚠ **It carries no licence file**, so no
-  permission to copy exists. Cited, never used —
-  [`SLR_S2.2`](ref_repo/translation/slrt/SLR_slrt_report.md#22-licence).
-- `ref_repo/translation/sam-slr/CVPR21Chal-SLR/` is SAM-SLR. ⚠ **Its licence is
-  self-contradictory** — CC0 in the file, non-commercial in the README, CC BY-NC 4.0 over
-  `SL-GCN/` — and is treated as non-commercial. Cited, never used —
-  [`SAR_S2.2`](ref_repo/translation/sam-slr/SAR_sam_slr_report.md#22-licence).
-- `ref_repo/translation/sign-pose/pose/` is `pose-format`, MIT —
-  [`SPR_S2.2`](ref_repo/translation/sign-pose/SPR_sign_pose_report.md#22-licence).
-- `ref_repo/translation/spoken-to-signed/spoken-to-signed-translation/` is ZurichNLP's pipeline,
-  MIT —
-  [`SSR_S2.2`](ref_repo/translation/spoken-to-signed/SSR_spoken_to_signed_report.md#22-licence).
-- `ref_repo/translation/signlang-literature/sign-language-processing.github.io/` is the sign
-  language processing survey, CC BY 4.0 —
-  [`LTR_S2.2`](ref_repo/translation/signlang-literature/LTR_signlang_literature_report.md#22-licence).
-- `ref_repo/translation/sign-translator/sign-language-translator/` is
-  `sign-language-translator`, Apache 2.0 —
-  [`STR_S2.2`](ref_repo/translation/sign-translator/STR_sign_translator_report.md#22-licence).
-- Singapore Sign Language and interpreter figures: The Singapore Association for the Deaf,
-  https://sadeaf.org.sg/.
-- Hearing-loss figures: World Health Organization, *Deafness and hearing loss* fact sheet,
-  https://www.who.int/news-room/fact-sheets/detail/deafness-and-hearing-loss.
-
-Full source lists with reliability notes are in each document's `SOURCES` section.
+# 9. DESIGN CONSTRAINTS
+
+- Unknown fields and invalid contract values are rejected.
+- Low confidence, ambiguity, model failure, and invalid output fail closed to repair.
+- Prompts and model outputs are never trusted as contracts until parsed and grounded.
+- Session tokens are opaque capabilities and must remain in memory on the client.
+- Session/checkpoint state is process-local, so production starts with one worker and one replica.
+- Horizontal scaling requires shared session, replay, rate-limit, and checkpoint storage first.
+
+# 10. DOCUMENTATION
+
+- `plan/ARC_architecture.md` — implemented architecture.
+- `plan/CTR_contracts.md` — wire contract.
+- `plan/DEP_dependencies.md` — dependency policy.
+- `plan/PLN_plan.md` — implementation status.
+- `plan/BPP_backend_production_plan.md` — remaining production work.

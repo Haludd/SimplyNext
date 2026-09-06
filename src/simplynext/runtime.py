@@ -9,7 +9,6 @@ from simplynext.agent import AgentGraph
 from simplynext.config import Settings
 from simplynext.lattice_runtime import LatticeTranslationEngine
 from simplynext.observability import MetricsRegistry
-from simplynext.orchestrator import TranslationEngine
 from simplynext.sessions import EphemeralSessionStore
 
 
@@ -17,7 +16,6 @@ from simplynext.sessions import EphemeralSessionStore
 class RuntimeServices:
     settings: Settings
     sessions: EphemeralSessionStore
-    translation: TranslationEngine
     lattice_translation: LatticeTranslationEngine
     agent_graph: AgentGraph
     metrics: MetricsRegistry

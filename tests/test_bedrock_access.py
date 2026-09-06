@@ -10,24 +10,18 @@ import pytest
 from pydantic import ValidationError
 
 from simplynext.agent import (
-    AssemblyRequest,
-    AssemblyStatus,
-    BedrockAssemblerConfig,
     BedrockBudgetExceeded,
-    BedrockCaptionAssembler,
     BedrockCostGuard,
     BedrockPreflightError,
     BedrockPricing,
     BedrockTokenUsage,
     BedrockUsageUnavailable,
     CostGuardedConverseClient,
-    GlossEvidence,
     preflight_bedrock_access,
     preflight_bedrock_runtime_access,
 )
 from simplynext.config import DEFAULT_BEDROCK_MODEL_ID, Settings
 from simplynext.observability import MetricsRegistry
-from simplynext.orchestrator import build_translation_engine
 
 MODEL_ID = DEFAULT_BEDROCK_MODEL_ID
 
@@ -309,92 +303,3 @@ def test_bedrock_settings_require_a_named_owner_and_budget_headroom() -> None:
             _env_file=None,
             bedrock_model_id="global.anthropic.some-other-model-v1:0",
         )
-
-
-def test_full_utterance_logs_cost_for_assembler_and_critic_calls(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    draft = {
-        "caption": "Water, please.",
-        "tts_text": "Water, please.",
-        "used_evidence_ids": ["evidence-0", "evidence-1"],
-        "used_glosses": ["WATER", "PLEASE"],
-    }
-    raw = FakeRuntimeClient(
-        response_with_usage(payload=draft, cache_write_tokens=0, cache_read_tokens=0),
-        response_with_usage(
-            payload={"supported": True, "reason": "fully supported"},
-            cache_write_tokens=0,
-            cache_read_tokens=0,
-        ),
-    )
-    client = guarded_client(raw)
-    assembler = BedrockCaptionAssembler(
-        client,
-        BedrockAssemblerConfig(model_id=MODEL_ID),
-    )
-    request = AssemblyRequest(
-        utterance_id="utterance-costed",
-        language="en",
-        evidence=(
-            GlossEvidence("evidence-0", "WATER", 0.96),
-            GlossEvidence("evidence-1", "PLEASE", 0.91),
-        ),
-    )
-
-    with caplog.at_level(logging.INFO, logger="simplynext.agent.bedrock_access"):
-        result = assembler.assemble(request)
-
-    assert result.status is AssemblyStatus.CONFIDENT
-    cost_records = [
-        record for record in caplog.records if record.message.startswith("bedrock_cost_usage")
-    ]
-    assert len(cost_records) == 2
-    assert all("utterance_id=utterance-costed" in record.message for record in cost_records)
-    utterance_cost = client.utterance_cost("utterance-costed")
-    assert utterance_cost is not None
-    assert utterance_cost.model_calls == 2
-    assert utterance_cost.input_tokens == 200
-    assert utterance_cost.output_tokens == 40
-    assert utterance_cost.estimated_cost_usd == Decimal("0.00044")
-    assert {call["requestMetadata"]["simplynext_role"] for call in raw.calls} == {
-        "assembler",
-        "critic",
-    }
-
-
-def test_translation_engine_runs_preflight_before_enabling_bedrock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    control = FakeControlClient()
-    runtime = FakeRuntimeClient(
-        response_with_usage(
-            payload="OK",
-            input_tokens=20,
-            output_tokens=1,
-            cache_write_tokens=0,
-            cache_read_tokens=0,
-        )
-    )
-    monkeypatch.setattr(
-        "simplynext.orchestrator.create_bedrock_control_client",
-        lambda *, region_name: control,
-    )
-    monkeypatch.setattr(
-        "simplynext.orchestrator.create_bedrock_client",
-        lambda **kwargs: runtime,
-    )
-
-    engine = build_translation_engine(
-        Settings(
-            _env_file=None,
-            bedrock_enabled=True,
-            bedrock_lease_owner="team-owner",
-        ),
-        MetricsRegistry(),
-    )
-
-    assert isinstance(engine.assembler, BedrockCaptionAssembler)
-    assert control.calls == [{"inferenceProfileIdentifier": MODEL_ID}]
-    assert len(runtime.calls) == 1
-    assert runtime.calls[0]["requestMetadata"]["simplynext_role"] == "preflight"

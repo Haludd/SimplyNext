@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from time import perf_counter
 from typing import cast
 
@@ -61,7 +62,6 @@ from simplynext.contracts import (
     SignLanguage,
 )
 from simplynext.observability import MetricsRegistry
-from simplynext.orchestrator import load_caption_templates
 
 logger = logging.getLogger(__name__)
 
@@ -523,7 +523,7 @@ def build_lattice_translation_engine(
         ),
         metrics=metrics,
     )
-    templates = load_caption_templates(settings.caption_templates_path)
+    templates = _load_caption_templates(settings.caption_templates_path)
 
     if settings.bedrock_enabled:
         preflight_bedrock_access(
@@ -613,6 +613,43 @@ def build_lattice_translation_engine(
         assembler_ready=assembler_ready,
         loop_cap=settings.agent_max_revisions,
     )
+
+
+def _load_caption_templates(path: Path | None) -> dict[tuple[str, ...], CaptionTemplate]:
+    """Load exact no-spend caption templates; reject the complete file on drift."""
+
+    if path is None:
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("schema_version") != "1.0":
+            raise ValueError("caption template schema_version must be '1.0'")
+        raw_templates = payload.get("templates")
+        if not isinstance(raw_templates, list):
+            raise ValueError("caption templates must be an array")
+        templates: dict[tuple[str, ...], CaptionTemplate] = {}
+        for item in raw_templates:
+            if not isinstance(item, dict) or set(item) - {"glosses", "caption", "tts_text"}:
+                raise ValueError("caption template has an invalid shape")
+            glosses = item.get("glosses")
+            caption = item.get("caption")
+            tts_text = item.get("tts_text")
+            if not isinstance(glosses, list) or not glosses or not all(
+                isinstance(value, str) and value for value in glosses
+            ):
+                raise ValueError("caption template glosses must be non-empty strings")
+            if not isinstance(caption, str) or (
+                tts_text is not None and not isinstance(tts_text, str)
+            ):
+                raise ValueError("caption template text is invalid")
+            key = tuple(glosses)
+            if key in templates:
+                raise ValueError("duplicate caption template")
+            templates[key] = CaptionTemplate(caption=caption, tts_text=tts_text)
+        return templates
+    except (OSError, ValueError, TypeError) as exc:
+        logger.error("caption_templates_rejected", extra={"reason": type(exc).__name__})
+        return {}
 
 
 def _repair_event(

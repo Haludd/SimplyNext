@@ -2,9 +2,7 @@
 
 from .lattice_repair import PendingLatticeRepair
 from .store import (
-    BatchTooLarge,
     EphemeralSessionStore,
-    IngestReceipt,
     InvalidSessionState,
     InvalidSessionToken,
     LatticeConflict,
@@ -23,9 +21,7 @@ from .store import (
 )
 
 __all__ = [
-    "BatchTooLarge",
     "EphemeralSessionStore",
-    "IngestReceipt",
     "InvalidSessionState",
     "InvalidSessionToken",
     "LatticeConflict",

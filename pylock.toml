@@ -332,17 +332,6 @@ url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933
 sha256 = "1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505"
 
 [[packages]]
-name = "numpy"
-version = "2.5.2"
-
-[[packages.wheels]]
-name = "numpy-2.5.2-cp312-cp312-macosx_14_0_arm64.whl"
-url = "https://files.pythonhosted.org/packages/f3/f4/29e78102a80601cf034d4e9767022cffeca2c3b4c926e1754572ca95593d/numpy-2.5.2-cp312-cp312-macosx_14_0_arm64.whl"
-
-[packages.wheels.hashes]
-sha256 = "6e8172ddfcf5cf74b811d372b570b83c60bd2de87a6fbfbebdadb4a9bd9c6cbb"
-
-[[packages]]
 name = "orjson"
 version = "3.12.0"
 

@@ -56,6 +56,34 @@ class BedrockControlClient(Protocol):
     def get_foundation_model(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
+def create_bedrock_client(
+    *,
+    region_name: str,
+    connect_timeout_seconds: float = 5.0,
+    read_timeout_seconds: float = 30.0,
+    total_max_attempts: int = 3,
+) -> _ConverseClient:
+    """Create a bounded Bedrock Runtime client without making a network request."""
+
+    try:
+        import boto3  # type: ignore[import-untyped]
+        from botocore.config import Config  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover - depends on installation
+        raise RuntimeError("boto3 is required for Bedrock lattice assembly") from exc
+    return cast(
+        _ConverseClient,
+        boto3.client(
+            "bedrock-runtime",
+            region_name=region_name,
+            config=Config(
+                connect_timeout=connect_timeout_seconds,
+                read_timeout=read_timeout_seconds,
+                retries={"mode": "standard", "total_max_attempts": total_max_attempts},
+            ),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class BedrockPricing:
     """Explicit per-million-token prices for exactly one configured model."""
@@ -480,7 +508,7 @@ def create_bedrock_control_client(*, region_name: str) -> BedrockControlClient:
     """Create the boto3 Bedrock control-plane client without a network request."""
 
     try:
-        import boto3  # type: ignore[import-untyped]
+        import boto3
     except ImportError as exc:  # pragma: no cover - depends on installation
         raise RuntimeError("boto3 is required for Bedrock access preflight") from exc
     return cast(BedrockControlClient, boto3.client("bedrock", region_name=region_name))
@@ -669,6 +697,7 @@ __all__ = [
     "BedrockUsageUnavailable",
     "BedrockUtteranceCost",
     "CostGuardedConverseClient",
+    "create_bedrock_client",
     "create_bedrock_control_client",
     "preflight_bedrock_access",
     "preflight_bedrock_runtime_access",

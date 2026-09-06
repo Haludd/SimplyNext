@@ -42,16 +42,8 @@ class Settings(BaseSettings):
     )
 
     session_ttl_seconds: int = Field(default=900, ge=30, le=86_400)
-    max_batch_frames: int = Field(default=8, ge=1, le=32)
-    target_fps: int = Field(default=20, ge=1, le=60)
-    max_queued_frames: int = Field(default=240, ge=8, le=10_000)
     max_active_sessions: int = Field(default=128, ge=1, le=10_000)
     http_max_body_bytes: int = Field(default=262_144, ge=4_096, le=4_194_304)
-    websocket_max_message_bytes: int = Field(
-        default=1_048_576,
-        ge=16_384,
-        le=16_777_216,
-    )
     gloss_lattice_max_message_bytes: Literal[32_768] = 32_768
     max_lattices_per_session: int = Field(default=100, ge=1, le=10_000)
     max_lattices_per_minute: int = Field(default=30, ge=1, le=10_000)
@@ -65,12 +57,10 @@ class Settings(BaseSettings):
     lattice_calibration_version: Identifier = "temperature_v2"
     lattice_vocabulary_version: Identifier = "sgsl_demo_v1"
 
-    template_bundle_path: Path | None = None
     caption_templates_path: Path | None = None
     recognition_language: SignLanguage = SignLanguage.ASL
     min_recognition_confidence: float = Field(default=0.80, ge=0.0, le=1.0)
     min_recognition_margin: float = Field(default=0.15, ge=0.0, le=1.0)
-    min_landmark_coverage: float = Field(default=0.75, ge=0.0, le=1.0)
     bedrock_enabled: bool = False
     aws_region: str = "ap-southeast-1"
     bedrock_model_id: str = DEFAULT_BEDROCK_MODEL_ID
@@ -90,7 +80,6 @@ class Settings(BaseSettings):
     bedrock_read_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
     bedrock_total_max_attempts: int = Field(default=3, ge=1, le=10)
     agent_max_revisions: int = Field(default=1, ge=0, le=1)
-    enable_hypothesis_replay_endpoint: bool = False
 
     @field_validator("api_prefix")
     @classmethod
@@ -109,7 +98,7 @@ class Settings(BaseSettings):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
 
-    @field_validator("template_bundle_path", "caption_templates_path", mode="before")
+    @field_validator("caption_templates_path", mode="before")
     @classmethod
     def empty_optional_value_is_unconfigured(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():

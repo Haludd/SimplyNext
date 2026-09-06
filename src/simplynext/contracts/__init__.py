@@ -1,4 +1,4 @@
-"""Public wire contracts for the SimplyNext backend."""
+"""Public GlossLattice wire contracts for the SimplyNext backend."""
 
 from typing import Annotated, TypeAlias
 
@@ -7,11 +7,8 @@ from pydantic import Field
 from .common import MAX_IDENTIFIER_CHARACTERS, Confidence, ContractModel, Identifier, SignLanguage
 from .events import (
     LATTICE_EVENT_SCHEMA_VERSION,
-    AckEvent,
-    ActivityEvent,
     ActivityState,
     ErrorCode,
-    ErrorEvent,
     LatticeAckDisposition,
     LatticeAckEvent,
     LatticeActivityEvent,
@@ -24,10 +21,6 @@ from .events import (
     LatticeRepairRequiredEvent,
     LatticeResultEvent,
     LatticeTerminalEvent,
-    OutboundEvent,
-    PongEvent,
-    RepairRequiredEvent,
-    UtteranceResultEvent,
 )
 from .gloss_lattice import (
     GLOSS_LATTICE_SCHEMA_VERSION,
@@ -39,23 +32,6 @@ from .gloss_lattice import (
     GlossLatticeProducer,
     GlossProvenance,
     GlossSlot,
-)
-from .landmarks import (
-    FACE_LANDMARK_INDICES,
-    FACE_LANDMARK_NAMES,
-    HAND_LANDMARK_NAMES,
-    LANDMARK_SCHEMA_VERSION,
-    MAX_CONTRACT_BATCH_FRAMES,
-    POSE_LANDMARK_INDICES,
-    POSE_LANDMARK_NAMES,
-    CameraGeometry,
-    FaceLandmarks,
-    HandLandmarks,
-    LandmarkBatch,
-    LandmarkFrame,
-    LandmarkLayout,
-    LandmarkPoint,
-    PoseLandmarks,
 )
 from .sessions import (
     ClientDescriptor,
@@ -70,30 +46,14 @@ from .sessions import (
     StreamControlMessage,
     StreamKind,
 )
-from .utterances import (
-    GlossHypothesis,
-    RepairAction,
-    TranslationResult,
-    TranslationStatus,
-    UtterancePayload,
-    UtteranceRequest,
-    UtteranceResponse,
-)
 
-InboundStreamMessage: TypeAlias = Annotated[
-    LandmarkBatch | StreamControlMessage,
-    Field(discriminator="type"),
-]
 InboundLatticeStreamMessage: TypeAlias = Annotated[
     GlossLattice | StreamControlMessage,
     Field(discriminator="type"),
 ]
 
 __all__ = [
-    "AckEvent",
-    "ActivityEvent",
     "ActivityState",
-    "CameraGeometry",
     "ClientDescriptor",
     "ClientPlatform",
     "Confidence",
@@ -102,28 +62,15 @@ __all__ = [
     "DetectorDelegate",
     "DetectorDescriptor",
     "ErrorCode",
-    "ErrorEvent",
-    "FACE_LANDMARK_INDICES",
-    "FACE_LANDMARK_NAMES",
-    "FaceLandmarks",
     "GLOSS_LATTICE_SCHEMA_VERSION",
     "GlossCandidate",
-    "GlossHypothesis",
     "GlossLattice",
     "GlossLatticeProducer",
     "GlossProvenance",
     "GlossSlot",
-    "HAND_LANDMARK_NAMES",
-    "HandLandmarks",
     "Identifier",
-    "InboundStreamMessage",
     "InboundLatticeStreamMessage",
-    "LANDMARK_SCHEMA_VERSION",
     "LATTICE_EVENT_SCHEMA_VERSION",
-    "LandmarkBatch",
-    "LandmarkFrame",
-    "LandmarkLayout",
-    "LandmarkPoint",
     "LatticeAckDisposition",
     "LatticeAckEvent",
     "LatticeActivityEvent",
@@ -136,18 +83,10 @@ __all__ = [
     "LatticeRepairRequiredEvent",
     "LatticeResultEvent",
     "LatticeTerminalEvent",
-    "MAX_CONTRACT_BATCH_FRAMES",
     "MAX_GLOSS_CANDIDATES",
     "MAX_GLOSS_LATTICE_BYTES",
     "MAX_GLOSS_LATTICE_SLOTS",
     "MAX_IDENTIFIER_CHARACTERS",
-    "OutboundEvent",
-    "PongEvent",
-    "POSE_LANDMARK_INDICES",
-    "POSE_LANDMARK_NAMES",
-    "PoseLandmarks",
-    "RepairAction",
-    "RepairRequiredEvent",
     "SessionCreateRequest",
     "SessionCreateResponse",
     "SessionRequest",
@@ -155,10 +94,4 @@ __all__ = [
     "SignLanguage",
     "StreamControlMessage",
     "StreamKind",
-    "TranslationResult",
-    "TranslationStatus",
-    "UtterancePayload",
-    "UtteranceRequest",
-    "UtteranceResponse",
-    "UtteranceResultEvent",
 ]

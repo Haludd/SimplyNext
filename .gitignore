@@ -1,7 +1,9 @@
-# ─── PYTHON ─────────────────────────────────────────────────────────────────
+# Python build and cache artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
 /.venv*/
 venv/
 env/
@@ -10,11 +12,7 @@ env/
 .ruff_cache/
 .tmp/
 
-# ─── LOCAL WORKING NOTES ────────────────────────────────────────────────────
-/plan/backend-todo.md
-/front_back_contract/
-
-# ─── SECRETS — see CLD_S4 constraint 3 and CLD_S6 rule 2 ────────────────────
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
@@ -23,7 +21,7 @@ env/
 credentials.json
 aws_credentials
 
-# ─── MODEL WEIGHTS AND DATA — see CLD_S6 rule 5, 5 GB submission limit ──────
+# Model weights and non-versioned datasets
 *.tflite
 *.task
 *.blob
@@ -35,26 +33,15 @@ aws_credentials
 data/raw/
 data/interim/
 
-# ─── RECORDED MEDIA — see RSK_S8.3, consent required before committing ──────
+# Recorded media
 *.mp4
 *.mov
 *.avi
 *.mkv
 
-# ─── EDITOR AND OS ──────────────────────────────────────────────────────────
+# Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# ─── REFERENCE CLONES — see RIX_S5.2 and CLD_S6 rules 6 and 7 ───────────────
-# Exclude everything under ref_repo/, then re-admit only the report documents.
-# Reports sit at ref_repo/<track>/<slug>/<CODE>_<name>.md — three levels deep,
-# because the clones were regrouped into tracking/ and translation/.
-ref_repo/**
-!ref_repo/
-!ref_repo/*/
-!ref_repo/*/*/
-!ref_repo/*/*/[A-Z][A-Z][A-Z]_*.md
-ref_repo/*/*/*/

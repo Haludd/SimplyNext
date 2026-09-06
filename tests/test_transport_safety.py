@@ -12,6 +12,7 @@ from simplynext.contracts import (
     ClientDescriptor,
     ClientPlatform,
     DetectorDescriptor,
+    GlossLatticeProducer,
     SessionCreateRequest,
 )
 from simplynext.main import create_app
@@ -32,9 +33,16 @@ class FakeClock:
 def _session_request() -> SessionCreateRequest:
     return SessionCreateRequest(
         language="sgsl",
-        stream_kind="landmarks",
+        stream_kind="gloss_lattice",
         client=ClientDescriptor(platform=ClientPlatform.TEST, app_version="transport-test"),
         detector=DetectorDescriptor(name="test-detector", version="1"),
+        producer=GlossLatticeProducer(
+            classifier_id="temporal_classifier",
+            classifier_version="1.3.0",
+            confidence_kind="calibrated_probability",
+            calibration_version="temperature_v2",
+            vocabulary_version="sgsl_demo_v1",
+        ),
     )
 
 
@@ -44,7 +52,6 @@ def _test_app(*, http_max_body_bytes: int = 4096):
             environment="test",
             allowed_origins=(),
             bedrock_enabled=False,
-            template_bundle_path=None,
             caption_templates_path=None,
             http_max_body_bytes=http_max_body_bytes,
         )

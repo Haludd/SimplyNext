@@ -1,3 +1,3 @@
-"""SimplyNext landmark-stream backend."""
+"""SimplyNext GlossLattice translation backend."""
 
 __version__ = "0.1.0"

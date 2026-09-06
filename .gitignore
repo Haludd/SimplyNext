@@ -12,6 +12,7 @@ env/
 
 # ─── LOCAL WORKING NOTES ────────────────────────────────────────────────────
 /plan/backend-todo.md
+/front_back_contract/
 
 # ─── SECRETS — see CLD_S4 constraint 3 and CLD_S6 rule 2 ────────────────────
 .env

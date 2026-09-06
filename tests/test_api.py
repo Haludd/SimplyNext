@@ -46,6 +46,7 @@ def _create_session(client: TestClient) -> dict[str, Any]:
         json={
             "language": "asl",
             "schema_version": "1.0",
+            "stream_kind": "landmarks",
             "client": {
                 "platform": "test",
                 "app_version": "integration-test",
@@ -183,9 +184,10 @@ def test_health_and_unconfigured_readiness_are_honest(client: TestClient) -> Non
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert readiness.status_code == 503
-    assert readiness.json()["status"] == "recognizer_unconfigured"
-    assert readiness.json()["recognizer"]["ready"] is False
-    assert readiness.json()["recognizer"]["calibrated"] is False
+    assert readiness.json()["status"] == "lattice_assembler_unconfigured"
+    assert readiness.json()["lattice_transport"]["ready"] is True
+    assert readiness.json()["agent"]["ready"] is True
+    assert readiness.json()["assembler"]["ready"] is False
 
 
 def test_session_creation_and_authenticated_deletion(client: TestClient) -> None:

@@ -135,6 +135,7 @@ def test_inbound_union_uses_type_discriminator() -> None:
 def test_session_request_is_strict_and_versioned() -> None:
     request = SessionCreateRequest(
         language=SignLanguage.SGSL,
+        stream_kind="landmarks",
         client=ClientDescriptor(platform=ClientPlatform.ANDROID, app_version="0.1.0"),
         detector=DetectorDescriptor(name="mediapipe-holistic", version="0.10.21"),
     )

@@ -68,6 +68,7 @@ from .sessions import (
     SessionRequest,
     SessionResponse,
     StreamControlMessage,
+    StreamKind,
 )
 from .utterances import (
     GlossHypothesis,
@@ -81,6 +82,10 @@ from .utterances import (
 
 InboundStreamMessage: TypeAlias = Annotated[
     LandmarkBatch | StreamControlMessage,
+    Field(discriminator="type"),
+]
+InboundLatticeStreamMessage: TypeAlias = Annotated[
+    GlossLattice | StreamControlMessage,
     Field(discriminator="type"),
 ]
 
@@ -112,6 +117,7 @@ __all__ = [
     "HandLandmarks",
     "Identifier",
     "InboundStreamMessage",
+    "InboundLatticeStreamMessage",
     "LANDMARK_SCHEMA_VERSION",
     "LATTICE_EVENT_SCHEMA_VERSION",
     "LandmarkBatch",
@@ -148,6 +154,7 @@ __all__ = [
     "SessionResponse",
     "SignLanguage",
     "StreamControlMessage",
+    "StreamKind",
     "TranslationResult",
     "TranslationStatus",
     "UtterancePayload",

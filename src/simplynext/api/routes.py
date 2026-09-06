@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
@@ -12,6 +11,7 @@ from simplynext import __version__
 from simplynext.contracts import (
     SessionCreateRequest,
     SessionCreateResponse,
+    StreamKind,
     TranslationResult,
     UtteranceRequest,
 )
@@ -53,22 +53,26 @@ async def health() -> dict[str, str]:
 @health_router.get("/readyz")
 async def readiness(request: Request, response: Response) -> dict[str, object]:
     services = services_from_request(request)
-    metadata = services.translation.recognizer.metadata
-    recognizer_ready = metadata.ready and metadata.calibrated
-    assembler_ready = services.translation.assembler_ready
-    ready = recognizer_ready and assembler_ready
+    assembler_ready = services.lattice_translation.assembler_ready
+    ready = assembler_ready
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    if not recognizer_ready:
-        state = "recognizer_unconfigured"
-    elif not assembler_ready:
-        state = "caption_assembler_unconfigured"
-    else:
-        state = "ready"
     return {
-        "status": state,
-        "recognizer": asdict(metadata),
-        "caption_assembler": {"ready": assembler_ready},
+        "status": "ready" if ready else "lattice_assembler_unconfigured",
+        "lattice_transport": {
+            "ready": True,
+            "schema_version": "1.0",
+            "max_message_bytes": services.settings.gloss_lattice_max_message_bytes,
+        },
+        "agent": {
+            "ready": True,
+            "max_revisions": services.settings.agent_max_revisions,
+            "allowed_tools": services.agent_graph.allowed_tools,
+        },
+        "assembler": {
+            "ready": assembler_ready,
+            "mode": "bedrock" if services.settings.bedrock_enabled else "deterministic",
+        },
     }
 
 
@@ -80,6 +84,7 @@ async def metrics(request: Request) -> dict[str, object]:
 @api_router.post(
     "/sessions",
     response_model=SessionCreateResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_session(
@@ -88,11 +93,19 @@ async def create_session(
     response: Response,
 ) -> SessionCreateResponse:
     services = services_from_request(request)
-    model_language = services.translation.model_language
-    if model_language is not None and payload.language is not model_language:
+    model_language = services.lattice_translation.language
+    if payload.language is not model_language:
         raise HTTPException(
             status_code=422,
             detail=f"this deployment is configured for {model_language.value}",
+        )
+    if (
+        payload.stream_kind is StreamKind.GLOSS_LATTICE
+        and payload.producer != services.lattice_translation.approved_producer
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="producer profile is not approved for this deployment",
         )
     try:
         session = await services.sessions.create(payload)

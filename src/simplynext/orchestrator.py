@@ -475,7 +475,12 @@ def build_translation_engine(settings: Settings, metrics: MetricsRegistry) -> Tr
             known_spend_usd=settings.bedrock_known_spend_usd,
         )
         client = CostGuardedConverseClient(
-            client=create_bedrock_client(region_name=settings.aws_region),
+            client=create_bedrock_client(
+                region_name=settings.aws_region,
+                connect_timeout_seconds=settings.bedrock_connect_timeout_seconds,
+                read_timeout_seconds=settings.bedrock_read_timeout_seconds,
+                total_max_attempts=settings.bedrock_total_max_attempts,
+            ),
             guard=guard,
             metrics=metrics,
             prompt_cache_enabled=settings.bedrock_prompt_cache_enabled,
@@ -493,7 +498,7 @@ def build_translation_engine(settings: Settings, metrics: MetricsRegistry) -> Tr
             ),
         )
     else:
-        templates = _load_caption_templates(settings.caption_templates_path)
+        templates = load_caption_templates(settings.caption_templates_path)
         assembler = DeterministicTemplateAssembler(templates)
 
     policy = ConfidencePolicy(
@@ -512,7 +517,7 @@ def build_translation_engine(settings: Settings, metrics: MetricsRegistry) -> Tr
     )
 
 
-def _load_caption_templates(
+def load_caption_templates(
     path: Path | None,
 ) -> dict[tuple[str, ...], CaptionTemplate]:
     if path is None:

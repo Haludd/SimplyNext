@@ -14,7 +14,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from simplynext.contracts import SignLanguage
+from simplynext.contracts import GlossLatticeProducer, Identifier, SignLanguage
 
 DEFAULT_BEDROCK_MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
@@ -52,6 +52,18 @@ class Settings(BaseSettings):
         ge=16_384,
         le=16_777_216,
     )
+    gloss_lattice_max_message_bytes: Literal[32_768] = 32_768
+    max_lattices_per_session: int = Field(default=100, ge=1, le=10_000)
+    max_lattices_per_minute: int = Field(default=30, ge=1, le=10_000)
+    max_lattices_per_minute_global: int = Field(default=120, ge=1, le=100_000)
+    max_concurrent_agent_runs: int = Field(default=4, ge=1, le=128)
+    agent_queue_timeout_seconds: float = Field(default=2.0, gt=0.0, le=60.0)
+    lattice_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0.0, le=3_600.0)
+
+    lattice_classifier_id: Identifier = "temporal_classifier"
+    lattice_classifier_version: Identifier = "1.3.0"
+    lattice_calibration_version: Identifier = "temperature_v2"
+    lattice_vocabulary_version: Identifier = "sgsl_demo_v1"
 
     template_bundle_path: Path | None = None
     caption_templates_path: Path | None = None
@@ -74,6 +86,9 @@ class Settings(BaseSettings):
     bedrock_cache_write_usd_per_million_tokens: Decimal = Field(default=Decimal("1.375"), ge=0)
     bedrock_cache_read_usd_per_million_tokens: Decimal = Field(default=Decimal("0.11"), ge=0)
     bedrock_prompt_cache_enabled: bool = True
+    bedrock_connect_timeout_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
+    bedrock_read_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    bedrock_total_max_attempts: int = Field(default=3, ge=1, le=10)
     agent_max_revisions: int = Field(default=1, ge=0, le=1)
     enable_hypothesis_replay_endpoint: bool = False
 
@@ -116,7 +131,16 @@ class Settings(BaseSettings):
             return DEFAULT_BEDROCK_MODEL_ID
         return value
 
-    @field_validator("host", "aws_region", "bedrock_model_id", "app_name")
+    @field_validator(
+        "host",
+        "aws_region",
+        "bedrock_model_id",
+        "app_name",
+        "lattice_classifier_id",
+        "lattice_classifier_version",
+        "lattice_calibration_version",
+        "lattice_vocabulary_version",
+    )
     @classmethod
     def reject_empty_strings(cls, value: str) -> str:
         value = value.strip()
@@ -157,6 +181,18 @@ class Settings(BaseSettings):
     @property
     def recognition_margin_threshold(self) -> float:
         return self.min_recognition_margin
+
+    @property
+    def approved_lattice_producer(self) -> GlossLatticeProducer:
+        """Return the sole producer profile accepted by this deployment."""
+
+        return GlossLatticeProducer(
+            classifier_id=self.lattice_classifier_id,
+            classifier_version=self.lattice_classifier_version,
+            confidence_kind="calibrated_probability",
+            calibration_version=self.lattice_calibration_version,
+            vocabulary_version=self.lattice_vocabulary_version,
+        )
 
 
 @lru_cache(maxsize=1)

@@ -284,15 +284,32 @@ class BedrockCaptionAssembler:
             )
 
 
-def create_bedrock_client(*, region_name: str | None = None) -> ConverseClient:
+def create_bedrock_client(
+    *,
+    region_name: str | None = None,
+    connect_timeout_seconds: float | None = None,
+    read_timeout_seconds: float | None = None,
+    total_max_attempts: int | None = None,
+) -> ConverseClient:
     """Create the optional boto3 client without making a network request."""
 
     try:
         import boto3  # type: ignore[import-untyped]
+        from botocore.config import Config  # type: ignore[import-untyped]
     except ImportError as exc:  # pragma: no cover - depends on optional installation
         raise RuntimeError("boto3 is required for Bedrock caption assembly") from exc
     region = region_name or os.environ.get(BEDROCK_REGION_ENV) or None
-    return cast(ConverseClient, boto3.client("bedrock-runtime", region_name=region))
+    client_options: dict[str, Any] = {"region_name": region}
+    if any(
+        value is not None
+        for value in (connect_timeout_seconds, read_timeout_seconds, total_max_attempts)
+    ):
+        client_options["config"] = Config(
+            connect_timeout=connect_timeout_seconds or 5.0,
+            read_timeout=read_timeout_seconds or 30.0,
+            retries={"mode": "standard", "total_max_attempts": total_max_attempts or 3},
+        )
+    return cast(ConverseClient, boto3.client("bedrock-runtime", **client_options))
 
 
 def _request_utterance_id(payload: Mapping[str, Any]) -> str:

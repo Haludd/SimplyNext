@@ -146,6 +146,8 @@ def test_cost_guard_accounts_for_all_token_classes_and_adds_a_cache_checkpoint(
     assert "utterance_id=utterance-42" in caplog.text
     assert "estimated_cost_usd=0.00023705" in caplog.text
     assert "utterance_estimated_cost_usd=0.00023705" in caplog.text
+    assert "WATER PLEASE" not in caplog.text
+    assert "Stable safety instructions." not in caplog.text
     utterance_cost = client.utterance_cost("utterance-42")
     assert utterance_cost is not None
     assert utterance_cost.model_calls == 1
@@ -380,7 +382,7 @@ def test_translation_engine_runs_preflight_before_enabling_bedrock(
     )
     monkeypatch.setattr(
         "simplynext.orchestrator.create_bedrock_client",
-        lambda *, region_name: runtime,
+        lambda **kwargs: runtime,
     )
 
     engine = build_translation_engine(

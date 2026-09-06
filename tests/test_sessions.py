@@ -46,6 +46,7 @@ class FakeClock:
 def request() -> SessionCreateRequest:
     return SessionCreateRequest(
         language="sgsl",
+        stream_kind="landmarks",
         client=ClientDescriptor(platform=ClientPlatform.TEST, app_version="test"),
         detector=DetectorDescriptor(name="test-detector", version="1"),
     )

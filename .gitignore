@@ -16,6 +16,7 @@ env/
 .env
 .env.*
 !.env.example
+/plan/BPP_backend_production_plan.md
 *.pem
 *.key
 credentials.json

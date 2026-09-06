@@ -9,7 +9,7 @@
 | **Last reviewed** | 2026-09-06 |
 | **Source of truth** | `src/simplynext/` and `tests/` |
 | **Contract** | `plan/CTR_contracts.md` |
-| **Production plan** | `plan/BPP_backend_production_plan.md` |
+| **Production plan** | `plan/PLN_plan.md`; local ignored BPP workbook when provisioned |
 
 # 1. SCOPE AND INVARIANT
 
@@ -70,6 +70,8 @@ The `src/simplynext/` directory is intentionally retained. `src/` is the build r
 | `src/simplynext/agent/tools/` | Read-only lexicon, conversation-memory, and context-hint tools |
 | `src/simplynext/agent/prompts/` | Versioned assembler and critic system prompts |
 | `src/simplynext/observability/` | Payload-free JSON logs and thread-safe in-process metrics |
+| `scripts/protocol_smoke.py` | Explicit, payload-redacted HTTP/WebSocket Phase 1 verification client |
+| `tests/fixtures/live_bedrock_*_v1.json` | Non-sensitive confident and pre-model-repair smoke inputs |
 
 The root `main.py` exists only so a checkout can run before installation. Installed operation uses
 the `simplynext-api` console command or `uvicorn simplynext.main:app`.
@@ -219,13 +221,14 @@ a durable metrics backend.
 
 # 11. VERIFIED AND UNVERIFIED CLAIMS
 
-Verified locally as of 2026-09-05:
+Verified locally as of 2026-09-06:
 
-- 139 tests pass;
+- 146 tests pass;
 - Ruff passes;
-- strict mypy passes for 33 source files;
+- strict mypy passes for 35 source/script files;
 - `pip check` passes;
 - locked editable and normal wheel installs succeed;
+- the payload-redacted smoke client passes end to end against a local deterministic server;
 - the removed landmark backend has no production references.
 
 Not yet verified:
@@ -240,4 +243,5 @@ Not yet verified:
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-06 | Added Phase 1 smoke tooling status and refreshed the local verification baseline. |
 | 2026-09-06 | Rewritten from the implemented GlossLattice-only backend; module map and production gaps corrected. |

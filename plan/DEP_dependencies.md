@@ -47,6 +47,7 @@ OpenCV, TensorFlow, PyTorch, and server-side landmark libraries are not backend 
 | `pytest` | `>=8.3,<9` | Test runner |
 | `pytest-asyncio` | `>=0.24,<1` | Async session/runtime tests |
 | `ruff` | `>=0.8,<1` | Import, correctness, and style checks |
+| `websockets` | `>=14,<17` | Explicit Phase 1 HTTP/WebSocket protocol smoke client |
 
 # 4. INSTALL PROFILES
 
@@ -118,4 +119,5 @@ runtime dependency closure does not contain NumPy or a server-side vision stack.
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-06 | Added the opt-in, payload-redacted WebSocket protocol smoke dependency. |
 | 2026-09-06 | Rewritten around the current GlossLattice-only Python package and production dependency boundary. |

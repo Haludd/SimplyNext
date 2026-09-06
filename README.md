@@ -19,8 +19,9 @@ The local backend vertical slice is implemented and tested:
 - unit, integration, and end-to-end protocol tests.
 
 The repository is not yet a hosted production service. Live Bedrock verification, container
-packaging, Railway controls, and real client integration remain. Follow
-`plan/BPP_backend_production_plan.md` in that order.
+packaging, Railway controls, and real client integration remain. Their committed status is in
+`plan/PLN_plan.md`; the release operator may also maintain the local, Git-ignored
+`plan/BPP_backend_production_plan.md` workbook.
 
 # 2. WHY `src/simplynext/` IS INTENTIONAL
 
@@ -69,8 +70,10 @@ The defaults expose the service on `http://127.0.0.1:8000`. Useful routes are:
 | `DELETE` | `/v1/sessions/{session_id}` | End an authenticated session |
 | WebSocket | `/v1/sessions/{session_id}/lattices` | Submit lattices and receive events |
 
-Bedrock is disabled by default. The live enablement procedure and required manual AWS values are
-in `plan/BPP_backend_production_plan.md`.
+Bedrock is disabled by default. The local, Git-ignored `plan/BPP_backend_production_plan.md`
+workbook contains the live enablement procedure and operator-specific values when provisioned.
+Phase 1 includes an opt-in, payload-redacted protocol harness at `scripts/protocol_smoke.py`; its
+Bedrock mode requires `--confirm-live-spend` and never runs as part of the normal test suite.
 
 # 6. DATA FLOW
 
@@ -95,11 +98,11 @@ provenance, and retained candidates that supported the decision.
 ```bash
 python -m pytest
 python -m ruff check .
-python -m mypy src
+python -m mypy src scripts
 python -m pip check
 ```
 
-The current verified baseline is 139 passing tests, Ruff clean, strict mypy clean, and a valid
+The current verified baseline is 146 passing tests, Ruff clean, strict mypy clean, and a valid
 installed dependency set. Re-run the gates after every change; the number of tests may increase.
 
 # 8. REPOSITORY MAP
@@ -117,6 +120,7 @@ SimplyNext/
 │   ├── main.py                 FastAPI factory and runtime command
 │   └── runtime.py              service container
 ├── tests/                      contract, unit, integration, and transport tests
+├── scripts/                    explicit operational smoke commands
 ├── data/                       deterministic caption-template example
 ├── plan/                       maintained backend documents
 ├── pyproject.toml              dependencies, packaging, and tool configuration
@@ -140,4 +144,4 @@ SimplyNext/
 - `plan/CTR_contracts.md` — wire contract.
 - `plan/DEP_dependencies.md` — dependency policy.
 - `plan/PLN_plan.md` — implementation status.
-- `plan/BPP_backend_production_plan.md` — remaining production work.
+- `plan/BPP_backend_production_plan.md` — local ignored production workbook; never commit its values.

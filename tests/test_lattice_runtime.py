@@ -7,7 +7,8 @@ from typing import cast
 
 import pytest
 
-from simplynext.agent import AgentGraph
+import simplynext.lattice_runtime as lattice_runtime
+from simplynext.agent import AgentGraph, CostGuardedConverseClient
 from simplynext.config import Settings
 from simplynext.contracts import GlossLattice, LatticeRepairRequiredEvent, LatticeResultEvent
 from simplynext.lattice_runtime import build_lattice_translation_engine
@@ -134,3 +135,90 @@ def test_agent_exception_is_converted_to_a_fail_closed_repair() -> None:
     assert event.action == "escalate_human_interpreter"
     assert event.reason_codes == ("agent_execution_failed",)
     assert "caption" not in event.model_dump()
+
+
+def test_bedrock_composition_runs_both_startup_preflights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        allowed_origins=(),
+        bedrock_enabled=True,
+        bedrock_lease_owner="phase1-owner",
+        recognition_language="sgsl",
+    )
+    control_client = object()
+    runtime_client = object()
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        lattice_runtime,
+        "create_bedrock_control_client",
+        lambda **_kwargs: control_client,
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "create_bedrock_client",
+        lambda **_kwargs: runtime_client,
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "preflight_bedrock_access",
+        lambda client, **_kwargs: calls.append(("control", client)),
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "preflight_bedrock_runtime_access",
+        lambda client, **_kwargs: calls.append(("runtime", client)),
+    )
+
+    engine = build_lattice_translation_engine(settings, MetricsRegistry())
+
+    assert engine.ready is True
+    assert engine.agent_source == "bedrock_graph"
+    assert calls[0] == ("control", control_client)
+    assert calls[1][0] == "runtime"
+    assert isinstance(calls[1][1], CostGuardedConverseClient)
+
+
+@pytest.mark.parametrize("failed_preflight", ["control", "runtime"])
+def test_bedrock_composition_fails_instead_of_advertising_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    failed_preflight: str,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        allowed_origins=(),
+        bedrock_enabled=True,
+        bedrock_lease_owner="phase1-owner",
+        recognition_language="sgsl",
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "create_bedrock_control_client",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "create_bedrock_client",
+        lambda **_kwargs: object(),
+    )
+
+    def preflight(name: str) -> None:
+        if failed_preflight == name:
+            raise RuntimeError(f"{name} preflight failed")
+
+    monkeypatch.setattr(
+        lattice_runtime,
+        "preflight_bedrock_access",
+        lambda _client, **_kwargs: preflight("control"),
+    )
+    monkeypatch.setattr(
+        lattice_runtime,
+        "preflight_bedrock_runtime_access",
+        lambda _client, **_kwargs: preflight("runtime"),
+    )
+
+    with pytest.raises(RuntimeError, match=f"{failed_preflight} preflight failed"):
+        build_lattice_translation_engine(settings, MetricsRegistry())

@@ -8,7 +8,7 @@
 | **Status** | Local backend complete; production delivery in progress |
 | **Last reviewed** | 2026-09-06 |
 | **Implemented source of truth** | `src/simplynext/` and `tests/` |
-| **Production execution** | `plan/BPP_backend_production_plan.md` |
+| **Production execution** | Local Git-ignored `plan/BPP_backend_production_plan.md` workbook |
 
 # 1. OBJECTIVE
 
@@ -103,7 +103,8 @@ src/simplynext/
 
 `tests/` mirrors these concerns with contract, state, graph, tool, Bedrock, session, runtime, API,
 transport, repair, replay, and safety coverage. `data/caption_templates.example.json` is the
-deterministic no-spend example.
+deterministic no-spend example. `scripts/protocol_smoke.py` is the explicit Phase 1 HTTP/WebSocket
+verification client and uses the two non-sensitive `tests/fixtures/live_bedrock_*_v1.json` inputs.
 
 ## 3.4. Runtime routes
 
@@ -150,7 +151,7 @@ deterministic no-spend example.
 
 - Deterministic happy path, ambiguous/low-confidence repair, replay, invalid contract, session
   auth, limits, cancellation, graph failure, and mocked Bedrock flows are tested.
-- Latest baseline: 139 passing tests, Ruff clean, strict mypy clean for 33 source files, `pip check`
+- Latest baseline: 146 passing tests, Ruff clean, strict mypy clean for 35 source/script files, `pip check`
   clean, and normal-wheel import verified.
 
 ## 4.6. Backend scope cleanup — complete
@@ -161,15 +162,22 @@ deterministic no-spend example.
 
 # 5. REMAINING PRODUCTION MILESTONES
 
-The four milestones below are mandatory and sequential. Detailed commands, manual inputs,
-controls, and success criteria are in `plan/BPP_backend_production_plan.md`.
+The four milestones below are mandatory and sequential. The release operator's local, Git-ignored
+`plan/BPP_backend_production_plan.md` provides detailed commands, manual inputs, controls, and
+success criteria without publishing infrastructure values.
 
-## 5.1. Live AWS Bedrock verification — pending
+## 5.1. Live AWS Bedrock verification — tooling complete; operator run pending
 
 Use an approved AWS identity and region to prove control-plane profile access, one minimal runtime
 Converse request, the real assembler/critic path, usage/cost metrics, and spend-guard rejection.
 Record model ID, region, identity owner, access expiry, verified token rates, and evidence of success
 without recording prompts or user content.
+
+The opt-in `scripts/protocol_smoke.py` command, non-sensitive confident/repair fixtures, startup
+preflight composition tests, and pre-dispatch budget rejection proof are implemented. The command
+requires an explicit live-spend flag and emits only redacted control results and metric deltas. The
+live AWS claim remains pending until an operator injects the account-specific values listed in the
+local BPP and records a successful run.
 
 ## 5.2. Production packaging — pending
 

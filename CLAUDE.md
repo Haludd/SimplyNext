@@ -14,8 +14,10 @@ Before changing code, read these files in order:
 2. `plan/ARC_architecture.md` — current components and trust boundaries.
 3. `plan/CTR_contracts.md` — frozen client/server contract.
 4. `plan/PLN_plan.md` — implementation status and next milestones.
-5. `plan/BPP_backend_production_plan.md` — hosted-production sequence.
-6. `plan/DEP_dependencies.md` — dependency ownership and update policy.
+5. `plan/DEP_dependencies.md` — dependency ownership and update policy.
+
+Before production operations, also read the local `plan/BPP_backend_production_plan.md` when it is
+present. It is an intentionally Git-ignored operator workbook and must never be force-added.
 
 # 3. ENGINEERING RULES
 
@@ -44,7 +46,7 @@ Run from the repository root in the active virtual environment:
 ```bash
 python -m pytest
 python -m ruff check .
-python -m mypy src
+python -m mypy src scripts
 python -m pip check
 ```
 
@@ -58,9 +60,12 @@ environment and `python -c "import simplynext"` from outside the repository.
 - Keep examples synchronized with the contract models and tests.
 - Place credentials and real tokens only in local or hosting-provider secret stores, never in
   Markdown, `.env.example`, logs, fixtures, or commits.
+- Keep `plan/BPP_backend_production_plan.md` local and ignored; copy no filled worksheet values into
+  tracked documents.
 
 # 6. CHANGE LOG
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-06 | Marked the production workbook as local-only and sensitive. |
 | 2026-09-06 | Replaced the historical research-corpus rules with backend-only contributor rules. |

@@ -1159,7 +1159,7 @@ and `D3_p10`'s test (*"what would a fixed workflow miss?"*) is answered at ⑥, 
 
 
 
-## 9.1. T5.1 — Typed Graph State
+## 9.1. T5.1 — Typed Graph State ✅
 *Stage:* ⑥–⑩ · *Size:* S · *Depends on:* `T0.5` · *Answers:* `AGT-8`, `AGT-6`
 
 `agent/state.py`: a typed state with reducers, holding everything heavy so no prompt has to.
@@ -1174,7 +1174,7 @@ and `D3_p10`'s test (*"what would a fixed workflow miss?"*) is answered at ⑥, 
 
 
 
-## 9.2. T5.2 — The Graph
+## 9.2. T5.2 — The Graph ✅
 *Stage:* ⑥–⑩ · *Size:* M · *Depends on:* `T5.1` · *Answers:* `AGT-6`, `AGT-7`
 
 LangGraph wiring for ⑥ → ⑦ → (⑧ | ⑨) → ⑩, with the loop bound enforced in code.
@@ -1193,7 +1193,7 @@ exits cleanly, with the count in the run record.
 
 
 
-## 9.3. T5.3 — The Assembler
+## 9.3. T5.3 — The Assembler ✅
 *Stage:* ⑥ · *Size:* M · *Depends on:* `T5.2`, `T4.4`
 *Answers:* `AGT-1`, `AGT-2`, `AGT-3`, `MOD-5`
 
@@ -1214,7 +1214,7 @@ than bridging it.
 
 
 
-## 9.4. T5.4 — The Tools
+## 9.4. T5.4 — The Tools ✅
 *Stage:* ⑥ · *Size:* M · *Depends on:* `T5.2`, `T3.1` · *Answers:* `AGT-9`, `AGT-13`, `AGT-14`
 
 `sgsl_lexicon_lookup()`, `conversation_memory()` and `context_hint()`, written as prompt text.
@@ -1235,7 +1235,7 @@ been read aloud by someone who did not write it.
 
 
 
-## 9.5. T5.5 — The Critic
+## 9.5. T5.5 — The Critic ✅
 *Stage:* ⑦ · *Size:* M · *Depends on:* `T5.3` · *Answers:* `AGT-4`, `AGT-5`
 
 A separate agent, with a separate prompt, that can veto the assembler's sentence.

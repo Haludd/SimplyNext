@@ -1,12 +1,14 @@
 # SignBridge Flutter frontend
 
-SignBridge is an uncertainty-aware sign-language communication prototype. The Flutter frontend contains the product flow described in the repository architecture:
+SignBridge is an uncertainty-aware sign-language communication prototype. The Flutter frontend now focuses on one live translation page:
 
-1. First launch opens one-time camera calibration (`STEP 1 OF 3` → `STEP 3 OF 3`).
-2. Successful calibration is stored locally and routes to Live Translator.
-3. Live Translator shows the camera, reusable normalized landmark overlay, large buffered captions, tracking confidence, and view modes (Raw / Mesh / Clean).
-4. Unknown signs have a separate “Sign not recognised” state that opens a five-valid-sample personal vocabulary flow.
-5. Settings exposes real camera/microphone permission and device controls, privacy switches, and camera recalibration. There is no obsolete conversation screen or saved-transcripts settings panel.
+1. The camera is opened from the **Open camera** button inside the video feed.
+2. Live Translator shows the camera, landmark overlay, captions, tracking confidence, and view modes (Raw / Mesh / Clean).
+3. Capture starts automatically when a usable hand is detected; the signer does not press a Start button.
+4. A sustained pause, or hands leaving the frame after movement, automatically ends the utterance and prepares it for the next processing stage.
+
+The older calibration, My signs, and Settings widgets remain in the source for
+future work, but they are not part of the current single-page UI.
 
 ## Run
 
@@ -23,7 +25,14 @@ The generated platform files already include the permission descriptions require
 
 ## Hand tracking and sign analysis
 
-Chrome uses MediaPipe Hand Landmarker through `web/hand_tracking.js`. It requests camera permission, tracks up to two hands, and emits 21 points per hand: normalized `x/y`, relative `z`, handedness, confidence, and world-landmark values when available. MediaPipe Pose Landmarker supplies the left and right shoulder points. The preview is mirrored like a selfie camera, and the skeleton overlay applies the same flip so it stays aligned with the displayed hand; the API keeps the original unmirrored coordinates. `HandPoseNormalizer` converts those points into the shared `LandmarkFrame` contract. The frame contains coordinate groups, point confidence, subject tracking, and optional face-expression data for the next processing stage.
+Chrome uses MediaPipe Hand Landmarker through `web/hand_tracking.js`. It requests camera permission, tracks up to two hands, and emits 21 points per hand: normalized `x/y`, relative `z`, handedness, confidence, and world-landmark values when available. MediaPipe Pose Landmarker supplies the left and right shoulder points. The preview is mirrored like a selfie camera, and the skeleton overlay applies the same flip so it stays aligned with the displayed hand; the wire format keeps the original unmirrored coordinates. `HandPoseNormalizer` converts those points into the shared `LandmarkFrame` contract. The frame contains coordinate groups, point confidence, subject tracking, and optional face-expression data for the next processing stage.
+
+The first stable pose becomes the subject for the current camera session. The
+tracker compares torso/head anchor shape and recent position, ignores other
+pose candidates, and holds the original subject as hidden if detection is
+temporarily lost. If two people are equally plausible, it refuses to guess
+and keeps the original lock. Use the refresh icon in the video overlay to
+deliberately stop the old session and choose a new first subject.
 
 Each accepted hand also includes `finger_status` for `thumb`, `index`, `middle`, `ring`, and `pinky`. Each entry is a smoothed landmark-quality signal: `observed`, `uncertain`, or `not_visible`, with a confidence and evidence-frame count. It does not claim that a finger is anatomically missing; a hidden or occluded finger can look the same as an absent finger in a single camera frame. The existing subject lock is unchanged, so these per-finger signals still belong only to the locked signer.
 
@@ -60,35 +69,34 @@ Chrome camera
   → body/hand normalizer + 3D-style skeleton
   → LandmarkFrame JSON
   → local utterance buffer: List<LandmarkFrame>
-  → handoff to the next processing stage
+  → WebSocket utterance chunks
+  → next processing stage
 ```
 
 ### Capture boundaries and handoff
 
-Tracking and camera detection run continuously after the camera starts. They
-do not automatically decide that a word or sentence has begun, because a
-pause can occur inside a sign or between signs. The reliable first version
-uses an explicit boundary:
+Tracking and camera detection run continuously after the camera starts. The
+frontend automatically decides the boundaries using the current lightweight
+pause detector:
 
-1. Press **Start utterance**. The frontend clears its utterance buffer and
-   starts storing new frames.
+1. When a usable hand from the locked subject appears, the frontend clears
+   the utterance buffer and starts storing new frames.
 2. Sign one word or sentence. Every accepted frame is stored as one
    `LandmarkFrame` while the live preview continues.
-3. Press **Analyse utterance** when the utterance is complete. The frontend
-   also has an automatic safety boundary: after movement has been observed,
-   a visible, locked subject whose hands remain still for about one second is
-   automatically finished. The manual button remains available because a
-   still hand position can be meaningful in sign language.
+3. After movement has been observed, a visible, locked subject whose hands
+   remain still for about one second is automatically finished. If hands leave
+   the frame, that absence also starts the same pause timer.
 4. The frontend stops storing frames and exposes the completed
    `List<LandmarkFrame>` as `AppController.lastUtteranceFrames`.
 
-Frames received before Start or after Analyse are still available for the
-live preview, but are not included in that utterance. The next stage should
+Frames received before a hand appears or after an utterance ends are still
+available for the live preview, but are not included in that utterance. The next stage should
 consume `lastUtteranceFrames` (or the list returned by
 `TrackingService.finishUtterance()`) and then use `LandmarkFrame.toJson()` for
 serialization. `AppController.lastUtteranceJson` is also available as a
-convenience view. There is no WebSocket in this capture handoff and this
-change does not require editing the backend folder.
+convenience view. When WebSocket mode is enabled, the same completed list is
+sent as bounded JSON chunks; the camera does not send individual HTTP frame
+requests.
 
 The schema deliberately stores landmarks, not a guessed translation:
 
@@ -103,33 +111,43 @@ tracking information. A word or sentence is therefore a time-ordered list of
 these frames. Velocity, acceleration, classifier labels, and camera images
 are not part of this frontend handoff schema.
 
-## Sending tracking data to the backend
+## Sending tracking data over WebSocket
 
-`SignSequenceApiClient` sends a sequence to:
+The active frontend transport is `SignTrackingWebSocketClient`. It connects to:
 
 ```text
-POST {SIGNBRIDGE_API_URL}/v1/sign-sequences/analyze
-Content-Type: application/json
+ws://127.0.0.1:8001/v1/tracking
 ```
 
-Start the frontend with an API base URL:
+Run the frontend with WebSocket mode enabled:
 
 ```bash
 flutter run -d chrome \
-  --dart-define=SIGNBRIDGE_API_URL=https://api.example.com
+  --dart-define=SIGNBRIDGE_ENABLE_WEBSOCKET=true \
+  --dart-define=SIGNBRIDGE_WEBSOCKET_URL=ws://127.0.0.1:8001/v1/tracking
 ```
 
-For local backend development, the repository includes a dependency-free
-Python service. Start it from the repository root with `python3 backend/run.py`,
-then use `--dart-define=SIGNBRIDGE_API_URL=http://127.0.0.1:8000` when launching
-Chrome. The service validates and stores the exact sequence contract and
-returns a conservative heuristic candidate until a trained classifier is
-plugged in. See `backend/README.md` for the endpoint and test commands.
+When the automatic pause detector finishes an utterance, the client sends this sequence:
 
-The app can optionally post the completed sequence if a later integration
-enables `SIGNBRIDGE_ENABLE_BACKEND`; this is separate from capture and is not
-needed for the `appTesting` handoff. Selecting **Analyse utterance** creates
-the payload below from the completed LandmarkFrame list:
+```text
+ready ← server
+start →
+utterance_start →
+chunk → (one or more bounded groups of LandmarkFrame JSON)
+utterance_end →
+utterance_ended ← server
+```
+
+The current tracking server acknowledges each chunk and reports the total
+number of frames received. If it also sends an `utterance_result` message, the
+frontend parses that JSON into `SignAnalysisResult` and updates the caption.
+Until the classifier is connected to the socket, the frontend keeps showing
+its local readout after the server acknowledgement. A socket failure never
+stops the camera; it shows the local readout and a WebSocket-unavailable
+status instead.
+
+Automatic utterance completion creates the payload below from the completed
+LandmarkFrame list and splits its `frames` list into chunks:
 
 ```json
 {
@@ -183,11 +201,11 @@ MediaPipe provides world landmarks; otherwise the app labels the summary
 `image_normalized_wrist_centered`. This distinction prevents the backend from
 treating webcam-relative depth as absolute physical measurements.
 
-The same frame can include `face_expression`. Chrome uses the local combined
-endpoint for seven HSEmotion/DeepFace emotion scores—angry, disgust, fear,
-happy, sad, surprise, and neutral. The backend receives these fields automatically because
-`SignSequencePayload` serializes each `LandmarkFrame` before
-`SignSequenceApiClient` posts it.
+The same frame can include `face_expression`. Chrome can still use the
+optional local face-expression snapshot endpoint for seven HSEmotion/DeepFace
+scores—angry, disgust, fear, happy, sad, surprise, and neutral. That optional
+face signal is separate from the LandmarkFrame WebSocket handoff; the
+coordinate utterance itself is not sent through HTTPS.
 
 The requested [OpenCV + DeepFace repository](https://github.com/manish-9245/Facial-Emotion-Recognition-using-OpenCV-and-Deepface)
 is not a drop-in Flutter dependency: its `emotion.py` owns an OpenCV desktop
@@ -207,7 +225,7 @@ camera frame
   → HandPoseNormalizer
   → LandmarkFrame.toJson()
   → SignSequencePayload.toJson()
-  → POST /v1/sign-sequences/analyze
+  → WebSocket `chunk` messages
 ```
 
 DeepFace's output is a generic facial-expression estimate, not a declaration
@@ -219,24 +237,36 @@ The backend should validate the schema, store the sequence and model version, re
 
 ```json
 {
+  "type": "utterance_result",
+  "utterance_id": "utt-123",
   "status": "confident",
-  "gesture_label": "water",
-  "caption": "water",
+  "caption": "water, please.",
+  "tts_text": "water, please.",
   "confidence": 0.91,
-  "gloss_trace": ["WATER"],
-  "detail": "Sequence classified by asl-model-2026-01."
+  "gloss_trace": ["WATER", "PLEASE"],
+  "hypotheses": [],
+  "model_version": "classifier-v1",
+  "latency_ms": {"total": 125}
 }
 ```
 
-For uncertain output, return `status: "needs_review"` or `status: "unknown"` with top candidates rather than inventing a sentence. The Flutter controller falls back to its local feature result when the API is not configured or is unavailable.
+For uncertain output, return `status: "needs_review"` or `status: "unknown"` with top candidates rather than inventing a sentence. The Flutter controller falls back to its local feature result when WebSocket mode is not configured or is unavailable.
 
-When `SIGNBRIDGE_API_URL` is not supplied, **Analyse utterance** uses an offline
-simulation. It builds the same `SignSequencePayload`, waits briefly to mimic a
-service call, runs the local feature readout, and returns a clearly labelled
-`simulated` result. No camera frame or coordinate is sent over the network.
-Once the backend is ready, supplying `SIGNBRIDGE_API_URL` automatically swaps
-in the real HTTP client without changing the capture flow.
+When WebSocket mode is not enabled, automatic utterance completion uses an
+offline simulation. It builds the same `SignSequencePayload`, waits briefly to
+mimic a service call, runs the local feature readout, and returns a clearly
+labelled `simulated` result. No camera frame or coordinate is sent over the
+network.
 
-For browser testing, serve the API over HTTPS (or localhost), allow the Flutter dev origin in CORS, and never upload raw video unless the user has explicitly opted into it. DeepFace requires a still image, so the optional local service receives compressed snapshots; it does not store them. Store landmarks and the consent/session ID instead of camera frames by default.
+The older `SignSequenceApiClient` remains in `services/api_client.dart` only
+for compatibility with existing tests and experiments; the live
+`AppController` no longer uses it.
+
+For browser testing, use `ws://` on localhost or `wss://` for a secure deployed
+socket, allow the Flutter dev origin in the WebSocket server, and never upload
+raw video unless the user has explicitly opted into it. DeepFace requires a
+still image, so the optional local service receives compressed snapshots; it
+does not store them. Store landmarks and the consent/session ID instead of
+camera frames by default.
 
 `AlignmentEvaluator` remains independent of the UI. It receives normalized shoulder points, computes midpoint, width, horizontal error, and vertical error, and returns feedback such as “Move back” or “Position looks good ✓”.

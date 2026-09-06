@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import '../models/tracking_models.dart';
 import 'sign_analysis_service.dart';
 
+// Legacy HTTP clients retained for compatibility with older tests and
+// experiments. The live AppController uses websocket_client.dart instead.
 class UtteranceApiClient {
   UtteranceApiClient({required this.baseUri, http.Client? client})
     : _client = client ?? http.Client();
@@ -154,6 +156,9 @@ class SimulatedSignSequenceApiClient {
   }
 }
 
+/// The JSON-ready utterance model shared by the offline simulator and the
+/// active WebSocket transport. The live app does not call the HTTP client
+/// above; `SignTrackingWebSocketClient` sends this payload's frames in chunks.
 class SignSequencePayload {
   const SignSequencePayload({
     required this.sessionId,

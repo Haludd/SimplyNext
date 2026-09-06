@@ -11,6 +11,7 @@ import 'services/api_client.dart';
 import 'services/sign_analysis_service.dart';
 import 'services/tracking_service.dart';
 import 'services/utterance_stillness_detector.dart';
+import 'services/websocket_client.dart';
 
 enum SignBridgePage { onboarding, live, dictionary, settings }
 
@@ -21,11 +22,11 @@ class AppController extends ChangeNotifier {
     this._localState,
     this.tracking,
     this.devices, {
-    this.apiClient,
+    this.websocketClient,
   }) {
-    backendStatus = apiClient == null
+    backendStatus = websocketClient == null
         ? 'Offline simulation · no backend configured'
-        : 'Backend configured';
+        : 'WebSocket configured';
     _trackingSubscription = tracking.frames.listen(_onTrackingFrame);
     unawaited(_restoreState());
   }
@@ -33,7 +34,7 @@ class AppController extends ChangeNotifier {
   final LocalStateService _localState;
   final TrackingService tracking;
   final DeviceAccessService devices;
-  final SignSequenceApiClient? apiClient;
+  final SignTrackingWebSocketClient? websocketClient;
   final SignAnalysisService signAnalyzer = SignAnalysisService();
   final SimulatedSignSequenceApiClient simulator =
       SimulatedSignSequenceApiClient();
@@ -56,8 +57,8 @@ class AppController extends ChangeNotifier {
   /// The most recently completed utterance. Each item is one LandmarkFrame;
   /// this is the handoff for the next processing stage.
   ///
-  /// NEXT TEAMMATE: after the user presses "Analyse utterance", access the
-  /// captured sequence with:
+  /// NEXT TEAMMATE: after an utterance pause is detected automatically, access
+  /// the captured sequence with:
   ///
   ///   final frames = controller.lastUtteranceFrames;
   ///
@@ -71,6 +72,18 @@ class AppController extends ChangeNotifier {
   String selectedLanguage = 'ASL';
 
   void _onTrackingFrame(LandmarkFrame frame) {
+    // Utterances are automatic: once a usable subject and hand signal appear,
+    // begin buffering LandmarkFrames without requiring a Start button.
+    if (!analysisInFlight &&
+        !_automaticFinishInFlight &&
+        !tracking.isCapturingUtterance &&
+        _hasCaptureSignal(frame)) {
+      _utteranceStillnessDetector.reset();
+      tracking.beginUtterance();
+      latestAnalysis = null;
+      backendStatus = 'Listening · capturing LandmarkFrames automatically';
+    }
+
     if (tracking.isCapturingUtterance && !_automaticFinishInFlight) {
       if (_utteranceStillnessDetector.update(frame)) {
         unawaited(analyzeSign(automatic: true));
@@ -90,6 +103,9 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  bool _hasCaptureSignal(LandmarkFrame frame) =>
+      frame.handsVisible || frame.leftHandVisible || frame.rightHandVisible;
+
   LandmarkFrame? get latestFrame => tracking.latestFrame;
   AlignmentResult get alignment => AlignmentEvaluator().evaluate(
     latestFrame ??
@@ -101,8 +117,8 @@ class AppController extends ChangeNotifier {
   int get utteranceFrameCount => tracking.utteranceFrameCount;
   bool get isCapturingUtterance => tracking.isCapturingUtterance;
 
-  /// Starts a fresh utterance buffer. Tracking itself remains continuous;
-  /// only frames collected after this point belong to the utterance.
+  /// Manual compatibility hook. Normal UI capture starts automatically when
+  /// a usable hand signal appears.
   void startUtterance() {
     if (analysisInFlight || tracking.isCapturingUtterance) return;
     if (latestFrame == null) {
@@ -163,12 +179,27 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Releases and starts the camera again. This is useful on web after a
+  /// browser tab has suspended the video stream or permission state.
+  Future<void> restartCamera() async {
+    try {
+      await tracking.stop();
+    } catch (_) {
+      // Continue to request a fresh stream even if the old stream was already
+      // closed by the browser.
+    }
+    if (kIsWeb) {
+      devices.markWebCameraUnavailable('Restarting camera...');
+    }
+    await requestCamera();
+  }
+
   Future<void> analyzeSign({bool automatic = false}) async {
     if (automatic) _automaticFinishInFlight = true;
     if (_automaticFinishInFlight && !automatic) return;
     if (!tracking.isCapturingUtterance) {
       _automaticFinishInFlight = false;
-      backendStatus = 'Press Start utterance before analysing';
+      backendStatus = 'Waiting for a tracked hand signal';
       notifyListeners();
       return;
     }
@@ -178,9 +209,9 @@ class AppController extends ChangeNotifier {
     latestAnalysis = signAnalyzer.analyze(frames);
     backendStatus = automatic
         ? 'Pause detected · processing captured LandmarkFrames'
-        : apiClient == null
+        : websocketClient == null
         ? 'Preparing offline backend simulation'
-        : 'Preparing utterance chunk for backend';
+        : 'Sending LandmarkFrames over WebSocket';
     notifyListeners();
     if (frames.isEmpty) {
       _automaticFinishInFlight = false;
@@ -201,15 +232,21 @@ class AppController extends ChangeNotifier {
       lexiconVersion: SignLexicon.version,
     );
     try {
-      if (apiClient == null) {
+      if (websocketClient == null) {
         latestAnalysis = await simulator.analyze(payload);
         backendStatus = 'Offline simulation · payload not sent';
       } else {
-        latestAnalysis = await apiClient!.analyze(payload);
-        backendStatus = 'Backend analysis returned';
+        final receipt = await websocketClient!.sendUtterance(payload);
+        // The current tracking socket acknowledges receipt of chunks. If a
+        // classifier later sends utterance_result on the same socket, the
+        // client parses it into the same UI model automatically.
+        latestAnalysis = receipt.analysis ?? latestAnalysis;
+        backendStatus = receipt.analysis == null
+            ? 'WebSocket acknowledged ${receipt.framesReceived} LandmarkFrames'
+            : 'WebSocket classifier result received';
       }
     } catch (_) {
-      backendStatus = 'Backend unavailable · local readout shown';
+      backendStatus = 'WebSocket unavailable · local readout shown';
     } finally {
       analysisInFlight = false;
       _automaticFinishInFlight = false;
@@ -366,7 +403,9 @@ class AppController extends ChangeNotifier {
     _trackingSubscription.cancel();
     tracking.dispose();
     devices.dispose();
-    apiClient?.close();
+    if (websocketClient != null) {
+      unawaited(websocketClient!.close());
+    }
     super.dispose();
   }
 }

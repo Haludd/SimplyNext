@@ -38,6 +38,17 @@ class UtteranceStillnessDetector {
   bool update(LandmarkFrame frame) {
     if (!_isUsable(frame)) {
       _previousFrame = null;
+      // Losing the hands after movement is also a useful end signal. This
+      // lets a signer finish by lowering their hands or briefly leaving the
+      // frame; the next visible hand frame automatically starts a new buffer.
+      if (_activityObserved && _captureStartedAt != null) {
+        _stillSince ??= frame.timestamp;
+        final startedAt = _captureStartedAt!;
+        final stillSince = _stillSince!;
+        return frame.timestamp.difference(startedAt) >=
+                minimumCaptureDuration &&
+            frame.timestamp.difference(stillSince) >= pauseDuration;
+      }
       _stillSince = null;
       return false;
     }

@@ -103,6 +103,12 @@ const POINT_QUALITY_CANVAS_WIDTH = 192;
 const SUBJECT_MATCH_DISTANCE = 0.32;
 const SUBJECT_FACE_MATCH_DISTANCE = 0.25;
 const SUBJECT_ACQUIRE_STABLE_FRAMES = 12;
+// If two people are similarly close to the locked subject, do not guess.
+// Holding the last lock is safer for sign-language capture than switching.
+const SUBJECT_AMBIGUITY_MARGIN = 0.08;
+// The first stable person owns this tracking session. A refresh/restart is
+// required to deliberately select a different person; this prevents a
+// newcomer from silently replacing the signer during a sentence.
 // Use torso/head points for identity matching. Wrists and elbows are omitted
 // because they are expected to move quickly during signing.
 const SUBJECT_ANCHOR_INDICES = [0, 11, 12, 23, 24];
@@ -148,6 +154,7 @@ let lastFaceResult;
 let lastFaceProcessedAt = 0;
 let subjectTrack;
 let subjectAcquire;
+let subjectReferenceIdentity;
 let fingerQualityHistory = {
   left: {},
   right: {},
@@ -349,6 +356,42 @@ function poseCandidate(landmarks) {
     1 - Math.hypot(centerX - 0.5, centerY - 0.5) / 0.71,
   );
   const nose = landmarks[0];
+  // Build the identity shape from torso points only. Hands, elbows, and
+  // knees move during signing and must not make the signer look like a new
+  // person.
+  const torso = [11, 12, 23, 24]
+    .map((index) => landmarks[index])
+    .filter(
+      (point) => point && (point.visibility ?? point.presence ?? 0) >= 0.35,
+    );
+  const torsoCenterX = torso.length
+    ? torso.reduce((sum, point) => sum + point.x, 0) / torso.length
+    : centerX;
+  const torsoCenterY = torso.length
+    ? torso.reduce((sum, point) => sum + point.y, 0) / torso.length
+    : centerY;
+  const torsoXs = torso.map((point) => point.x);
+  const torsoYs = torso.map((point) => point.y);
+  const identityWidth = Math.max(
+    0.12,
+    (torsoXs.length ? Math.max(...torsoXs) - Math.min(...torsoXs) : 0),
+  );
+  const identityHeight = Math.max(
+    0.18,
+    (torsoYs.length ? Math.max(...torsoYs) - Math.min(...torsoYs) : 0),
+  );
+  const identityAnchors = SUBJECT_ANCHOR_INDICES.map((index) => {
+    const point = landmarks[index];
+    return point &&
+      (point.visibility ?? point.presence ?? 0) >= 0.35
+      ? {
+          index,
+          x: (point.x - torsoCenterX) / identityWidth,
+          y: (point.y - torsoCenterY) / identityHeight,
+        }
+      : null;
+  }).filter((point) => point !== null);
+  if (identityAnchors.length < 3) return null;
   return {
     landmarks,
     minX,
@@ -361,6 +404,7 @@ function poseCandidate(landmarks) {
     faceY: nose?.y ?? Math.max(0, centerY - 0.25),
     area,
     score: area * (0.65 + centrality * 0.35),
+    identityAnchors,
     anchors: SUBJECT_ANCHOR_INDICES.map((index) => {
       const point = landmarks[index];
       return point &&
@@ -372,13 +416,29 @@ function poseCandidate(landmarks) {
 }
 
 function lockSubject(candidate) {
+  subjectReferenceIdentity ??= candidate.identityAnchors ?? [];
   subjectTrack = {
     ...candidate,
+    identityAnchors: subjectReferenceIdentity,
     locked: true,
     visible: true,
     missingFrames: 0,
+    missingSinceMs: null,
   };
   return subjectTrack;
+}
+
+function identityDistance(candidate, reference) {
+  const candidateAnchors = candidate?.identityAnchors ?? [];
+  const referenceAnchors = reference ?? [];
+  const distances = [];
+  for (const previous of referenceAnchors) {
+    const current = candidateAnchors.find((point) => point.index === previous.index);
+    if (!current) continue;
+    distances.push(Math.hypot(current.x - previous.x, current.y - previous.y));
+  }
+  if (distances.length < 3) return Number.POSITIVE_INFINITY;
+  return distances.reduce((sum, distance) => sum + distance, 0) / distances.length;
 }
 
 function anchorDistance(first, second) {
@@ -432,13 +492,16 @@ function acquireStableSubject(candidates) {
 
 function holdLockedSubject() {
   if (!subjectTrack) return null;
+  const now = performance.now();
+  const missingSinceMs = subjectTrack.missingSinceMs ?? now;
   subjectTrack = {
     ...subjectTrack,
     // Keep the lock identity, but do not reuse stale landmarks as current
     // data. This prevents a new person from being accepted after an occlusion.
     visible: false,
-    // Keep counting for diagnostics, but never expire the lock. This allows
-    // the original subject to recover after a longer occlusion.
+    missingSinceMs,
+    // Keep counting for diagnostics. The old identity is intentionally held
+    // until the user presses the refresh/restart control.
     missingFrames: Math.min(10_000, subjectTrack.missingFrames + 1),
   };
   return subjectTrack;
@@ -446,6 +509,12 @@ function holdLockedSubject() {
 
 function subjectMatchScore(candidate) {
   if (!subjectTrack) return Number.POSITIVE_INFINITY;
+  const identity = identityDistance(candidate, subjectReferenceIdentity);
+  // Pose landmarks do not provide a true biometric ID, so use a stable
+  // torso/head shape as an additional guard against a nearby newcomer.
+  if (!Number.isFinite(identity) || identity > 0.34) {
+    return Number.POSITIVE_INFINITY;
+  }
   const centerDistance = Math.hypot(
     candidate.centerX - subjectTrack.centerX,
     candidate.centerY - subjectTrack.centerY,
@@ -471,7 +540,7 @@ function subjectMatchScore(candidate) {
   // Lower is a better continuation of the locked subject. This lets the
   // tracker choose the correct candidate even if another person is closer to
   // the old centre for one frame.
-  return averageDistance + centerDistance * 0.35;
+  return identity * 0.65 + averageDistance + centerDistance * 0.35;
 }
 
 function selectSubjectPose(poseResult) {
@@ -489,19 +558,28 @@ function selectSubjectPose(poseResult) {
   // frames avoids choosing a transient detection during camera startup.
   if (!subjectTrack) return acquireStableSubject(candidates);
 
-  const match = candidates
+  const matches = candidates
     .map((candidate) => ({
       candidate,
       score: subjectMatchScore(candidate),
     }))
     .filter((entry) => Number.isFinite(entry.score))
-    .sort((first, second) => first.score - second.score)[0];
-  if (match) {
-    return lockSubject(match.candidate);
+    .sort((first, second) => first.score - second.score);
+  if (matches.length > 0) {
+    const best = matches[0];
+    const secondBest = matches[1];
+    if (
+      secondBest &&
+      secondBest.score - best.score < SUBJECT_AMBIGUITY_MARGIN
+    ) {
+      // Do not allow a nearby person to win by a tiny score difference.
+      return holdLockedSubject();
+    }
+    return lockSubject(best.candidate);
   }
 
   // No candidate is close enough to the locked subject. Keep the lock and
-  // ignore every other person, even if they are larger or more central.
+  // ignore every other person until the user deliberately refreshes tracking.
   return holdLockedSubject();
 }
 
@@ -527,31 +605,38 @@ function selectSubjectFace(faceResult, subject) {
 function handBelongsToSubject(hand, subject) {
   // Do not emit hands before the pose lock exists. Otherwise another person's
   // hands could enter the stream during the few frames before pose detection.
-  if (!subject || subject.visible === false || !hand?.landmarks?.[0]) return false;
+  // Keep using the locked subject's last known body region when pose briefly
+  // drops out. This accepts real hand points without inventing any points or
+  // allowing a newcomer to replace the lock.
+  if (!subject || !hand?.landmarks?.[0]) return false;
   const wrist = hand.landmarks[0];
-  const poseWristIndex = hand.handedness === 'left' ? 15 : 16;
-  const poseWrist = subject.landmarks?.[poseWristIndex];
-  if ((poseWrist?.visibility ?? 0) >= 0.35) {
-    // MediaPipe pose wrists are the strongest available association between
-    // a detected hand and the locked person's body. Allow signing movement,
-    // but do not use the old very-wide box that admitted nearby people.
-    const wristDistance = Math.hypot(
-      wrist.x - poseWrist.x,
-      wrist.y - poseWrist.y,
-    );
-    const subjectWidth = Math.max(0.12, subject.maxX - subject.minX);
-    return wristDistance <= Math.max(0.2, subjectWidth * 0.75);
-  }
-
   const subjectWidth = Math.max(0.12, subject.maxX - subject.minX);
   const subjectHeight = Math.max(0.2, subject.maxY - subject.minY);
-  const marginX = Math.max(0.1, subjectWidth * 0.25);
-  const marginY = Math.max(0.12, subjectHeight * 0.15);
-  return (
+  const marginX = Math.max(0.16, subjectWidth * 0.4);
+  const marginY = Math.max(0.16, subjectHeight * 0.18);
+  const insideBodyRegion = (
     wrist.x >= subject.minX - marginX &&
     wrist.x <= subject.maxX + marginX &&
     wrist.y >= subject.minY - marginY &&
     wrist.y <= subject.maxY + marginY
+  );
+  const poseWrists = [15, 16]
+    .map((index) => subject.landmarks?.[index])
+    .filter(
+      (point) => point && (point.visibility ?? point.presence ?? 0) >= 0.35,
+    );
+  const nearestPoseWristDistance = poseWrists.length
+    ? Math.min(
+        ...poseWrists.map((point) =>
+          Math.hypot(wrist.x - point.x, wrist.y - point.y),
+        ),
+      )
+    : Number.POSITIVE_INFINITY;
+  // Use either pose wrist, not the same-side wrist. During a crossed-arm sign
+  // the left hand can be beside the right pose wrist and vice versa.
+  return (
+    insideBodyRegion ||
+    nearestPoseWristDistance <= Math.max(0.28, subjectWidth * 1.1)
   );
 }
 
@@ -790,7 +875,13 @@ function deepFaceToJson(result) {
   };
 }
 
-function dispatchFrame(result, poseResult, faceResult, timestampMs) {
+function dispatchFrame(
+  result,
+  poseResult,
+  faceResult,
+  timestampMs,
+  selectedSubject,
+) {
   preparePointQualityFrame();
   const handednesses = result.handednesses ?? result.handedness ?? [];
   const allHands = (result.landmarks ?? []).map((landmarks, index) => {
@@ -819,7 +910,9 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
       }),
     };
   });
-  const subject = selectSubjectPose(poseResult);
+  const subject = selectedSubject === undefined
+    ? selectSubjectPose(poseResult)
+    : selectedSubject;
   // Filter by the locked subject before updating finger histories. A second
   // person's hand must not contaminate the signer's per-finger smoothing.
   const hands = allHands
@@ -964,62 +1057,82 @@ function dispatchFrame(result, poseResult, faceResult, timestampMs) {
 
 function processFrame() {
   if (!started) return;
-  syncVisibleCameraElement();
-  if (
-    video?.readyState >= 2 &&
-    handLandmarker &&
-    poseLandmarker &&
-    !detectionInProgress
-  ) {
-    const now = performance.now();
-    if (now - lastProcessedAt >= DETECTION_INTERVAL_MS) {
-      lastProcessedAt = now;
-      detectionInProgress = true;
-      try {
-        const result = handLandmarker.detectForVideo(video, now);
-        const poseResult = poseLandmarker.detectForVideo(video, now);
-        let faceResult = lastFaceResult;
-        if (
-          faceLandmarker &&
-          now - lastFaceProcessedAt >= FACE_DETECTION_INTERVAL_MS
-        ) {
-          try {
-            faceResult = faceLandmarker.detectForVideo(video, now);
-            lastFaceResult = faceResult;
-            lastFaceProcessedAt = now;
-          } catch (error) {
-            // Face is supplementary. Keep hand and pose tracking alive if one
-            // face inference fails.
-            lastFaceProcessedAt = now;
-            if (!trackingFrameErrorShown) {
-              console.warn('A face frame failed; continuing hand/pose capture.', error);
-              trackingFrameErrorShown = true;
+  try {
+    syncVisibleCameraElement();
+    if (
+      video?.readyState >= 2 &&
+      handLandmarker &&
+      poseLandmarker &&
+      !detectionInProgress
+    ) {
+      const now = performance.now();
+      if (now - lastProcessedAt >= DETECTION_INTERVAL_MS) {
+        lastProcessedAt = now;
+        detectionInProgress = true;
+        try {
+          const result = handLandmarker.detectForVideo(video, now);
+          const poseResult = poseLandmarker.detectForVideo(video, now);
+          let faceResult = lastFaceResult;
+          let selectedSubject;
+          if (
+            faceLandmarker &&
+            now - lastFaceProcessedAt >= FACE_DETECTION_INTERVAL_MS
+          ) {
+            try {
+              selectedSubject = selectSubjectPose(poseResult);
+              faceResult = faceLandmarker.detectForVideo(video, now);
+              lastFaceResult = faceResult;
+              lastFaceProcessedAt = now;
+            } catch (error) {
+              // Face is supplementary. Keep hand and pose tracking alive if one
+              // face inference fails.
+              lastFaceProcessedAt = now;
+              if (!trackingFrameErrorShown) {
+                console.warn('A face frame failed; continuing hand/pose capture.', error);
+                trackingFrameErrorShown = true;
+              }
             }
           }
-        }
-        dispatchFrame(result, poseResult, faceResult, Date.now());
-        trackingLoopFrameCount += 1;
-        if (now - trackingLoopLastLogAt >= 10_000) {
-          const elapsedSeconds =
-            (now - trackingLoopStartedAt) / 1000;
-          console.info(
-            `SignBridge tracking loop alive: ${trackingLoopFrameCount} frames over ${elapsedSeconds.toFixed(1)}s at ~${TRACKING_FPS} FPS.`,
+          dispatchFrame(
+            result,
+            poseResult,
+            faceResult,
+            Date.now(),
+            selectedSubject,
           );
-          trackingLoopLastLogAt = now;
+          trackingLoopFrameCount += 1;
+          if (now - trackingLoopLastLogAt >= 10_000) {
+            const elapsedSeconds =
+              (now - trackingLoopStartedAt) / 1000;
+            console.info(
+              `SignBridge tracking loop alive: ${trackingLoopFrameCount} frames over ${elapsedSeconds.toFixed(1)}s at ~${TRACKING_FPS} FPS.`,
+            );
+            trackingLoopLastLogAt = now;
+          }
+        } catch (error) {
+          // A malformed frame or temporary detector failure must not terminate
+          // requestAnimationFrame. The next video frame can recover.
+          if (!trackingFrameErrorShown) {
+            console.warn('A tracking frame failed; continuing capture.', error);
+            trackingFrameErrorShown = true;
+          }
+        } finally {
+          detectionInProgress = false;
         }
-      } catch (error) {
-        // A malformed frame or temporary detector failure must not terminate
-        // requestAnimationFrame. The next video frame can recover.
-        if (!trackingFrameErrorShown) {
-          console.warn('A tracking frame failed; continuing capture.', error);
-          trackingFrameErrorShown = true;
-        }
-      } finally {
-        detectionInProgress = false;
       }
     }
+  } catch (error) {
+    // A camera element can be replaced while Flutter rebuilds the page. Keep
+    // the outer loop alive so the next frame can reconnect to the visible video.
+    if (!trackingFrameErrorShown) {
+      console.warn('Tracking loop recovered from a camera error.', error);
+      trackingFrameErrorShown = true;
+    }
+  } finally {
+    // This is deliberately outside the detector block: no single camera or
+    // MediaPipe error is allowed to stop continuous tracking.
+    if (started) animationFrame = requestAnimationFrame(processFrame);
   }
-  animationFrame = requestAnimationFrame(processFrame);
 }
 
 async function createLandmarker(delegate) {
@@ -1142,6 +1255,7 @@ async function start() {
   trackingLoopLastLogAt = trackingLoopStartedAt;
   subjectTrack = null;
   subjectAcquire = null;
+  subjectReferenceIdentity = null;
   fingerQualityHistory = {left: {}, right: {}, unknown: {}};
   processFrame();
 }
@@ -1171,6 +1285,7 @@ async function stop() {
   trackingLoopLastLogAt = 0;
   subjectTrack = null;
   subjectAcquire = null;
+  subjectReferenceIdentity = null;
   fingerQualityHistory = {left: {}, right: {}, unknown: {}};
 }
 

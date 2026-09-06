@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:math' as math;
-
 import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -13,9 +10,9 @@ import 'models/hand_tracking_models.dart';
 import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
-import 'services/api_client.dart';
 import 'services/sign_analysis_service.dart';
 import 'services/web_tracking_service.dart';
+import 'services/websocket_client.dart';
 import 'services/tracking_service.dart';
 import 'ui/web_camera_preview.dart';
 
@@ -34,24 +31,31 @@ Color _confidenceColor(Color base, double confidence, {double floor = .12}) =>
       alpha: floor + (1 - floor) * confidence.clamp(0.0, 1.0).toDouble(),
     );
 
+Color _confidenceStatusColor(double confidence, {required bool cameraReady}) {
+  if (!cameraReady) return _yellow;
+  if (confidence >= .85) return _mint;
+  if (confidence >= .70) return _yellow;
+  return _red;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
-  const backendEnabled = bool.fromEnvironment(
-    'SIGNBRIDGE_ENABLE_BACKEND',
+  const websocketEnabled = bool.fromEnvironment(
+    'SIGNBRIDGE_ENABLE_WEBSOCKET',
     defaultValue: false,
   );
-  final backendUrl = const String.fromEnvironment('SIGNBRIDGE_API_URL');
-  final apiClient = !backendEnabled || backendUrl.isEmpty
+  const websocketUrl = String.fromEnvironment('SIGNBRIDGE_WEBSOCKET_URL');
+  final websocketClient = !websocketEnabled || websocketUrl.isEmpty
       ? null
-      : SignSequenceApiClient(baseUri: Uri.parse(backendUrl));
+      : SignTrackingWebSocketClient(uri: Uri.parse(websocketUrl));
   runApp(
     SignBridgeApp(
       controller: AppController(
         LocalStateService(preferences),
         kIsWeb ? WebTrackingService() : DemoTrackingService(),
         DeviceAccessService(),
-        apiClient: apiClient,
+        websocketClient: websocketClient,
       ),
     ),
   );
@@ -115,225 +119,11 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge(<Listenable>[controller, controller.devices]),
-      builder: (context, _) {
-        final isMobile = MediaQuery.sizeOf(context).width < 760;
-        final screens = <Widget>[
-          OnboardingScreen(controller: controller),
-          LiveTranslatorScreen(controller: controller),
-          DictionaryScreen(controller: controller),
-          SettingsScreen(controller: controller),
-        ];
-        final index = controller.page == SignBridgePage.onboarding
-            ? 0
-            : controller.page == SignBridgePage.live
-            ? 1
-            : controller.page == SignBridgePage.dictionary
-            ? 2
-            : 3;
-        return Scaffold(
-          body: SafeArea(
-            child: Row(
-              children: <Widget>[
-                if (!isMobile) _SideRail(controller: controller),
-                Expanded(
-                  child: Column(
-                    children: <Widget>[
-                      const _TopBar(),
-                      Expanded(
-                        child: IndexedStack(index: index, children: screens),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          bottomNavigationBar: isMobile && controller.calibrated
-              ? NavigationBar(
-                  selectedIndex: index == 0 ? 0 : index - 1,
-                  onDestinationSelected: (value) => controller.navigate(
-                    <SignBridgePage>[
-                      SignBridgePage.live,
-                      SignBridgePage.dictionary,
-                      SignBridgePage.settings,
-                    ][value],
-                  ),
-                  destinations: const <NavigationDestination>[
-                    NavigationDestination(
-                      icon: Icon(Icons.center_focus_strong),
-                      label: 'Live',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.auto_awesome),
-                      label: 'My signs',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.tune),
-                      label: 'Settings',
-                    ),
-                  ],
-                )
-              : null,
-        );
-      },
-    );
-  }
-}
-
-class _SideRail extends StatelessWidget {
-  const _SideRail({required this.controller});
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 244,
-      padding: const EdgeInsets.fromLTRB(18, 28, 18, 20),
-      decoration: const BoxDecoration(
-        border: Border(right: BorderSide(color: Colors.white12)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const SignBridgeLogo(),
-          const SizedBox(height: 56),
-          const _Eyebrow('Workspace'),
-          const SizedBox(height: 12),
-          _RailItem(
-            icon: Icons.center_focus_strong,
-            label: 'Live translator',
-            selected: controller.page == SignBridgePage.live,
-            onTap: () => controller.navigate(SignBridgePage.live),
-          ),
-          _RailItem(
-            icon: Icons.auto_awesome,
-            label: 'My signs',
-            selected: controller.page == SignBridgePage.dictionary,
-            onTap: () => controller.navigate(SignBridgePage.dictionary),
-          ),
-          _RailItem(
-            icon: Icons.tune,
-            label: 'Settings',
-            selected: controller.page == SignBridgePage.settings,
-            onTap: () => controller.navigate(SignBridgePage.settings),
-          ),
-          const Spacer(),
-          const _PrivacyNote(),
-          const SizedBox(height: 12),
-          TextButton.icon(
-            onPressed: () => controller.navigate(SignBridgePage.settings),
-            icon: const CircleAvatar(
-              radius: 15,
-              backgroundColor: Color(0xFF91DCD7),
-              child: Text(
-                'E',
-                style: TextStyle(
-                  color: _background,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            label: const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Esther\nPersonal workspace',
-                style: TextStyle(fontSize: 11, height: 1.5),
-              ),
-            ),
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-          ),
-        ],
+      builder: (context, _) => Scaffold(
+        body: SafeArea(child: LiveTranslatorScreen(controller: controller)),
       ),
     );
   }
-}
-
-class _RailItem extends StatelessWidget {
-  const _RailItem({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 5),
-    child: ListTile(
-      onTap: onTap,
-      dense: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      selected: selected,
-      selectedTileColor: _cyan.withValues(alpha: .1),
-      iconColor: selected ? _cyan : _subtle,
-      textColor: selected ? Colors.white : _muted,
-      leading: Icon(icon, size: 19),
-      title: Text(
-        label,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      ),
-    ),
-  );
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    height: 76,
-    padding: const EdgeInsets.symmetric(horizontal: 28),
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: Colors.white12)),
-    ),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 600;
-        return Row(
-          children: <Widget>[
-            const SignBridgeLogo(compact: true),
-            const Spacer(),
-            if (!compact) ...<Widget>[
-              const Text(
-                'Workspace  /  ',
-                style: TextStyle(color: _subtle, fontSize: 12),
-              ),
-              const Text(
-                'SignBridge',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 18),
-            ],
-            IconButton(
-              onPressed: () {},
-              icon: const Icon(Icons.help_outline, size: 18, color: _muted),
-              tooltip: 'Help',
-            ),
-            const CircleAvatar(
-              radius: 14,
-              backgroundColor: Color(0xFF91DCD7),
-              child: Text(
-                'E',
-                style: TextStyle(
-                  color: _background,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    ),
-  );
 }
 
 class SignBridgeLogo extends StatelessWidget {
@@ -372,32 +162,6 @@ class SignBridgeLogo extends StatelessWidget {
                 style: TextStyle(color: _cyan),
               ),
             ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _PrivacyNote extends StatelessWidget {
-  const _PrivacyNote();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: _mint.withValues(alpha: .05),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: _mint.withValues(alpha: .18)),
-    ),
-    child: const Row(
-      children: <Widget>[
-        Icon(Icons.verified_user_outlined, size: 18, color: _mint),
-        SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            'Private by default\nOn-device inference enabled',
-            style: TextStyle(color: _mint, fontSize: 10, height: 1.5),
           ),
         ),
       ],
@@ -817,11 +581,13 @@ class TrackingPreview extends StatelessWidget {
     this.height = 390,
     this.showLabels = false,
     this.showCalibrationGuide = false,
+    this.showLiveOverlay = false,
   });
   final AppController controller;
   final double height;
   final bool showLabels;
   final bool showCalibrationGuide;
+  final bool showLiveOverlay;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
@@ -862,10 +628,236 @@ class TrackingPreview extends StatelessWidget {
                 ),
               ),
             ),
+          if (showLiveOverlay)
+            Positioned.fill(child: _LivePreviewOverlay(controller: controller)),
         ],
       ),
     ),
   );
+}
+
+class _LivePreviewOverlay extends StatelessWidget {
+  const _LivePreviewOverlay({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final analysis = controller.latestAnalysis;
+    final ttsText = analysis?.ttsText;
+    final caption =
+        analysis?.caption ??
+        (controller.isCapturingUtterance
+            ? 'Listening for a sign...'
+            : controller.devices.cameraReady
+            ? 'Show your hands to begin'
+            : 'Open the camera to begin');
+    final cameraReady = controller.devices.cameraReady;
+    final confidenceValue = analysis?.confidence ?? controller.confidence;
+    final confidenceColor = _confidenceStatusColor(
+      confidenceValue,
+      cameraReady: cameraReady,
+    );
+    final status = !controller.devices.cameraReady
+        ? 'CAMERA OFF'
+        : controller.isCapturingUtterance
+        ? 'CAPTURING'
+        : 'READY · AUTO';
+
+    return Stack(
+      children: <Widget>[
+        Positioned(
+          top: 14,
+          left: 16,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xB307111F),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.graphic_eq, color: _cyan, size: 15),
+                SizedBox(width: 6),
+                Text(
+                  'SIGNBRIDGE',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.1,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 14,
+          right: 16,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _StatusPill(label: status, color: cameraReady ? _mint : _yellow),
+              if (cameraReady) ...<Widget>[
+                const SizedBox(width: 7),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xB307111F),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: IconButton(
+                    onPressed: () => controller.restartCamera(),
+                    tooltip: 'Refresh tracking',
+                    icon: const Icon(
+                      Icons.refresh,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    padding: const EdgeInsets.all(7),
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (!controller.devices.cameraReady)
+          Positioned.fill(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                margin: const EdgeInsets.symmetric(horizontal: 24),
+                decoration: BoxDecoration(
+                  color: const Color(0xE607111F),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _cyan.withValues(alpha: .4)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(
+                      Icons.videocam_off_outlined,
+                      color: _yellow,
+                      size: 28,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Camera is off',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      'Open the camera to start automatic tracking.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _muted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 14),
+                    PrimaryButton(
+                      label: 'Open camera',
+                      icon: Icons.videocam_outlined,
+                      onPressed: () => controller.requestCamera(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 16,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 11, 14, 10),
+            decoration: BoxDecoration(
+              color: const Color(0xE607111F),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _cyan.withValues(alpha: .45)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    const Icon(
+                      Icons.subtitles_outlined,
+                      color: _cyan,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'LIVE CAPTION',
+                      style: TextStyle(
+                        color: _cyan,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const Spacer(),
+                    Semantics(
+                      label: 'Tracking confidence',
+                      child: Tooltip(
+                        message: 'Tracking confidence',
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: confidenceColor,
+                            shape: BoxShape.circle,
+                            boxShadow: <BoxShadow>[
+                              BoxShadow(
+                                color: confidenceColor.withValues(alpha: .5),
+                                blurRadius: 5,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  caption,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (ttsText != null && ttsText.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    'TTS: $ttsText',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _muted,
+                      fontSize: 9,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _PreviewBackgroundPainter extends CustomPainter {
@@ -936,12 +928,14 @@ class LandmarkPainter extends CustomPainter {
       canvas.drawCircle(
         offset,
         5,
-        Paint()..color = _confidenceColor(_cyan, point.visibility),
+        // A detected point stays solid on screen. Its confidence remains in
+        // LandmarkFrame; the UI never turns a real point into a prediction.
+        Paint()..color = _confidenceColor(_cyan, 1),
       );
       canvas.drawCircle(
         offset,
         10,
-        Paint()..color = _confidenceColor(_cyan, point.visibility, floor: .03),
+        Paint()..color = _confidenceColor(_cyan, 1, floor: .03),
       );
     }
 
@@ -965,25 +959,27 @@ class LandmarkPainter extends CustomPainter {
     for (final edge in poseEdges) {
       final first = poseByIndex[edge[0]];
       final second = poseByIndex[edge[1]];
-      if (first == null || second == null) continue;
+      if (first == null ||
+          second == null ||
+          first.visibility <= 0 ||
+          second.visibility <= 0) {
+        continue;
+      }
       canvas.drawLine(
         _worldOffset(first.x, first.y, size),
         _worldOffset(second.x, second.y, size),
         Paint()
-          ..color = _confidenceColor(
-            _cyan,
-            math.min(first.visibility, second.visibility),
-            floor: .15,
-          )
+          ..color = _confidenceColor(_cyan, 1, floor: .15)
           ..strokeWidth = 1.2
           ..style = PaintingStyle.stroke,
       );
     }
     for (final landmark in pose) {
+      if (landmark.visibility <= 0) continue;
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         3.5,
-        Paint()..color = _confidenceColor(_cyan, landmark.visibility),
+        Paint()..color = _confidenceColor(_cyan, 1),
       );
     }
 
@@ -991,18 +987,20 @@ class LandmarkPainter extends CustomPainter {
     // to the upper-face and mouth worlds.
     for (final landmark
         in frame?.faceUpperLandmarks ?? const <FaceLandmark>[]) {
+      if (landmark.visibility <= 0) continue;
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         2.5,
-        Paint()..color = _confidenceColor(_yellow, landmark.visibility),
+        Paint()..color = _confidenceColor(_yellow, 1),
       );
     }
     for (final landmark
         in frame?.faceMouthLandmarks ?? const <FaceLandmark>[]) {
+      if (landmark.visibility <= 0) continue;
       canvas.drawCircle(
         _worldOffset(landmark.x, landmark.y, size),
         2.5,
-        Paint()..color = _confidenceColor(_mint, landmark.visibility),
+        Paint()..color = _confidenceColor(_mint, 1),
       );
     }
   }
@@ -1030,32 +1028,29 @@ class HandSkeletonPainter extends CustomPainter {
         if (edge.any((index) => index >= hand.landmarks.length)) continue;
         final first = hand.landmarks[edge[0]];
         final second = hand.landmarks[edge[1]];
+        if (first.visibility <= 0 || second.visibility <= 0) continue;
         canvas.drawLine(
           _project(first, size),
           _project(second, size),
           Paint()
-            ..color = _confidenceColor(
-              color,
-              math.min(first.visibility, second.visibility),
-              floor: .2,
-            )
+            ..color = _confidenceColor(color, 1, floor: .2)
             ..strokeWidth = 2
             ..style = PaintingStyle.stroke,
         );
       }
       for (final landmark in hand.landmarks) {
+        if (landmark.visibility <= 0) continue;
         final point = _project(landmark, size);
         final radius = (4.5 - landmark.z.abs() * 8).clamp(2.5, 5.5);
         canvas.drawCircle(
           point,
           radius,
-          Paint()..color = _confidenceColor(color, landmark.visibility),
+          Paint()..color = _confidenceColor(color, 1),
         );
         canvas.drawCircle(
           point,
           radius + 4,
-          Paint()
-            ..color = _confidenceColor(color, landmark.visibility, floor: .03),
+          Paint()..color = _confidenceColor(color, 1, floor: .03),
         );
       }
     }
@@ -1077,55 +1072,15 @@ class LiveTranslatorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!controller.calibrated) {
-      return _ScreenFrame(
-        eyebrow: 'Camera access required',
-        title: 'Live translator',
-        subtitle: 'Complete the one-time calibration before translating.',
-        child: GlassCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Icon(Icons.center_focus_strong, color: _cyan, size: 34),
-              const SizedBox(height: 16),
-              const Text(
-                'Let\'s set up your camera position first.',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Your calibration is saved locally and won\'t be required again on your next launch.',
-                style: TextStyle(color: _muted),
-              ),
-              const SizedBox(height: 22),
-              PrimaryButton(
-                label: 'Start calibration',
-                onPressed: () => controller.navigate(SignBridgePage.onboarding),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     return _ScreenFrame(
-      eyebrow: 'Good afternoon, Esther',
+      eyebrow: 'Live session',
       title: 'Live translator',
       subtitle: 'Sign naturally. We\'ll take care of the words.',
-      action: Wrap(
-        spacing: 10,
-        children: <Widget>[
-          _StatusPill(
-            label: controller.trackingStatus,
-            color: controller.trackingStatus.contains('MediaPipe')
-                ? _mint
-                : _yellow,
-          ),
-          OutlineButton(
-            label: 'Practice mode',
-            icon: Icons.open_in_new,
-            onPressed: null,
-          ),
-        ],
+      action: _StatusPill(
+        label: controller.trackingStatus,
+        color: controller.trackingStatus.contains('MediaPipe')
+            ? _mint
+            : _yellow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1162,7 +1117,7 @@ class LiveTranslatorScreen extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'Pose + hands + face · ${controller.confidence == 0 ? 'Starting' : '${(controller.confidence * 100).round()}% confidence'}',
+                                'Pose + hands + face',
                                 style: const TextStyle(
                                   color: _subtle,
                                   fontSize: 10,
@@ -1183,503 +1138,17 @@ class LiveTranslatorScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                TrackingPreview(controller: controller, height: 410),
-                const SizedBox(height: 12),
-                _HandAnalysisCard(controller: controller),
-                const SizedBox(height: 12),
-                _LandmarkSchemaCard(controller: controller),
-                const SizedBox(height: 12),
-                _CaptionCard(controller: controller),
+                TrackingPreview(
+                  controller: controller,
+                  height: 410,
+                  showLiveOverlay: true,
+                ),
               ],
             ),
           ),
           const SizedBox(height: 18),
           _ActionDock(controller: controller),
-          const SizedBox(height: 16),
-          _SessionInsight(controller: controller),
         ],
-      ),
-    );
-  }
-}
-
-class _HandAnalysisCard extends StatelessWidget {
-  const _HandAnalysisCard({required this.controller});
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final frame = controller.latestFrame;
-    final face = frame?.faceExpression;
-    final trackedHands = frame?.hands ?? const <TrackedHand>[];
-    final averageOpenness = trackedHands.isEmpty
-        ? 0.0
-        : trackedHands
-                  .map((hand) => hand.openness)
-                  .reduce((left, right) => left + right) /
-              trackedHands.length;
-    int handPointCount(Handedness side) {
-      for (final hand in frame?.hands ?? const <TrackedHand>[]) {
-        if (hand.handedness == side) return hand.landmarks.length;
-      }
-      return 0;
-    }
-
-    final leftHandPoints = handPointCount(Handedness.left);
-    final rightHandPoints = handPointCount(Handedness.right);
-    final posePoints = frame?.poseLandmarks.length ?? 0;
-    final upperFacePoints = frame?.faceUpperLandmarks.length ?? 0;
-    final mouthPoints = frame?.faceMouthLandmarks.length ?? 0;
-    final subject = frame?.subjectTracking;
-    final faceModel = face?.source == 'hsemotion'
-        ? 'HSEmotion'
-        : face?.source == 'deepface'
-        ? 'DeepFace'
-        : 'Face model';
-    final analysis = controller.latestAnalysis;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 13),
-      decoration: BoxDecoration(
-        color: _mint.withValues(alpha: .045),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: _mint.withValues(alpha: .18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              const Icon(Icons.pan_tool_outlined, color: _mint, size: 17),
-              const SizedBox(width: 8),
-              const _Eyebrow('Hand signal'),
-              const Spacer(),
-              Text(
-                '${frame?.hands.length ?? 0} / 2 hands · ${controller.utteranceFrameCount} utterance frames',
-                style: const TextStyle(
-                  color: _subtle,
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: <Widget>[
-              _WorldReadout(
-                label: 'L hand',
-                value: '$leftHandPoints / 21',
-                active: leftHandPoints == 21,
-              ),
-              _WorldReadout(
-                label: 'R hand',
-                value: '$rightHandPoints / 21',
-                active: rightHandPoints == 21,
-              ),
-              _WorldReadout(
-                label: 'Pose',
-                value: '$posePoints / 11',
-                active: posePoints == 11,
-              ),
-              _WorldReadout(
-                label: 'Face',
-                value: '$upperFacePoints + $mouthPoints',
-                active: upperFacePoints > 0 || mouthPoints > 0,
-              ),
-              _WorldReadout(
-                label: 'Subject',
-                value: subject?.locked != true
-                    ? 'searching'
-                    : subject?.visible == true
-                    ? 'locked'
-                    : 'locked · hidden',
-                active: subject?.locked == true,
-              ),
-              _WorldReadout(
-                label: 'Points',
-                value: '${((frame?.trackingConfidence ?? 0) * 100).round()}%',
-                active: (frame?.trackingConfidence ?? 0) >= 0.6,
-              ),
-            ],
-          ),
-          if (trackedHands.any((hand) => hand.fingerStatus.isNotEmpty)) ...[
-            const SizedBox(height: 9),
-            for (final hand in trackedHands)
-              if (hand.fingerStatus.isNotEmpty) _FingerStatusRow(hand: hand),
-          ],
-          const SizedBox(height: 11),
-          Wrap(
-            spacing: 12,
-            runSpacing: 10,
-            children: <Widget>[
-              _Metric(
-                label: 'Shape',
-                value: analysis?.gestureLabel ?? 'Not read',
-              ),
-              _Metric(
-                label: 'Open',
-                value: '${(averageOpenness * 100).round()}%',
-              ),
-              PrimaryButton(
-                label: controller.analysisInFlight
-                    ? 'Processing…'
-                    : controller.isCapturingUtterance
-                    ? 'Analyse utterance'
-                    : 'Start utterance',
-                icon: controller.isCapturingUtterance
-                    ? Icons.insights_outlined
-                    : Icons.fiber_manual_record,
-                onPressed: controller.analysisInFlight
-                    ? null
-                    : controller.isCapturingUtterance
-                    ? controller.analyzeSign
-                    : controller.startUtterance,
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          Text(
-            analysis?.detail ??
-                (controller.isCapturingUtterance
-                    ? 'Capturing LandmarkFrame coordinates. Analyse when the word or sentence is complete.'
-                    : 'Press Start utterance, sign, then Analyse utterance.'),
-            style: const TextStyle(color: _muted, fontSize: 10, height: 1.35),
-          ),
-          const SizedBox(height: 9),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: _cyan.withValues(alpha: .045),
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: _cyan.withValues(alpha: .12)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    const Icon(
-                      Icons.face_retouching_natural,
-                      color: _cyan,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 7),
-                    const Text(
-                      'Face signal',
-                      style: TextStyle(
-                        color: _subtle,
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const Spacer(),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: <Widget>[
-                        Text(
-                          face == null
-                              ? 'waiting'
-                              : '$faceModel: ${face.label} · ${(face.confidence * 100).round()}%',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            controller.backendStatus,
-            style: const TextStyle(
-              color: _subtle,
-              fontSize: 9,
-              fontFamily: 'monospace',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(right: 22),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label.toUpperCase(),
-          style: const TextStyle(
-            color: _subtle,
-            fontSize: 8,
-            fontFamily: 'monospace',
-            letterSpacing: .6,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _LandmarkSchemaCard extends StatelessWidget {
-  const _LandmarkSchemaCard({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final frame = controller.latestFrame;
-    final frameJson = frame?.toJson();
-    final jsonText = frameJson == null
-        ? 'Waiting for the first LandmarkFrame...'
-        : const JsonEncoder.withIndent('  ').convert(frameJson);
-    final captureColor = controller.isCapturingUtterance ? _red : _subtle;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: _cyan.withValues(alpha: .035),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: _cyan.withValues(alpha: .16)),
-      ),
-      child: ExpansionTile(
-        initiallyExpanded: true,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-        iconColor: _cyan,
-        collapsedIconColor: _subtle,
-        title: Row(
-          children: <Widget>[
-            const Icon(Icons.data_object, color: _cyan, size: 17),
-            const SizedBox(width: 8),
-            const Text(
-              'LandmarkFrame schema',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-            ),
-            const Spacer(),
-            Text(
-              controller.isCapturingUtterance ? 'CAPTURING' : 'PREVIEW',
-              style: TextStyle(
-                color: captureColor,
-                fontSize: 9,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-        subtitle: Text(
-          controller.isCapturingUtterance
-              ? '${controller.utteranceFrameCount} frames stored · auto-finishes after a stable pause'
-              : '${controller.lastUtteranceFrames.length} completed frames · one JSON object shown below',
-          style: const TextStyle(color: _subtle, fontSize: 9),
-        ),
-        children: <Widget>[
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: <Widget>[
-              _WorldReadout(
-                label: 'L hand',
-                value: '${_handPointCount(frame, Handedness.left)} pts',
-                active: _handPointCount(frame, Handedness.left) > 0,
-              ),
-              _WorldReadout(
-                label: 'R hand',
-                value: '${_handPointCount(frame, Handedness.right)} pts',
-                active: _handPointCount(frame, Handedness.right) > 0,
-              ),
-              _WorldReadout(
-                label: 'Pose',
-                value: '${frame?.poseLandmarks.length ?? 0} pts',
-                active: (frame?.poseLandmarks.isNotEmpty ?? false),
-              ),
-              _WorldReadout(
-                label: 'Face',
-                value:
-                    '${frame?.faceUpperLandmarks.length ?? 0} + ${frame?.faceMouthLandmarks.length ?? 0}',
-                active:
-                    (frame?.faceUpperLandmarks.isNotEmpty ?? false) ||
-                    (frame?.faceMouthLandmarks.isNotEmpty ?? false),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Current frame JSON · coordinates, confidence, and tracking state',
-              style: const TextStyle(
-                color: _subtle,
-                fontSize: 9,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Container(
-            constraints: const BoxConstraints(maxHeight: 270),
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _background.withValues(alpha: .8),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: SingleChildScrollView(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SelectableText(
-                  jsonText,
-                  style: const TextStyle(
-                    color: _muted,
-                    fontSize: 9,
-                    height: 1.35,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  int _handPointCount(LandmarkFrame? frame, Handedness side) {
-    for (final hand in frame?.hands ?? const <TrackedHand>[]) {
-      if (hand.handedness == side) return hand.landmarks.length;
-    }
-    return 0;
-  }
-}
-
-class _WorldReadout extends StatelessWidget {
-  const _WorldReadout({
-    required this.label,
-    required this.value,
-    required this.active,
-  });
-
-  final String label;
-  final String value;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-    decoration: BoxDecoration(
-      color: (active ? _mint : _subtle).withValues(alpha: .06),
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(
-        color: (active ? _mint : _subtle).withValues(alpha: .18),
-      ),
-    ),
-    child: Text(
-      '$label  $value',
-      style: TextStyle(
-        color: active ? _mint : _subtle,
-        fontSize: 9,
-        fontFamily: 'monospace',
-      ),
-    ),
-  );
-}
-
-class _FingerStatusRow extends StatelessWidget {
-  const _FingerStatusRow({required this.hand});
-
-  final TrackedHand hand;
-
-  static const _fingerOrder = <String>[
-    'thumb',
-    'index',
-    'middle',
-    'ring',
-    'pinky',
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final side = handednessToString(hand.handedness).toUpperCase();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
-      child: Wrap(
-        spacing: 5,
-        runSpacing: 5,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          Text(
-            '$side fingers',
-            style: const TextStyle(
-              color: _subtle,
-              fontSize: 9,
-              fontFamily: 'monospace',
-            ),
-          ),
-          for (final finger in _fingerOrder)
-            if (hand.fingerStatus[finger] != null)
-              _FingerStatusChip(
-                name: finger,
-                status: hand.fingerStatus[finger]!,
-              ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FingerStatusChip extends StatelessWidget {
-  const _FingerStatusChip({required this.name, required this.status});
-
-  final String name;
-  final FingerTrackingStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (status.status) {
-      'observed' => _mint,
-      'uncertain' => _yellow,
-      'not_visible' => _red,
-      _ => _subtle,
-    };
-    final label = name == 'middle'
-        ? 'mid'
-        : name == 'thumb'
-        ? 'thumb'
-        : name;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .06),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: color.withValues(alpha: .2)),
-      ),
-      child: Text(
-        '$label ${status.displayLabel} ${(status.confidence * 100).round()}%',
-        style: TextStyle(color: color, fontSize: 8, fontFamily: 'monospace'),
       ),
     );
   }
@@ -1751,142 +1220,6 @@ class _ViewToggle extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _CaptionCard extends StatelessWidget {
-  const _CaptionCard({required this.controller});
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    if (controller.isUnregisteredSign) {
-      return Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: _yellow.withValues(alpha: .07),
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: _yellow.withValues(alpha: .3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const _Eyebrow('Live caption'),
-            const SizedBox(height: 10),
-            const Text(
-              'Sign not recognised',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 7),
-            const Text(
-              'We don\'t have this sign in your vocabulary yet. Would you like to add a custom sign?',
-              style: TextStyle(color: _muted, fontSize: 13, height: 1.45),
-            ),
-            const SizedBox(height: 15),
-            Wrap(
-              spacing: 10,
-              children: <Widget>[
-                PrimaryButton(
-                  label: 'Add custom sign',
-                  icon: Icons.add,
-                  onPressed: () => _openCustomFlow(context, controller),
-                ),
-                TextButton(
-                  onPressed: () => controller.setUnregisteredSign(false),
-                  child: const Text('Not now'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-    return Container(
-      padding: const EdgeInsets.fromLTRB(19, 17, 19, 13),
-      decoration: BoxDecoration(
-        color: const Color(0xB30F172A),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: _cyan.withValues(alpha: .25)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              const Icon(Icons.graphic_eq, color: _cyan, size: 17),
-              const SizedBox(width: 7),
-              const Text(
-                'LIVE CAPTION',
-                style: TextStyle(
-                  color: _cyan,
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  letterSpacing: 1,
-                ),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.volume_up_outlined, size: 15),
-                label: const Text('Read aloud'),
-                style: TextButton.styleFrom(
-                  foregroundColor: _muted,
-                  textStyle: const TextStyle(fontSize: 10),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          const Text.rich(
-            TextSpan(
-              text: 'I would like some ',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                height: 1.3,
-                fontWeight: FontWeight.w800,
-              ),
-              children: <TextSpan>[
-                TextSpan(
-                  text: 'water, please.',
-                  style: TextStyle(color: Color(0x804EDDEA)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Divider(color: Colors.white12, height: 1),
-          const SizedBox(height: 9),
-          const Row(
-            children: <Widget>[
-              Icon(Icons.circle, size: 6, color: _cyan),
-              SizedBox(width: 5),
-              Text(
-                'Confirmed',
-                style: TextStyle(
-                  color: _subtle,
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                ),
-              ),
-              Spacer(),
-              Text(
-                'Unconfirmed words appear in cyan',
-                style: TextStyle(color: _subtle, fontSize: 10),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  static void _openCustomFlow(BuildContext context, AppController controller) =>
-      Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => CustomSignFlowScreen(controller: controller),
-        ),
-      );
 }
 
 class _ActionDock extends StatelessWidget {
@@ -1984,136 +1317,6 @@ class _DockAction extends StatelessWidget {
         ),
       ),
     ),
-  );
-}
-
-class _SessionInsight extends StatelessWidget {
-  const _SessionInsight({required this.controller});
-  final AppController controller;
-  Color get confidenceColor {
-    final value = controller.confidence == 0 ? .98 : controller.confidence;
-    if (value > .85) return _mint;
-    if (value >= .70) return _yellow;
-    return _red;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final value = controller.confidence == 0 ? .98 : controller.confidence;
-    final visibleValue = value;
-    final color = confidenceColor;
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              const _Eyebrow('Session insight'),
-              const Spacer(),
-              Text(
-                'Tracking confidence ${controller.confidenceWindowLabel}',
-                style: const TextStyle(
-                  color: _subtle,
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: <Widget>[
-              Text(
-                '${(visibleValue * 100).round()}',
-                style: TextStyle(
-                  fontSize: 42,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -2,
-                  color: color,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 7, left: 4),
-                child: Text(
-                  '%',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Text(
-                value < .70 && value > 0
-                    ? 'Tracking confidence too low'
-                    : 'Stable',
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: visibleValue,
-              minHeight: 6,
-              backgroundColor: Colors.white12,
-              color: color,
-            ),
-          ),
-          if (value < .70) ...<Widget>[
-            const SizedBox(height: 12),
-            const Text(
-              'Please reposition yourself and make sure your hands and upper body are clearly visible.',
-              style: TextStyle(color: _red, fontSize: 11),
-            ),
-          ],
-          const SizedBox(height: 15),
-          Wrap(
-            spacing: 30,
-            runSpacing: 8,
-            children: <Widget>[
-              const _Signal(label: 'Lighting', value: 'Good'),
-              _Signal(
-                label: 'Hands in frame',
-                value: controller.latestFrame?.handsVisible == true
-                    ? '2 / 2'
-                    : 'Checking',
-              ),
-              const _Signal(label: 'Connection', value: 'On-device'),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Signal extends StatelessWidget {
-  const _Signal({required this.label, required this.value});
-  final String label;
-  final String value;
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: <Widget>[
-      Text(label, style: const TextStyle(color: _muted, fontSize: 11)),
-      const SizedBox(width: 8),
-      Text(
-        value,
-        style: const TextStyle(
-          color: _mint,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    ],
   );
 }
 
@@ -2724,11 +1927,11 @@ class _CameraSettings extends StatelessWidget {
             Expanded(
               child: OutlineButton(
                 label: controller.devices.cameraReady
-                    ? 'Camera enabled'
+                    ? 'Restart camera'
                     : 'Enable camera',
                 icon: Icons.videocam_outlined,
                 onPressed: controller.devices.cameraReady
-                    ? null
+                    ? () => controller.restartCamera()
                     : () => controller.requestCamera(),
               ),
             ),

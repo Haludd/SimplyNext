@@ -155,11 +155,16 @@ void main() {
         expect(sentFrame['feature_vector'], isNull);
         return http.Response(
           jsonEncode(<String, dynamic>{
+            'type': 'utterance_result',
+            'utterance_id': 'utt-123',
             'status': 'confident',
-            'gesture_label': 'water',
-            'caption': 'water',
-            'confidence': .9,
-            'gloss_trace': <String>['WATER'],
+            'caption': 'water, please.',
+            'tts_text': 'water, please.',
+            'confidence': .91,
+            'gloss_trace': <String>['WATER', 'PLEASE'],
+            'hypotheses': <dynamic>[],
+            'model_version': 'classifier-v1',
+            'latency_ms': <String, dynamic>{'total': 125},
           }),
           200,
         );
@@ -181,7 +186,15 @@ void main() {
         ),
       );
 
-      expect(result.gestureLabel, 'water');
+      expect(result.type, 'utterance_result');
+      expect(result.utteranceId, 'utt-123');
+      expect(result.caption, 'water, please.');
+      expect(result.ttsText, 'water, please.');
+      expect(result.confidence, .91);
+      expect(result.glossTrace, <String>['WATER', 'PLEASE']);
+      expect(result.hypotheses, isEmpty);
+      expect(result.modelVersion, 'classifier-v1');
+      expect(result.totalLatencyMs, 125);
       api.close();
     },
   );

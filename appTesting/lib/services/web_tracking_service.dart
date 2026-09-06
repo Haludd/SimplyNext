@@ -68,6 +68,17 @@ class WebTrackingService implements TrackingService {
     }
   }
 
+  @override
+  Future<void> stop() async {
+    if (!_started && _subscription == null) return;
+    await _bridge.stop();
+    await _subscription?.cancel();
+    _subscription = null;
+    _started = false;
+    _capturingUtterance = false;
+    _status = 'Camera stopped';
+  }
+
   void ingestRaw(HandTrackingFrame raw) => ingest(_normalizer.normalize(raw));
 
   @override
@@ -99,8 +110,7 @@ class WebTrackingService implements TrackingService {
 
   @override
   void dispose() {
-    _subscription?.cancel();
-    _bridge.stop();
+    unawaited(stop());
     _bridge.dispose();
     _controller.close();
   }

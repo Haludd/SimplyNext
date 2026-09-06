@@ -97,42 +97,84 @@ class SignLexicon {
 
 class SignAnalysisResult {
   const SignAnalysisResult({
+    this.type = 'utterance_result',
+    this.utteranceId = '',
     required this.status,
     required this.gestureLabel,
     required this.caption,
+    this.ttsText,
     required this.confidence,
     required this.glossTrace,
+    this.hypotheses = const <Map<String, dynamic>>[],
+    this.modelVersion = '',
+    this.latencyMs = const <String, dynamic>{},
     this.detail = '',
   });
 
+  final String type;
+  final String utteranceId;
   final String status;
   final String gestureLabel;
   final String caption;
+  final String? ttsText;
   final double confidence;
   final List<String> glossTrace;
+  final List<Map<String, dynamic>> hypotheses;
+  final String modelVersion;
+  final Map<String, dynamic> latencyMs;
   final String detail;
 
   bool get needsBackend => status == 'candidate' || status == 'unknown';
+  int? get totalLatencyMs => (latencyMs['total'] as num?)?.toInt();
 
   Map<String, dynamic> toJson() => <String, dynamic>{
+    'type': type,
+    'utterance_id': utteranceId,
     'status': status,
-    'gesture_label': gestureLabel,
     'caption': caption,
+    'tts_text': ttsText,
     'confidence': confidence,
     'gloss_trace': glossTrace,
-    'detail': detail,
+    'hypotheses': hypotheses,
+    'model_version': modelVersion,
+    'latency_ms': latencyMs,
   };
 
-  factory SignAnalysisResult.fromJson(Map<String, dynamic> json) =>
-      SignAnalysisResult(
-        status: json['status'] as String? ?? 'unknown',
-        gestureLabel: json['gesture_label'] as String? ?? 'unknown',
-        caption: json['caption'] as String? ?? 'No caption returned.',
-        confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
-        glossTrace: (json['gloss_trace'] as List<dynamic>? ?? <dynamic>[])
-            .cast<String>(),
-        detail: json['detail'] as String? ?? '',
-      );
+  factory SignAnalysisResult.fromJson(Map<String, dynamic> json) {
+    final glossTrace = (json['gloss_trace'] as List<dynamic>? ?? <dynamic>[])
+        .whereType<String>()
+        .toList(growable: false);
+    final caption = json['caption'] as String? ?? 'No caption returned.';
+    final fallbackLabel = glossTrace.isEmpty
+        ? 'unknown'
+        : glossTrace.join(', ').toLowerCase();
+    final rawHypotheses = json['hypotheses'];
+    final hypotheses = rawHypotheses is List
+        ? rawHypotheses
+              .whereType<Map>()
+              .map((value) => Map<String, dynamic>.from(value))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final rawLatency = json['latency_ms'];
+    final latencyMs = rawLatency is Map
+        ? Map<String, dynamic>.from(rawLatency)
+        : const <String, dynamic>{};
+
+    return SignAnalysisResult(
+      type: json['type'] as String? ?? 'utterance_result',
+      utteranceId: json['utterance_id'] as String? ?? '',
+      status: json['status'] as String? ?? 'unknown',
+      gestureLabel: json['gesture_label'] as String? ?? fallbackLabel,
+      caption: caption,
+      ttsText: json['tts_text'] as String?,
+      confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+      glossTrace: glossTrace,
+      hypotheses: hypotheses,
+      modelVersion: json['model_version'] as String? ?? '',
+      latencyMs: latencyMs,
+      detail: json['detail'] as String? ?? '',
+    );
+  }
 }
 
 /// A small local feature readout, not a claim of full ASL translation.

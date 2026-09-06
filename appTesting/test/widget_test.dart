@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('shows the first calibration step on a fresh launch', (
+  testWidgets('shows the single live page with an open-camera action', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -22,8 +22,12 @@ void main() {
     );
     await tester.pumpWidget(SignBridgeApp(controller: controller));
 
-    expect(find.text('Get started now'), findsOneWidget);
-    expect(find.text('STEP 1 OF 3'), findsOneWidget);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live translator'), findsOneWidget);
+    expect(find.text('Open camera'), findsOneWidget);
+    expect(find.text('My signs'), findsNothing);
+    expect(find.text('Settings'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();

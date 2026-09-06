@@ -91,9 +91,11 @@ class GlossSlot(_GlossContractModel):
             if self.resolved_gloss_id != self.candidates[0].gloss_id:
                 raise ValueError("classifier_high_confidence must resolve to the rank-1 candidate")
 
-        if self.provenance is GlossProvenance.TOP_K_SIGNER_CONFIRMED:
-            if self.resolved_gloss_id not in gloss_ids:
-                raise ValueError("top_k_signer_confirmed must resolve to a retained candidate")
+        if (
+            self.provenance is GlossProvenance.TOP_K_SIGNER_CONFIRMED
+            and self.resolved_gloss_id not in gloss_ids
+        ):
+            raise ValueError("top_k_signer_confirmed must resolve to a retained candidate")
 
         return self
 

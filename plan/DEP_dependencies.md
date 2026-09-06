@@ -199,11 +199,39 @@ The `pose-format` base install is the required variant. The MediaPipe extra is e
 
 
 
-## 4.3. Reproducibility Gap
-Only `langgraph` is currently pinned exactly. The other declared dependencies use compatible
-ranges, so separate installations may resolve different patch or minor versions. `T0.2` remains
-responsible for producing and testing an exact lock or fully pinned requirements artifact before a
-clean-clone release.
+## 4.3. Reproducibility Lock
+`pyproject.toml` remains the editable declaration and compatibility source. The generated
+`pylock.toml` is the exact PEP 751 installation artifact for the verified CPython 3.12, macOS ARM64
+development environment. It pins all 62 runtime, development, and transitive packages to exact
+wheel URLs and SHA-256 hashes. Pip currently guarantees a generated lock only for the Python
+version and platform on which it was resolved.
+
+Regenerate the dependency-only lock after any declared dependency change:
+
+```bash
+python -m pip lock --only-deps '.[dev]' -o pylock.toml --exists-action w
+```
+
+The project is deliberately excluded from the hash lock because an editable local directory has
+no single archive hash. Reproduce the verified environment by installing the lock first, then the
+local project without allowing a second dependency resolution:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r pylock.toml
+python -m pip install --no-deps -e .
+python -m pip check
+python -m pytest
+python -m ruff check src tests main.py
+python -m mypy src
+```
+
+The lock was generated and installed successfully with `pip==26.2.1`; pip still labels its
+`lock` command and `pylock.toml` installation support experimental. The build-system requirement
+for `hatchling` remains bounded in `pyproject.toml` and is resolved in pip's isolated build
+environment. A deployment lock for another OS, architecture, or Python minor version must be
+generated and tested on that target.
 
 ---
 
@@ -241,6 +269,10 @@ clean-clone release.
 
 
 # 6. CHANGE LOG
+2. **2026-09-06** · *Author:* Codex (GPT-5)
+   *Change:* Added and clean-environment tested the PEP 751 `pylock.toml` dependency lock for
+   CPython 3.12 on macOS ARM64, including the locked-install and no-dependency editable-project
+   workflow and its current platform/build-system limitations.
 1. **2026-09-06** · *Author:* Codex (GPT-5)
    *Change:* Created the dependency inventory, Python 3.12 virtual-environment instructions,
    current runtime and development package lists, planned perception and reverse-direction

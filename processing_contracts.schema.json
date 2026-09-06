@@ -18,6 +18,17 @@
       "minimum": 0,
       "maximum": 1
     },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "safeJsonInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
     "finiteNumber": {
       "type": "number"
     },
@@ -774,58 +785,96 @@
       },
       "additionalProperties": false
     },
-    "candidate": {
+    "glossLatticeProducer": {
       "type": "object",
-      "required": ["rank", "gloss_id", "score", "confidence"],
+      "required": [
+        "classifier_id",
+        "classifier_version",
+        "confidence_kind",
+        "calibration_version",
+        "vocabulary_version"
+      ],
       "properties": {
-        "rank": { "type": "integer", "minimum": 1 },
-        "gloss_id": { "type": "string", "minLength": 1 },
-        "score": { "$ref": "#/$defs/confidence" },
+        "classifier_id": { "$ref": "#/$defs/identifier" },
+        "classifier_version": { "$ref": "#/$defs/identifier" },
+        "confidence_kind": { "const": "calibrated_probability" },
+        "calibration_version": { "$ref": "#/$defs/identifier" },
+        "vocabulary_version": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": false
+    },
+    "glossCandidate": {
+      "type": "object",
+      "required": ["gloss_id", "rank", "confidence"],
+      "properties": {
+        "gloss_id": { "$ref": "#/$defs/identifier" },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 5 },
         "confidence": { "$ref": "#/$defs/confidence" }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "glossSlot": {
       "type": "object",
-      "required": ["slot_index", "slot_id", "frame_range", "candidates", "class_scores", "confidence", "provenance", "refused", "calibrated", "segmenter_arm"],
+      "$comment": "Runtime validation also enforces positive slot duration, containment within the utterance, contiguous ranks, non-increasing confidence, unique gloss IDs, and the provenance/resolution rules.",
+      "required": [
+        "slot_index",
+        "slot_id",
+        "start_ms",
+        "end_ms",
+        "candidates",
+        "resolved_gloss_id",
+        "provenance"
+      ],
       "properties": {
-        "slot_index": { "type": "integer", "minimum": 0 },
-        "slot_id": { "type": "string", "minLength": 1 },
-        "frame_range": { "$ref": "#/$defs/frameRange" },
+        "slot_index": { "type": "integer", "minimum": 0, "maximum": 63 },
+        "slot_id": { "$ref": "#/$defs/identifier" },
+        "start_ms": { "$ref": "#/$defs/safeJsonInteger" },
+        "end_ms": { "$ref": "#/$defs/safeJsonInteger" },
         "candidates": {
           "type": "array",
-          "items": { "$ref": "#/$defs/candidate" }
+          "minItems": 0,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/glossCandidate" }
         },
-        "class_scores": {
-          "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/confidence" }
+        "resolved_gloss_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/identifier" },
+            { "type": "null" }
+          ]
         },
-        "confidence": { "$ref": "#/$defs/confidence" },
-        "provenance": { "type": "string" },
-        "refused": { "type": "boolean" },
-        "calibrated": { "type": "boolean" },
-        "segmenter_arm": { "type": "string" }
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "classifier_high_confidence",
+            "top_k_signer_confirmed",
+            "fingerspelled",
+            "unresolved"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "glossLattice": {
-      "title": "Stage 6 GlossLattice",
-      "description": "Compact classifier/calibration evidence. It does not contain raw landmarks or camera frames.",
+      "title": "Frozen GlossLattice v1",
+      "description": "Compact calibrated classifier evidence sent unchanged in one WebSocket text frame. It does not contain raw landmarks, coordinates, feature arrays, or camera frames.",
+      "$comment": "Runtime validation also enforces positive utterance duration, slot containment and non-overlap, contiguous slot indexes, unique slot IDs, strict integer representation, finite confidence values, session/profile equality, monotonic sequencing, and the 32,768-byte UTF-8 transport limit.",
       "type": "object",
       "required": ["type", "schema_version", "session_id", "lattice_seq", "utterance_id", "language", "timebase", "started_at_ms", "ended_at_ms", "producer", "slots"],
       "properties": {
         "type": { "const": "gloss_lattice" },
         "schema_version": { "const": "1.0" },
-        "session_id": { "type": "string", "minLength": 1 },
-        "lattice_seq": { "type": "integer", "minimum": 1 },
-        "utterance_id": { "type": "string", "minLength": 1 },
-        "language": { "type": "string", "minLength": 1 },
-        "timebase": { "const": "unix_epoch_ms" },
-        "started_at_ms": { "type": "integer", "minimum": 0 },
-        "ended_at_ms": { "type": "integer", "minimum": 0 },
-        "producer": { "type": "object" },
+        "session_id": { "type": "string", "format": "uuid" },
+        "lattice_seq": { "$ref": "#/$defs/safeJsonInteger" },
+        "utterance_id": { "$ref": "#/$defs/identifier" },
+        "language": { "type": "string", "enum": ["sgsl", "asl"] },
+        "timebase": { "const": "session_monotonic_ms" },
+        "started_at_ms": { "$ref": "#/$defs/safeJsonInteger" },
+        "ended_at_ms": { "$ref": "#/$defs/safeJsonInteger" },
+        "producer": { "$ref": "#/$defs/glossLatticeProducer" },
         "slots": {
           "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
           "items": { "$ref": "#/$defs/glossSlot" }
         }
       },

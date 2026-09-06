@@ -23,7 +23,9 @@ The generated platform files already include the permission descriptions require
 
 ## Frontend → backend boundary
 
-The architecture document recommends keeping the 30 FPS perception loop at the edge. Flutter owns the camera and UI. A MediaPipe Tasks integration (via a Flutter plugin or platform channel) should emit normalized landmark frames into the shared tracking interface in `lib/services/tracking_service.dart`. The typed HTTP seam is in `lib/services/api_client.dart`.
+The architecture document recommends keeping the 30 FPS perception loop at the edge. Flutter owns the camera and UI. A MediaPipe Tasks integration (via a Flutter plugin or platform channel) should emit normalized landmark frames into the shared tracking interface in `lib/services/tracking_service.dart`.
+
+The old `hypotheses` + `features` HTTP example is deprecated and is not accepted by the frozen backend boundary. Completed classifier output now goes through `lib/adapters/gloss_lattice_builder.dart`, becomes the exact `GlossLattice` model in `lib/contracts/gloss_lattice.dart`, and is sent unchanged by `lib/services/gloss_lattice_websocket_client.dart`. See [`../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md`](../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md) and the authoritative test fixture [`test/fixtures/gloss_lattice_v1.json`](test/fixtures/gloss_lattice_v1.json).
 
 ## Tracking state and normalisation
 
@@ -79,45 +81,13 @@ Flutter camera
   → body-relative normalizer
   → geometry / hysteresis segmenter
   → small closed-vocabulary classifier
-  → compact utterance JSON over HTTPS/WebSocket
+  → GlossLattice adapter
+  → compact GlossLattice JSON over WebSocket
   → Python API / assembler + critic
   → caption + TTS response
 ```
 
-Do not send raw camera frames or 543 landmarks to Bedrock. At an utterance boundary, the Flutter client should send a small typed payload such as:
-
-```json
-{
-  "session_id": "session-123",
-  "utterance_id": "utt-008",
-  "language": "sgsl",
-  "started_at": "2026-09-04T08:14:02Z",
-  "ended_at": "2026-09-04T08:14:03Z",
-  "hypotheses": [
-    {"gloss": "WATER", "confidence": 0.96},
-    {"gloss": "PLEASE", "confidence": 0.91}
-  ],
-  "features": {
-    "shoulder_width": 0.22,
-    "hands_visible": true,
-    "mean_confidence": 0.94,
-    "frame_count": 36
-  }
-}
-```
-
-The Python backend returns a typed result, for example:
-
-```json
-{
-  "utterance_id": "utt-008",
-  "status": "confident",
-  "caption": "I would like some water, please.",
-  "tts_text": "I would like some water, please.",
-  "gloss_trace": ["WATER", "PLEASE"],
-  "confidence": 0.91
-}
-```
+Do not send raw camera frames, landmarks, feature windows, normalized coordinates, raw classifier scores, or the old `hypotheses` / `features` HTTP shape to the backend. At an utterance boundary, the Flutter client sends one compact `GlossLattice` v1 JSON object in one WebSocket text message. Its exact field names, timing rules, mappings, and forbidden fields are documented in [`../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md`](../docs/FRONTEND_GLOSS_LATTICE_ADAPTER.md); the complete JSON example is [`test/fixtures/gloss_lattice_v1.json`](test/fixtures/gloss_lattice_v1.json).
 
 When the critic cannot support a sentence, it should return a repair action instead of a guessed caption. The Flutter UI can map that response to “Please repeat”, fingerspelling, top-k choices, or “Sign not recognised”. The `AppController.setUnregisteredSign` method is the frontend seam for that response.
 

@@ -33,12 +33,12 @@ Flutter/mobile client                                SimplyNext Python backend
 └──────────────────────────────────────┘             └───────────────┬───────────────┘
                                                                     │ compact text JSON
                                                                     v
-                                                     Amazon Bedrock Converse (optional)
+                         Amazon Bedrock Converse or Anthropic Messages (optional)
 ```
 
-Raw video, landmarks, embedding tensors, and audio do not cross the backend boundary. Bedrock
-receives a bounded JSON representation of the accepted lattice and tool results; it never receives
-camera data.
+Raw video, landmarks, embedding tensors, and audio do not cross the backend boundary. A hosted
+provider receives only a bounded JSON representation of the accepted lattice and tool results; it
+never receives camera data.
 
 # 3. IMPLEMENTED MODULE MAP
 
@@ -47,7 +47,7 @@ The `src/simplynext/` directory is intentionally retained. `src/` is the build r
 
 | Module | Implemented responsibility |
 | :----- | :------------------------- |
-| `src/simplynext/config.py` | Strict environment-backed runtime, policy, Bedrock, and budget settings |
+| `src/simplynext/config.py` | Strict environment-backed runtime, provider, policy, and budget settings |
 | `src/simplynext/main.py` | FastAPI factory, lifespan, middleware, route mounting, one-worker runner |
 | `src/simplynext/runtime.py` | Immutable process service container |
 | `src/simplynext/lattice_runtime.py` | Producer/language/confidence policy, graph construction, terminal-event mapping |
@@ -67,6 +67,7 @@ The `src/simplynext/` directory is intentionally retained. `src/` is the build r
 | `src/simplynext/agent/repair.py` | Deterministic non-speaking repair selection |
 | `src/simplynext/agent/adapter.py` | Applies only explicitly confirmed, scoped memory changes |
 | `src/simplynext/agent/bedrock_access.py` | AWS clients, preflight, pricing, prompt cache, usage accounting, spend guard |
+| `src/simplynext/agent/anthropic_access.py` | Direct Anthropic Messages adapter normalized to the existing Converse-shaped node protocol |
 | `src/simplynext/agent/tools/` | Read-only lexicon, conversation-memory, and context-hint tools |
 | `src/simplynext/agent/prompts/` | Versioned assembler and critic system prompts |
 | `src/simplynext/observability/` | Payload-free JSON logs and thread-safe in-process metrics |
@@ -144,8 +145,9 @@ fragments at startup.
 
 | Mode | Trigger | Behavior | Readiness |
 | :--- | :------ | :------- | :-------- |
-| Deterministic | `SIMPLYNEXT_BEDROCK_ENABLED=false` | Exact gloss tuple → committed caption template; misses become gaps/repair | Ready only when a valid template file loads |
+| Deterministic | `SIMPLYNEXT_BEDROCK_ENABLED=false` and `SIMPLYNEXT_ANTHROPIC_ENABLED=false` | Exact gloss tuple → committed caption template; misses become gaps/repair | Ready only when a valid template file loads |
 | Bedrock | `SIMPLYNEXT_BEDROCK_ENABLED=true` | Guarded Converse assembler and separate critic calls | Startup performs control-plane and minimal runtime preflight |
+| Anthropic | `SIMPLYNEXT_ANTHROPIC_ENABLED=true` | Guarded Messages API assembler and separate critic calls | Startup performs minimal runtime preflight; key comes from `ANTHROPIC_API_KEY` |
 
 Bedrock mode requires a named lease owner, an explicit local spend ceiling below US$20, current
 known spend, matching per-token price inputs, region/model configuration, and credentials supplied
@@ -171,7 +173,7 @@ choices when applicable, reasons, evidence, and no fluent output fields.
 
 # 8. STATE, AVAILABILITY, AND SCALING
 
-Sessions, replay events, rate buckets, graph checkpoints, metrics, and the Bedrock spend ledger are
+Sessions, replay events, rate buckets, graph checkpoints, metrics, and the hosted-provider spend ledger are
 in process memory. Restarting the process invalidates sessions and clears those counters. Multiple
 workers or replicas would split state and can route a session to the wrong process.
 
@@ -182,7 +184,7 @@ Horizontal scaling is blocked until the following are externalized atomically:
 - lattice reservations and cached terminal events;
 - sequence, quota, and rate-limit state;
 - graph checkpoints and thread locks;
-- global concurrency and Bedrock budget accounting;
+- global concurrency and hosted-provider budget accounting;
 - durable metrics/alerting.
 
 # 9. SECURITY AND PRIVACY CONTROLS
@@ -223,18 +225,20 @@ a durable metrics backend.
 
 Verified locally as of 2026-09-06:
 
-- 146 tests pass;
+- 158 tests pass;
 - Ruff passes;
-- strict mypy passes for 35 source/script files;
+- strict mypy passes for 37 source/script files;
 - `pip check` passes;
 - locked editable and normal wheel installs succeed;
 - the payload-redacted smoke client passes end to end against a local deterministic server;
+- the normal wheel package smoke reads both prompts and deterministic templates outside the checkout;
 - the removed landmark backend has no production references.
 
 Not yet verified:
 
 - live AWS Bedrock access and real model output;
-- a production container and Railway `PORT` behavior;
+- vulnerability-clear production release status: the final Docker image and both Railway `PORT`
+  smokes pass, but Docker Scout reports one currently unfixable HIGH zlib CVE-2026-85091;
 - Railway health, restart, WSS, secrets, and rollback behavior;
 - the actual client session/WebSocket integration;
 - sustained load, fault injection, or production security review.
@@ -243,5 +247,6 @@ Not yet verified:
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-07 | Added direct Anthropic mode and documented Phase 2 packaging/PORT/release evidence workflow. |
 | 2026-09-06 | Added Phase 1 smoke tooling status and refreshed the local verification baseline. |
 | 2026-09-06 | Rewritten from the implemented GlossLattice-only backend; module map and production gaps corrected. |

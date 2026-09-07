@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from simplynext.contracts import GlossLatticeProducer, Identifier, SignLanguage
@@ -35,7 +35,14 @@ class Settings(BaseSettings):
     app_name: str = "SimplyNext Backend"
     environment: Literal["development", "test", "production"] = "development"
     host: str = "127.0.0.1"
-    port: int = Field(default=8000, ge=1, le=65_535)
+    # Railway injects PORT directly.  It wins over the local SIMPLYNEXT_PORT alias
+    # when both are present; local development retains the existing prefixed name.
+    port: int = Field(
+        default=8000,
+        ge=1,
+        le=65_535,
+        validation_alias=AliasChoices("PORT", "SIMPLYNEXT_PORT"),
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_prefix: str = "/v1"
     allowed_origins: Annotated[tuple[str, ...], NoDecode] = (

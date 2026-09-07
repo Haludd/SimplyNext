@@ -6,7 +6,7 @@
 | :---- | :---- |
 | **Code** | `PLN` |
 | **Status** | Local backend complete; production delivery in progress |
-| **Last reviewed** | 2026-09-06 |
+| **Last reviewed** | 2026-09-07 |
 | **Implemented source of truth** | `src/simplynext/` and `tests/` |
 | **Production execution** | Local Git-ignored `plan/BPP_backend_production_plan.md` workbook |
 
@@ -27,7 +27,9 @@ prove Bedrock request/response handling without live AWS spend.
 The following claims remain intentionally unmade until production gates run:
 
 - that the configured AWS identity can invoke the chosen Bedrock model live;
-- that the distribution starts correctly inside a Linux production image;
+- that a release image is vulnerability-clear under the blocking CRITICAL/HIGH policy (the
+  hardened image builds and its deterministic protocol smokes pass; Docker Scout currently reports
+  one unfixable HIGH zlib finding);
 - that Railway health, WSS, secrets, restart, and rollback behavior has passed;
 - that the actual mobile client can negotiate, stream, recover, render, and speak results.
 
@@ -88,7 +90,8 @@ src/simplynext/
 │   ├── critic.py                 token-grounding critic
 │   ├── repair.py                 deterministic repair policy
 │   ├── adapter.py                confirmed memory adaptation
-│   ├── bedrock_access.py         clients, preflight, pricing, cache and budget guard
+│   ├── bedrock_access.py         Bedrock clients, preflight, pricing, cache and budget guard
+│   ├── anthropic_access.py       direct Anthropic Messages adapter using the same node shape
 │   ├── prompts/
 │   │   ├── assembler_v1.txt
 │   │   └── critic_v1.txt
@@ -151,8 +154,8 @@ verification client and uses the two non-sensitive `tests/fixtures/live_bedrock_
 
 - Deterministic happy path, ambiguous/low-confidence repair, replay, invalid contract, session
   auth, limits, cancellation, graph failure, and mocked Bedrock flows are tested.
-- Latest baseline: 146 passing tests, Ruff clean, strict mypy clean for 35 source/script files, `pip check`
-  clean, and normal-wheel import verified.
+- Latest baseline: 158 passing tests, Ruff clean, strict mypy clean for 37 source/script files, `pip check`
+  clean, and normal-wheel import/resource smoke verified.
 
 ## 4.6. Backend scope cleanup — complete
 
@@ -179,11 +182,19 @@ requires an explicit live-spend flag and emits only redacted control results and
 live AWS claim remains pending until an operator injects the account-specific values listed in the
 local BPP and records a successful run.
 
-## 5.2. Production packaging — pending
+## 5.2. Production packaging — implementation and local Docker verification complete; release scan pending
 
-Add and test a Python 3.12 Linux container, non-root runtime, deterministic dependency installation,
-packaged prompts/data, Railway `PORT` handling, graceful termination, image health tests, and a
-deployment smoke client. Keep one Uvicorn worker.
+Phase 2 packaging is implemented in the root `Dockerfile`, `.dockerignore`, `Makefile`, and
+operational scripts. The multi-stage Python 3.12 image installs the normal distribution with
+production dependencies only, runs as `simplynext`, includes packaged prompts and deterministic
+fallback data, binds Railway's injected `PORT` on `0.0.0.0`, and starts one `simplynext-api`
+worker. The Linux lock workflow, installed-package resource smoke, container protocol smoke, and
+release-evidence/vulnerability policy are committed. The final local image build and both port smokes
+pass. The image is 86 MB, runs as the unprivileged `simplynext` UID/GID 999, and has no runtime
+`pip` executable. Docker Scout found one HIGH, currently unfixable Debian `zlib` CVE-2026-85091;
+the release-evidence target correctly blocks on that finding. Sign this milestone only after a
+base-image refresh resolves it or the release owner records a time-bounded, risk-accepted exception
+under the existing policy.
 
 ## 5.3. Hosting controls — pending
 

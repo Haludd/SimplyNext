@@ -11,6 +11,9 @@ env/
 .mypy_cache/
 .ruff_cache/
 .tmp/
+release-evidence*.json
+release-evidence*.scan.txt
+release-test-results*.txt
 
 # Secrets and local configuration
 .env

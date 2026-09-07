@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -222,3 +223,46 @@ def test_bedrock_composition_fails_instead_of_advertising_readiness(
 
     with pytest.raises(RuntimeError, match=f"{failed_preflight} preflight failed"):
         build_lattice_translation_engine(settings, MetricsRegistry())
+
+
+def test_anthropic_composition_uses_normalized_converse_adapter_without_contract_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        allowed_origins=(),
+        anthropic_enabled=True,
+        anthropic_lease_owner="phase1-owner",
+        anthropic_input_usd_per_million_tokens=Decimal("1.00"),
+        anthropic_output_usd_per_million_tokens=Decimal("5.00"),
+        anthropic_cache_write_usd_per_million_tokens=Decimal("1.25"),
+        anthropic_cache_read_usd_per_million_tokens=Decimal("0.10"),
+        recognition_language="sgsl",
+    )
+
+    class FakeAnthropicRuntime:
+        def converse(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "message": {"content": [{"text": "OK"}]},
+                },
+                "usage": {
+                    "inputTokens": 10,
+                    "outputTokens": 1,
+                    "cacheWriteInputTokens": 0,
+                    "cacheReadInputTokens": 0,
+                },
+            }
+
+    monkeypatch.setattr(
+        lattice_runtime,
+        "create_anthropic_client",
+        lambda **_kwargs: FakeAnthropicRuntime(),
+    )
+
+    engine = build_lattice_translation_engine(settings, MetricsRegistry())
+
+    assert engine.ready is True
+    assert engine.agent_source == "anthropic_graph"
+    assert engine.agent_model_version == "claude-haiku-4-5-20251001"

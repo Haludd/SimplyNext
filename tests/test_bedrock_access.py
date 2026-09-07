@@ -303,3 +303,45 @@ def test_bedrock_settings_require_a_named_owner_and_budget_headroom() -> None:
             _env_file=None,
             bedrock_model_id="global.anthropic.some-other-model-v1:0",
         )
+
+
+def test_anthropic_settings_require_owner_and_verified_pricing() -> None:
+    with pytest.raises(ValidationError, match="anthropic_lease_owner"):
+        Settings(
+            _env_file=None,
+            anthropic_enabled=True,
+            anthropic_input_usd_per_million_tokens=Decimal("1.00"),
+            anthropic_output_usd_per_million_tokens=Decimal("5.00"),
+            anthropic_cache_write_usd_per_million_tokens=Decimal("1.25"),
+            anthropic_cache_read_usd_per_million_tokens=Decimal("0.10"),
+        )
+    with pytest.raises(ValidationError, match="all four anthropic pricing"):
+        Settings(
+            _env_file=None,
+            anthropic_enabled=True,
+            anthropic_lease_owner="team-owner",
+        )
+
+    configured = Settings(
+        _env_file=None,
+        anthropic_enabled=True,
+        anthropic_lease_owner="team-owner",
+        anthropic_input_usd_per_million_tokens=Decimal("1.00"),
+        anthropic_output_usd_per_million_tokens=Decimal("5.00"),
+        anthropic_cache_write_usd_per_million_tokens=Decimal("1.25"),
+        anthropic_cache_read_usd_per_million_tokens=Decimal("0.10"),
+    )
+    assert configured.anthropic_model_id == "claude-haiku-4-5-20251001"
+
+    with pytest.raises(ValidationError, match="only one hosted model"):
+        Settings(
+            _env_file=None,
+            bedrock_enabled=True,
+            bedrock_lease_owner="bedrock-owner",
+            anthropic_enabled=True,
+            anthropic_lease_owner="anthropic-owner",
+            anthropic_input_usd_per_million_tokens=Decimal("1.00"),
+            anthropic_output_usd_per_million_tokens=Decimal("5.00"),
+            anthropic_cache_write_usd_per_million_tokens=Decimal("1.25"),
+            anthropic_cache_read_usd_per_million_tokens=Decimal("0.10"),
+        )

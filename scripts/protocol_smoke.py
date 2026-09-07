@@ -66,13 +66,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repair-fixture", type=Path, default=DEFAULT_REPAIR_FIXTURE)
     parser.add_argument(
         "--expect-agent-source",
-        choices=("bedrock_graph", "deterministic_template"),
+        choices=("bedrock_graph", "anthropic_graph", "deterministic_template"),
         default="bedrock_graph",
     )
     parser.add_argument(
         "--confirm-live-spend",
         action="store_true",
-        help="Required for bedrock_graph mode; acknowledges billed model calls.",
+        help="Required for hosted-model modes; acknowledges billed model calls.",
     )
     parser.add_argument("--timeout-seconds", type=float, default=45.0)
     return parser
@@ -81,10 +81,21 @@ def _parser() -> argparse.ArgumentParser:
 def _require_explicit_live_spend_confirmation(args: argparse.Namespace) -> None:
     if args.timeout_seconds <= 0:
         raise SmokeFailure("timeout_seconds must be greater than zero")
-    if args.expect_agent_source == "bedrock_graph" and not args.confirm_live_spend:
+    if (
+        args.expect_agent_source in {"bedrock_graph", "anthropic_graph"}
+        and not args.confirm_live_spend
+    ):
         raise SmokeFailure(
-            "live Bedrock smoke is disabled until --confirm-live-spend is supplied explicitly"
+            "live hosted-model smoke is disabled until --confirm-live-spend is supplied explicitly"
         )
+
+
+def _provider_for_source(agent_source: str) -> str | None:
+    if agent_source == "bedrock_graph":
+        return "bedrock"
+    if agent_source == "anthropic_graph":
+        return "anthropic"
+    return None
 
 
 def _session_request(settings: Settings, args: argparse.Namespace) -> SessionCreateRequest:
@@ -294,6 +305,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
     _require_explicit_live_spend_confirmation(args)
     settings = Settings()
     request = _session_request(settings, args)
+    provider = _provider_for_source(args.expect_agent_source)
 
     timeout = httpx.Timeout(args.timeout_seconds)
     normalized_base_url = _http_url(args.base_url, "").rstrip("/")
@@ -346,15 +358,17 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
                 raise SmokeFailure("high-confidence result used an unexpected agent source")
 
             after_confident = await _metrics(client)
-            if args.expect_agent_source == "bedrock_graph":
-                if _counter(after_confident, "bedrock_model_calls_total") < (
-                    _counter(baseline, "bedrock_model_calls_total") + 2
+            if provider is not None:
+                calls_counter = f"{provider}_model_calls_total"
+                cost_counter = f"{provider}_estimated_cost_nano_usd"
+                if _counter(after_confident, calls_counter) < (
+                    _counter(baseline, calls_counter) + 2
                 ):
-                    raise SmokeFailure("assembler and critic Bedrock calls were not both observed")
-                if _counter(after_confident, "bedrock_estimated_cost_nano_usd") <= _counter(
-                    baseline, "bedrock_estimated_cost_nano_usd"
+                    raise SmokeFailure("assembler and critic model calls were not both observed")
+                if _counter(after_confident, cost_counter) <= _counter(
+                    baseline, cost_counter
                 ):
-                    raise SmokeFailure("Bedrock usage did not increase estimated cost")
+                    raise SmokeFailure("model usage did not increase estimated cost")
                 if _counter(after_confident, "assembler_output_validation_successes") <= _counter(
                     baseline, "assembler_output_validation_successes"
                 ):
@@ -371,8 +385,13 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
                 timeout_seconds=args.timeout_seconds,
             )
             after_replay = await _metrics(client)
-            if _counter(after_replay, "bedrock_model_calls_total") != _counter(
-                after_confident, "bedrock_model_calls_total"
+            replay_calls_counter: str | None = (
+                None if provider is None else f"{provider}_model_calls_total"
+            )
+            if replay_calls_counter is not None and _counter(
+                after_replay, replay_calls_counter
+            ) != _counter(
+                after_confident, replay_calls_counter
             ):
                 raise SmokeFailure("cached replay unexpectedly dispatched a model call")
 
@@ -386,8 +405,10 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             if "caption" in repair.model_dump() or "tts_text" in repair.model_dump():
                 raise SmokeFailure("repair event exposed caption or TTS fields")
             after_repair = await _metrics(client)
-            if _counter(after_repair, "bedrock_model_calls_total") != _counter(
-                after_replay, "bedrock_model_calls_total"
+            if replay_calls_counter is not None and _counter(
+                after_repair, replay_calls_counter
+            ) != _counter(
+                after_replay, replay_calls_counter
             ):
                 raise SmokeFailure("ambiguous fixture reached the model instead of local repair")
 
@@ -412,23 +433,30 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             if socket.close_code != 1000:
                 raise SmokeFailure("session did not close cleanly")
 
-    return {
+    report: dict[str, object] = {
         "status": "passed",
         "mode": args.expect_agent_source,
+        "model_provider": provider or "deterministic",
         "contracts_validated": True,
         "evidence_trace_exact": True,
         "cached_replay_no_dispatch": True,
         "repair_before_model": True,
         "ping_and_end": True,
-        "bedrock_model_calls_delta": _counter(
-            after_repair, "bedrock_model_calls_total"
-        )
-        - _counter(baseline, "bedrock_model_calls_total"),
-        "bedrock_estimated_cost_nano_usd_delta": _counter(
-            after_repair, "bedrock_estimated_cost_nano_usd"
-        )
-        - _counter(baseline, "bedrock_estimated_cost_nano_usd"),
     }
+    if provider is not None:
+        calls_counter = f"{provider}_model_calls_total"
+        cost_counter = f"{provider}_estimated_cost_nano_usd"
+        calls_delta = _counter(after_repair, calls_counter) - _counter(
+            baseline, calls_counter
+        )
+        cost_delta = _counter(
+            after_repair, cost_counter
+        ) - _counter(baseline, cost_counter)
+        # Keep the original Bedrock report keys stable and add the equivalent
+        # provider-specific keys for direct Anthropic runs.
+        report[f"{provider}_model_calls_delta"] = calls_delta
+        report[f"{provider}_estimated_cost_nano_usd_delta"] = cost_delta
+    return report
 
 
 def main(argv: Sequence[str] | None = None) -> int:

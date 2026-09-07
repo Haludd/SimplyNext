@@ -1,6 +1,12 @@
 """Grounded caption assembly with an exact-template default."""
 
 from .adapter import ConfirmedMemoryAdapter
+from .anthropic_access import (
+    AnthropicConfigurationError,
+    AnthropicConverseAdapter,
+    AnthropicProviderError,
+    create_anthropic_client,
+)
 from .assembler import (
     ASSEMBLER_DRAFT_SCHEMA_VERSION,
     DEFAULT_ASSEMBLER_PROMPT_PATH,
@@ -41,6 +47,7 @@ from .bedrock_access import (
     create_bedrock_control_client,
     preflight_bedrock_access,
     preflight_bedrock_runtime_access,
+    preflight_model_runtime_access,
 )
 from .critic import (
     CRITIC_ASSESSMENT_SCHEMA_VERSION,
@@ -178,6 +185,9 @@ __all__ = [
     "AssemblerDraft",
     "AssemblerGroundingError",
     "AssemblerOutputError",
+    "AnthropicConfigurationError",
+    "AnthropicConverseAdapter",
+    "AnthropicProviderError",
     "BedrockBudgetExceeded",
     "BedrockControlClient",
     "BedrockCostGuard",
@@ -256,12 +266,14 @@ __all__ = [
     "build_agent_graph",
     "create_bedrock_client",
     "create_bedrock_control_client",
+    "create_anthropic_client",
     "create_agent_state",
     "context_hint",
     "conversation_memory",
     "loop_limit_reached",
     "next_loop_update",
     "preflight_bedrock_access",
+    "preflight_model_runtime_access",
     "preflight_bedrock_runtime_access",
     "reduce_conversation_history",
     "reduce_signer_memory",

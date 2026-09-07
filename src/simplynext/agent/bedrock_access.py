@@ -296,7 +296,11 @@ class BedrockCostGuard:
 
 
 class CostGuardedConverseClient:
-    """Converse decorator enforcing pricing, caching, logging, and a hard ceiling."""
+    """Converse decorator enforcing pricing, caching, logging, and a hard ceiling.
+
+    The implementation is provider-neutral; the historical class name is retained
+    for compatibility with the Bedrock path.
+    """
 
     def __init__(
         self,
@@ -305,11 +309,15 @@ class CostGuardedConverseClient:
         guard: BedrockCostGuard,
         metrics: MetricsRegistry | None = None,
         prompt_cache_enabled: bool = True,
+        provider: str = "bedrock",
     ) -> None:
         self._client = client
         self._guard = guard
         self._metrics = metrics
         self._prompt_cache_enabled = prompt_cache_enabled
+        if not provider or provider != provider.strip():
+            raise ValueError("provider must be a non-empty identifier")
+        self._provider = provider
         self._utterance_costs: OrderedDict[str, BedrockUtteranceCost] = OrderedDict()
         self._utterance_costs_lock = Lock()
 
@@ -331,7 +339,7 @@ class CostGuardedConverseClient:
         max_output_tokens = _maximum_output_tokens(request)
         estimated_input_tokens = _conservative_input_token_bound(request)
         role, utterance_id = _request_context(request)
-        self._increment("bedrock_model_calls_total")
+        self._increment("model_calls_total")
 
         try:
             reservation = self._guard.reserve(
@@ -340,7 +348,7 @@ class CostGuardedConverseClient:
                 max_output_tokens=max_output_tokens,
             )
         except BedrockBudgetExceeded:
-            self._increment("bedrock_model_calls_budget_rejected")
+            self._increment("model_calls_budget_rejected")
             logger.warning(
                 "bedrock_cost_guard_rejected model_id=%s role=%s utterance_id=%s",
                 model_id,
@@ -353,7 +361,7 @@ class CostGuardedConverseClient:
             response = self._client.converse(**request)
         except Exception:
             cost, snapshot = self._guard.settle(reservation, usage=None)
-            self._increment("bedrock_model_calls_failed")
+            self._increment("model_calls_failed")
             utterance_cost = self._record_cost(cost, utterance_id=utterance_id, usage=None)
             _log_cost(
                 model_id=model_id,
@@ -364,6 +372,7 @@ class CostGuardedConverseClient:
                 snapshot=snapshot,
                 utterance_cost=utterance_cost,
                 accounting="reserved_after_failure",
+                provider=self._provider,
             )
             raise
 
@@ -371,7 +380,7 @@ class CostGuardedConverseClient:
             usage = BedrockTokenUsage.from_response(response)
         except BedrockUsageUnavailable:
             cost, snapshot = self._guard.settle(reservation, usage=None)
-            self._increment("bedrock_model_calls_usage_unavailable")
+            self._increment("model_calls_usage_unavailable")
             utterance_cost = self._record_cost(cost, utterance_id=utterance_id, usage=None)
             _log_cost(
                 model_id=model_id,
@@ -382,14 +391,15 @@ class CostGuardedConverseClient:
                 snapshot=snapshot,
                 utterance_cost=utterance_cost,
                 accounting="reserved_usage_unavailable",
+                provider=self._provider,
             )
             raise
 
         cost, snapshot = self._guard.settle(reservation, usage=usage)
-        self._increment("bedrock_input_tokens", usage.input_tokens)
-        self._increment("bedrock_output_tokens", usage.output_tokens)
-        self._increment("bedrock_cache_write_input_tokens", usage.cache_write_input_tokens)
-        self._increment("bedrock_cache_read_input_tokens", usage.cache_read_input_tokens)
+        self._increment("input_tokens", usage.input_tokens)
+        self._increment("output_tokens", usage.output_tokens)
+        self._increment("cache_write_input_tokens", usage.cache_write_input_tokens)
+        self._increment("cache_read_input_tokens", usage.cache_read_input_tokens)
         utterance_cost = self._record_cost(cost, utterance_id=utterance_id, usage=usage)
         reservation_exceeded = cost > reservation.maximum_cost_usd
         _log_cost(
@@ -401,18 +411,19 @@ class CostGuardedConverseClient:
             snapshot=snapshot,
             utterance_cost=utterance_cost,
             accounting=("reservation_exceeded" if reservation_exceeded else "response_usage"),
+            provider=self._provider,
         )
         if reservation_exceeded:
-            self._increment("bedrock_model_calls_usage_unavailable")
+            self._increment("model_calls_usage_unavailable")
             raise BedrockUsageUnavailable(
                 "Bedrock usage exceeded its pre-authorized cost reservation"
             )
-        self._increment("bedrock_model_calls_succeeded")
+        self._increment("model_calls_succeeded")
         return response
 
     def _increment(self, name: str, amount: int = 1) -> None:
         if self._metrics is not None and amount:
-            self._metrics.increment(name, amount)
+            self._metrics.increment(f"{self._provider}_{name}", amount)
 
     def _record_cost(
         self,
@@ -422,7 +433,7 @@ class CostGuardedConverseClient:
         usage: BedrockTokenUsage | None,
     ) -> BedrockUtteranceCost:
         nano_usd = int((cost * NANO_USD_PER_USD).to_integral_value(rounding=ROUND_CEILING))
-        self._increment("bedrock_estimated_cost_nano_usd", nano_usd)
+        self._increment("estimated_cost_nano_usd", nano_usd)
         with self._utterance_costs_lock:
             previous = self._utterance_costs.get(
                 utterance_id,
@@ -520,10 +531,39 @@ def preflight_bedrock_runtime_access(
     region_name: str,
     model_id: str,
 ) -> None:
-    """Prove runtime invocation access with one minimal, fully accounted call."""
+    """Prove Bedrock runtime invocation with one minimal, fully accounted call."""
 
-    if not region_name or region_name != region_name.strip():
-        raise ValueError("region_name must be non-empty without surrounding whitespace")
+    try:
+        preflight_model_runtime_access(
+            client,
+            provider="bedrock",
+            location=region_name,
+            model_id=model_id,
+        )
+    except BedrockBudgetExceeded:
+        raise
+    except BedrockPreflightError as exc:
+        raise BedrockPreflightError(
+            "Bedrock runtime preflight failed in "
+            f"{region_name}; run 'aws sso login' and verify model access in that region"
+        ) from exc
+
+
+def preflight_model_runtime_access(
+    client: CostGuardedConverseClient,
+    *,
+    provider: str,
+    location: str,
+    model_id: str,
+) -> None:
+    """Prove a provider's runtime access with one minimal, fully accounted call."""
+
+    if not provider or provider != provider.strip():
+        raise ValueError("provider must be non-empty without surrounding whitespace")
+    if not location or location != location.strip():
+        raise ValueError("location must be non-empty without surrounding whitespace")
+    if not model_id or model_id != model_id.strip():
+        raise ValueError("model_id must be non-empty without surrounding whitespace")
     try:
         response = client.converse(
             modelId=model_id,
@@ -538,15 +578,14 @@ def preflight_bedrock_runtime_access(
             inferenceConfig={"maxTokens": 2, "temperature": 0.0},
             requestMetadata={
                 "simplynext_role": "preflight",
-                "simplynext_utterance_id": "bedrock-access-preflight",
+                "simplynext_utterance_id": f"{provider}-access-preflight",
             },
         )
     except BedrockBudgetExceeded:
         raise
     except Exception as exc:
         raise BedrockPreflightError(
-            "Bedrock runtime preflight failed in "
-            f"{region_name}; run 'aws sso login' and verify model access in that region"
+            f"{provider} runtime preflight failed at {location}; verify provider access"
         ) from exc
     output = response.get("output")
     message = output.get("message") if isinstance(output, Mapping) else None
@@ -554,10 +593,11 @@ def preflight_bedrock_runtime_access(
     if not isinstance(content, list) or not any(
         isinstance(block, Mapping) and isinstance(block.get("text"), str) for block in content
     ):
-        raise BedrockPreflightError("Bedrock runtime preflight returned no text content")
+        raise BedrockPreflightError(f"{provider} runtime preflight returned no text content")
     logger.info(
-        "bedrock_runtime_preflight_passed region=%s model_id=%s",
-        region_name,
+        "%s_runtime_preflight_passed location=%s model_id=%s",
+        provider,
+        location,
         model_id,
     )
 
@@ -656,12 +696,14 @@ def _log_cost(
     snapshot: BedrockSpendSnapshot,
     utterance_cost: BedrockUtteranceCost,
     accounting: str,
+    provider: str = "bedrock",
 ) -> None:
     logger.info(
-        "bedrock_cost_usage model_id=%s role=%s utterance_id=%s input_tokens=%s "
+        "%s_cost_usage model_id=%s role=%s utterance_id=%s input_tokens=%s "
         "output_tokens=%s cache_write_input_tokens=%s cache_read_input_tokens=%s "
         "estimated_cost_usd=%s cumulative_estimated_spend_usd=%s remaining_usd=%s "
         "utterance_model_calls=%s utterance_estimated_cost_usd=%s accounting=%s",
+        provider,
         model_id,
         role,
         utterance_id,
@@ -699,6 +741,7 @@ __all__ = [
     "CostGuardedConverseClient",
     "create_bedrock_client",
     "create_bedrock_control_client",
+    "preflight_model_runtime_access",
     "preflight_bedrock_access",
     "preflight_bedrock_runtime_access",
 ]

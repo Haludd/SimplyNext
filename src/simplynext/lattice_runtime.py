@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
 from typing import cast
@@ -41,10 +42,12 @@ from simplynext.agent import (
     SupportedTextPart,
     build_agent_graph,
     create_agent_state,
+    create_anthropic_client,
     create_bedrock_client,
     create_bedrock_control_client,
     preflight_bedrock_access,
     preflight_bedrock_runtime_access,
+    preflight_model_runtime_access,
     validate_draft_for_lattice,
 )
 from simplynext.agent.graph import AssemblerNode, CriticNode
@@ -575,6 +578,67 @@ def build_lattice_translation_engine(
         allowed_tools = tools.allowed_tools
         source = "bedrock_graph"
         model_version: str | None = settings.bedrock_model_id
+        assembler_ready = True
+    elif settings.anthropic_enabled:
+        anthropic_rates = (
+            settings.anthropic_input_usd_per_million_tokens,
+            settings.anthropic_output_usd_per_million_tokens,
+            settings.anthropic_cache_write_usd_per_million_tokens,
+            settings.anthropic_cache_read_usd_per_million_tokens,
+        )
+        if any(rate is None for rate in anthropic_rates):
+            raise ValueError("Anthropic pricing must be configured before startup")
+        pricing = BedrockPricing(
+            model_id=settings.anthropic_model_id,
+            input_usd_per_million=cast(Decimal, settings.anthropic_input_usd_per_million_tokens),
+            output_usd_per_million=cast(Decimal, settings.anthropic_output_usd_per_million_tokens),
+            cache_write_usd_per_million=cast(
+                Decimal, settings.anthropic_cache_write_usd_per_million_tokens
+            ),
+            cache_read_usd_per_million=cast(
+                Decimal, settings.anthropic_cache_read_usd_per_million_tokens
+            ),
+        )
+        guarded_client = CostGuardedConverseClient(
+            client=create_anthropic_client(
+                api_base_url=settings.anthropic_api_base_url,
+                workspace_id=settings.anthropic_workspace_id,
+                connect_timeout_seconds=settings.anthropic_connect_timeout_seconds,
+                read_timeout_seconds=settings.anthropic_read_timeout_seconds,
+                total_max_attempts=settings.anthropic_total_max_attempts,
+            ),
+            guard=BedrockCostGuard(
+                pricing=pricing,
+                spend_limit_usd=settings.anthropic_spend_limit_usd,
+                known_spend_usd=settings.anthropic_known_spend_usd,
+            ),
+            metrics=metrics,
+            prompt_cache_enabled=settings.anthropic_prompt_cache_enabled,
+            provider="anthropic",
+        )
+        preflight_model_runtime_access(
+            guarded_client,
+            provider="anthropic",
+            location=settings.anthropic_api_base_url,
+            model_id=settings.anthropic_model_id,
+        )
+        assembler = BedrockLatticeAssemblerNode(
+            client=guarded_client,
+            config=LatticeAssemblerConfig(model_id=settings.anthropic_model_id),
+            metrics=metrics,
+        )
+        critic = BedrockLatticeCriticNode(
+            client=guarded_client,
+            config=LatticeCriticConfig(model_id=settings.anthropic_model_id),
+            metrics=metrics,
+        )
+        confident = _ConfidentNode(
+            source="anthropic_graph",
+            model_version=settings.anthropic_model_id,
+        )
+        allowed_tools = tools.allowed_tools
+        source = "anthropic_graph"
+        model_version = settings.anthropic_model_id
         assembler_ready = True
     else:
         assembler = _DeterministicLatticeAssembler(templates)

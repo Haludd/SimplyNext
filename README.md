@@ -14,11 +14,12 @@ The local backend vertical slice is implemented and tested:
 - bounded WebSocket transport with acknowledgement, replay, rate limits, and controls;
 - confidence and producer-profile policy gates;
 - a bounded LangGraph assembler → critic → confident/repair flow;
-- deterministic no-spend mode and optional guarded Amazon Bedrock Converse mode;
+- deterministic no-spend mode, optional guarded Amazon Bedrock Converse mode, and an optional
+  direct Anthropic Messages API mode;
 - payload-free structured logs and in-process metrics;
 - unit, integration, and end-to-end protocol tests.
 
-The repository is not yet a hosted production service. Live Bedrock verification, container
+The repository is not yet a hosted production service. Live hosted-model verification, container
 packaging, Railway controls, and real client integration remain. Their committed status is in
 `plan/PLN_plan.md`; the release operator may also maintain the local, Git-ignored
 `plan/BPP_backend_production_plan.md` workbook.
@@ -34,7 +35,8 @@ isolation, and require callers to abandon `simplynext.*` imports.
 
 - Python 3.11–3.13; Python 3.12 is the tested deployment target.
 - A virtual environment with `pip`.
-- Optional: AWS credentials and Bedrock model access for live model mode.
+- Optional: AWS credentials and Bedrock model access for Bedrock mode.
+- Optional: an Anthropic API key and Anthropic account billing access for direct Anthropic mode.
 
 # 4. INSTALLATION
 
@@ -47,7 +49,7 @@ cp .env.example .env
 ```
 
 The committed `requirements.txt` delegates to `pyproject.toml`; `pylock.toml` is the resolved
-dependency lock. Do not commit `.env` or AWS credentials.
+dependency lock. Do not commit `.env`, AWS credentials, or an Anthropic API key.
 
 # 5. LOCAL OPERATION
 
@@ -70,10 +72,46 @@ The defaults expose the service on `http://127.0.0.1:8000`. Useful routes are:
 | `DELETE` | `/v1/sessions/{session_id}` | End an authenticated session |
 | WebSocket | `/v1/sessions/{session_id}/lattices` | Submit lattices and receive events |
 
-Bedrock is disabled by default. The local, Git-ignored `plan/BPP_backend_production_plan.md`
-workbook contains the live enablement procedure and operator-specific values when provisioned.
-Phase 1 includes an opt-in, payload-redacted protocol harness at `scripts/protocol_smoke.py`; its
-Bedrock mode requires `--confirm-live-spend` and never runs as part of the normal test suite.
+Bedrock and direct Anthropic mode are disabled by default. The local, Git-ignored
+`plan/BPP_backend_production_plan.md` workbook contains the Bedrock enablement procedure and
+operator-specific values when provisioned. Direct Anthropic mode uses the standard
+`ANTHROPIC_API_KEY` process variable and does not use AWS credentials, regions, profiles, or SCPs.
+It still requires explicit per-token pricing in `.env` so the existing spend guard can fail closed.
+
+To run the direct Anthropic path, obtain and verify the values below, then set them in the shell (or
+`.env`, except for the secret API key):
+
+```bash
+export ANTHROPIC_API_KEY='…'  # never commit this value
+export SIMPLYNEXT_BEDROCK_ENABLED=false
+export SIMPLYNEXT_ANTHROPIC_ENABLED=true
+export SIMPLYNEXT_ANTHROPIC_LEASE_OWNER='team-or-person'
+export SIMPLYNEXT_ANTHROPIC_INPUT_USD_PER_MILLION_TOKENS='…'
+export SIMPLYNEXT_ANTHROPIC_OUTPUT_USD_PER_MILLION_TOKENS='…'
+export SIMPLYNEXT_ANTHROPIC_CACHE_WRITE_USD_PER_MILLION_TOKENS='…'
+export SIMPLYNEXT_ANTHROPIC_CACHE_READ_USD_PER_MILLION_TOKENS='…'
+python main.py
+```
+
+`SIMPLYNEXT_ANTHROPIC_MODEL_ID` defaults to the direct-API model identifier and
+`SIMPLYNEXT_ANTHROPIC_API_BASE_URL` defaults to `https://api.anthropic.com`. The cache rates must
+still be numeric when prompt caching is disabled; use the provider's documented zero/unavailable
+value only after verifying it with Anthropic. Phase 1 includes an opt-in, payload-redacted protocol
+harness at `scripts/protocol_smoke.py`; either hosted mode requires `--confirm-live-spend` and
+never runs as part of the normal test suite.
+
+The adapter reads only `ANTHROPIC_API_KEY` from the process environment; a
+`SIMPLYNEXT_ANTHROPIC_API_KEY` setting is intentionally not supported. Export the key in the same
+shell that starts the service (or inject it through the deployment secret manager).
+
+For a running service, the direct-provider smoke command is:
+
+```bash
+python scripts/protocol_smoke.py \
+  --base-url http://127.0.0.1:8000 \
+  --expect-agent-source anthropic_graph \
+  --confirm-live-spend
+```
 
 # 6. DATA FLOW
 
@@ -102,7 +140,7 @@ python -m mypy src scripts
 python -m pip check
 ```
 
-The current verified baseline is 146 passing tests, Ruff clean, strict mypy clean, and a valid
+The current verified baseline is 153 passing tests, Ruff clean, strict mypy clean, and a valid
 installed dependency set. Re-run the gates after every change; the number of tests may increase.
 
 # 8. REPOSITORY MAP
@@ -110,7 +148,7 @@ installed dependency set. Re-run the gates after every change; the number of tes
 ```text
 SimplyNext/
 ├── src/simplynext/             installable Python package
-│   ├── agent/                  graph, Bedrock nodes, prompts, and read-only tools
+│   ├── agent/                  graph, hosted-model adapters, prompts, and read-only tools
 │   ├── api/                    HTTP/WebSocket handlers and middleware
 │   ├── contracts/              strict public wire models
 │   ├── observability/          structured logging and in-process metrics

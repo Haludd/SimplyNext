@@ -19,8 +19,9 @@ The local backend vertical slice is implemented and tested:
 - payload-free structured logs and in-process metrics;
 - unit, integration, and end-to-end protocol tests.
 
-The repository is not yet a hosted production service. The Phase 2 container/package workflow is
-implemented; live hosted-model verification, Railway controls, and real client integration remain.
+The repository is not yet a hosted production service. The Phase 2 container/package workflow and
+Phase 3 application-side hosting controls are implemented; Railway operator verification, live
+hosted-model verification, and real client integration remain.
 Their committed status is in
 `plan/PLN_plan.md`; the release operator may also maintain the local, Git-ignored
 `plan/BPP_backend_production_plan.md` workbook.
@@ -73,6 +74,15 @@ The defaults expose the service on `http://127.0.0.1:8000`. Useful routes are:
 | `POST` | `/v1/sessions` | Negotiate a lattice stream and bearer capability |
 | `DELETE` | `/v1/sessions/{session_id}` | End an authenticated session |
 | WebSocket | `/v1/sessions/{session_id}/lattices` | Submit lattices and receive events |
+
+In `SIMPLYNEXT_ENVIRONMENT=production`, `/docs`, `/redoc`, and `/openapi.json` are disabled.
+`/metrics` requires the separate `SIMPLYNEXT_OPERATOR_METRICS_TOKEN`; it is never authenticated
+with a client stream token. Set `SIMPLYNEXT_OPERATOR_DOCS_ENABLED=true` only for short-lived
+operator troubleshooting, together with `SIMPLYNEXT_OPERATOR_DOCS_TOKEN`.
+`SIMPLYNEXT_ALLOWED_HOSTS` must contain the exact public Railway/custom hostname (never `*`), and
+`SIMPLYNEXT_MAX_SESSION_CREATIONS_PER_MINUTE_GLOBAL` bounds unauthenticated session creation.
+The application does not trust `X-Forwarded-For` or other forwarded headers for security decisions;
+configure any proxy trust at the platform boundary and keep the app's host/origin allow-lists exact.
 
 Bedrock and direct Anthropic mode are disabled by default. The local, Git-ignored
 `plan/BPP_backend_production_plan.md` workbook contains the Bedrock enablement procedure and
@@ -132,6 +142,39 @@ non-default port binds on `0.0.0.0`. The final image starts `simplynext-api` dir
 unprivileged `simplynext` user, with hosted providers disabled until their secrets and pricing are
 deliberately injected.
 
+## 5.1 RAILWAY PHASE 3 RUNBOOK
+
+The repository now supplies the application-side controls. The release operator must still perform
+the platform-side deployment and evidence steps:
+
+1. Create/select the Railway project and service, connect the reviewed repository/branch, and
+   deploy the reviewed commit/image. Use the root `Dockerfile`, one replica, and one worker.
+2. Set `SIMPLYNEXT_ENVIRONMENT=production`, `SIMPLYNEXT_HOST=0.0.0.0`, and the exact public value
+   for `SIMPLYNEXT_ALLOWED_HOSTS` (for example `signbridge-production-…up.railway.app`). Set
+   `SIMPLYNEXT_ALLOWED_ORIGINS` to the exact browser origins, or empty for a native-only client.
+   Leave `PORT` to Railway; the image reads it automatically.
+3. Keep diagnostics closed: leave `SIMPLYNEXT_OPERATOR_DOCS_ENABLED=false` and do not set a
+   metrics token unless you have an operator secret store. If metrics are needed, set a random
+   `SIMPLYNEXT_OPERATOR_METRICS_TOKEN` as a sealed Railway variable and retrieve it only with
+   `curl -H 'Authorization: Bearer …' https://HOST/metrics`. Never use a client stream token.
+4. Set `SIMPLYNEXT_MAX_SESSION_CREATIONS_PER_MINUTE_GLOBAL` to the approved abuse budget (the
+   default is 60/minute). Keep one replica/worker because sessions, replay, rate buckets, and
+   metrics are process-local.
+5. Configure `/readyz` as the Railway healthcheck, enable restart-on-failure, and set
+   `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`. Add an external monitor for `/healthz` and `/readyz`.
+6. For the current direct Anthropic deployment, set `SIMPLYNEXT_BEDROCK_ENABLED=false`,
+   `SIMPLYNEXT_ANTHROPIC_ENABLED=true`, the four `SIMPLYNEXT_ANTHROPIC_*_USD_PER_MILLION_TOKENS`
+   prices, `SIMPLYNEXT_ANTHROPIC_LEASE_OWNER`, and sealed `ANTHROPIC_API_KEY`. Do not add AWS
+   credentials or Bedrock variables. The Anthropic model ID must be approved for the account.
+7. After HTTPS is issued, verify `/healthz` and `/readyz`, confirm `/docs`, `/redoc`, and
+   `/openapi.json` return 404, run the redacted protocol smoke against the public URL with
+   `--expect-agent-source anthropic_graph --confirm-live-spend`, then exercise a restart and a
+   rollback. Record the deployed commit/image digest, timestamps, and expected in-memory session
+   loss during restart/rollback.
+
+Do not call Phase 3 complete until the Railway logs show the redacted `startup_configuration` line,
+the public WSS smoke passes, monitoring/alerts are active, and restart/rollback evidence is stored.
+
 Linux dependency resolution is intentionally separate from the macOS ARM `pylock.toml`:
 
 ```bash
@@ -184,7 +227,7 @@ python -m mypy src scripts
 python -m pip check
 ```
 
-The current verified baseline is 158 passing tests, Ruff clean, strict mypy clean, and a valid
+The current verified baseline is 165 passing tests, Ruff clean, strict mypy clean, and a valid
 installed dependency set. Re-run the gates after every change; the number of tests may increase.
 
 # 8. REPOSITORY MAP

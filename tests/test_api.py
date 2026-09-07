@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from simplynext.config import Settings
 from simplynext.main import create_app
@@ -91,6 +92,25 @@ def test_session_creation_returns_only_lattice_limits(client: TestClient) -> Non
     assert {"layout", "max_batch_frames", "target_fps"}.isdisjoint(session)
 
 
+def test_session_creation_global_rate_limit_maps_to_429() -> None:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            environment="test",
+            allowed_origins=(),
+            max_session_creations_per_minute_global=1,
+            bedrock_enabled=False,
+            caption_templates_path=None,
+            recognition_language="sgsl",
+        )
+    )
+    with TestClient(app) as limited:
+        assert limited.post("/v1/sessions", json=_session_request()).status_code == 201
+        response = limited.post("/v1/sessions", json=_session_request())
+        assert response.status_code == 429
+        assert response.json()["detail"] == "global session creation rate limit exceeded"
+
+
 def test_legacy_session_shape_is_rejected(client: TestClient) -> None:
     payload = _session_request()
     payload["stream_kind"] = "landmarks"
@@ -107,3 +127,52 @@ def test_session_deletion_requires_the_bearer_capability(client: TestClient) -> 
     assert client.delete(path, headers={"Authorization": "Bearer wrong-token"}).status_code == 401
     assert client.delete(path, headers=_authorization(session)).status_code == 204
     assert client.delete(path, headers=_authorization(session)).status_code == 404
+
+
+def _production_client(*, docs: bool = False) -> TestClient:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            environment="production",
+            allowed_origins=(),
+            allowed_hosts=("testserver",),
+            operator_docs_enabled=docs,
+            operator_docs_token=SecretStr("docs-secret") if docs else None,
+            operator_metrics_token=SecretStr("metrics-secret"),
+            bedrock_enabled=False,
+            caption_templates_path=None,
+            recognition_language="sgsl",
+        )
+    )
+    return TestClient(app)
+
+
+def test_production_hides_docs_and_requires_dedicated_metrics_token() -> None:
+    with _production_client() as production:
+        assert production.get("/").json()["docs"] == "disabled"
+        assert production.get("/docs").status_code == 404
+        assert production.get("/openapi.json").status_code == 404
+        assert production.get("/redoc").status_code == 404
+        assert production.get("/metrics").status_code == 401
+        assert (
+            production.get(
+                "/metrics", headers={"Authorization": "Bearer wrong"}
+            ).status_code
+            == 401
+        )
+        assert production.get(
+            "/metrics", headers={"Authorization": "Bearer metrics-secret"}
+        ).status_code == 200
+
+
+def test_operator_docs_override_is_bearer_protected() -> None:
+    with _production_client(docs=True) as production:
+        assert production.get("/docs").status_code == 401
+        headers = {"Authorization": "Bearer docs-secret"}
+        assert production.get("/docs", headers=headers).status_code == 200
+        assert production.get("/openapi.json", headers=headers).status_code == 200
+
+
+def test_production_rejects_unlisted_host() -> None:
+    with _production_client() as production:
+        assert production.get("/healthz", headers={"host": "evil.example"}).status_code == 400

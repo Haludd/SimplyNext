@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from simplynext.contracts import GlossLatticeProducer, Identifier, SignLanguage
@@ -49,9 +49,20 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:8080",
     )
+    allowed_hosts: Annotated[tuple[str, ...], NoDecode] = (
+        "localhost",
+        "127.0.0.1",
+        "testserver",
+    )
+    # Production docs are disabled unless an operator explicitly enables them with a
+    # separate bearer credential. Metrics follow the same dedicated-credential policy.
+    operator_docs_enabled: bool = False
+    operator_docs_token: SecretStr | None = None
+    operator_metrics_token: SecretStr | None = None
 
     session_ttl_seconds: int = Field(default=900, ge=30, le=86_400)
     max_active_sessions: int = Field(default=128, ge=1, le=10_000)
+    max_session_creations_per_minute_global: int = Field(default=60, ge=1, le=100_000)
     http_max_body_bytes: int = Field(default=262_144, ge=4_096, le=4_194_304)
     gloss_lattice_max_message_bytes: Literal[32_768] = 32_768
     max_lattices_per_session: int = Field(default=100, ge=1, le=10_000)
@@ -125,6 +136,20 @@ class Settings(BaseSettings):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
 
+    @field_validator("allowed_hosts", mode="before")
+    @classmethod
+    def parse_allowed_hosts(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(item.strip() for item in value.split(",") if item.strip())
+        return value
+
+    @field_validator("operator_docs_token", "operator_metrics_token", mode="before")
+    @classmethod
+    def empty_operator_token_is_unconfigured(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("caption_templates_path", mode="before")
     @classmethod
     def empty_optional_value_is_unconfigured(cls, value: object) -> object:
@@ -189,6 +214,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_bedrock_ownership_and_budget_headroom(self) -> Self:
+        if self.environment == "production" and not self.allowed_hosts:
+            raise ValueError("allowed_hosts must contain the public production hostname")
+        if self.environment == "production" and "*" in self.allowed_hosts:
+            raise ValueError("allowed_hosts must not contain '*' in production")
+        if (
+            self.environment == "production"
+            and self.operator_docs_enabled
+            and self.operator_docs_token is None
+        ):
+            raise ValueError(
+                "operator_docs_token is required when operator_docs_enabled is true"
+            )
         if self.bedrock_known_spend_usd > self.bedrock_spend_limit_usd:
             raise ValueError("bedrock_known_spend_usd cannot exceed bedrock_spend_limit_usd")
         if self.bedrock_enabled and self.bedrock_lease_owner is None:

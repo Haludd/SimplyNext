@@ -154,7 +154,7 @@ verification client and uses the two non-sensitive `tests/fixtures/live_bedrock_
 
 - Deterministic happy path, ambiguous/low-confidence repair, replay, invalid contract, session
   auth, limits, cancellation, graph failure, and mocked Bedrock flows are tested.
-- Latest baseline: 158 passing tests, Ruff clean, strict mypy clean for 37 source/script files, `pip check`
+- Latest baseline: 165 passing tests, Ruff clean, strict mypy clean for 38 source/script files, `pip check`
   clean, and normal-wheel import/resource smoke verified.
 
 ## 4.6. Backend scope cleanup — complete
@@ -196,12 +196,21 @@ the release-evidence target correctly blocks on that finding. Sign this mileston
 base-image refresh resolves it or the release owner records a time-bounded, risk-accepted exception
 under the existing policy.
 
-## 5.3. Hosting controls — pending
+## 5.3. Hosting controls — application implementation complete; Railway operator run pending
 
-Deploy the reviewed container to one Railway replica, configure service variables and sealed AWS
-credentials, set `/readyz` as deploy health, generate HTTPS/WSS networking, restrict public
-diagnostics, add continuous monitoring, exercise restart/rollback, then enable Bedrock under the
-account budget.
+The service now fails closed for a production public surface: `/docs`, `/redoc`, and
+`/openapi.json` are disabled by default; optional operator documentation and `/metrics` use separate
+bearer credentials; `TrustedHostMiddleware` enforces an explicit host allow-list; global session
+creation is bounded; and startup logs emit modes and numeric limits without secrets. The app does
+not consume forwarded client-IP headers for security decisions. These controls are covered by the
+API/config/session tests.
+
+The release operator must still deploy the reviewed image to one Railway replica and one worker,
+set `SIMPLYNEXT_ENVIRONMENT=production`, exact `SIMPLYNEXT_ALLOWED_HOSTS` and browser origins,
+configure `/readyz` health, HTTPS/WSS, restart draining (`RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`),
+external monitoring/alerts, and restart/rollback evidence. With the current direct Anthropic mode,
+inject sealed `ANTHROPIC_API_KEY` and the four verified Anthropic token prices instead of AWS
+credentials. Enable hosted spend only after the public smoke and rollback drills pass.
 
 ## 5.4. Client integration — pending
 
@@ -239,4 +248,5 @@ The backend may be called “working and hosted” only when all are true:
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-07 | Implemented Phase 3 application hosting controls and documented the Railway operator runbook; public deployment evidence remains pending. |
 | 2026-09-06 | Replaced the historical full-product plan with the implemented backend baseline and four remaining production milestones. |

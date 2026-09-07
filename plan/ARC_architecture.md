@@ -202,13 +202,19 @@ Implemented controls:
 - no payload, prompt, response, token, or credential logging;
 - fail-closed error mapping.
 
-Controls still required before untrusted public traffic:
+Phase 3 application controls now implemented before untrusted public traffic:
 
-- protect session creation, `/metrics`, and API documentation or disable the latter two;
-- add platform-level continuous monitoring and alerting;
-- define credential rotation and incident response;
-- complete mobile/browser origin and TLS validation;
-- run an abuse/load test against the hosted endpoint.
+- production disables `/docs`, `/redoc`, and `/openapi.json` by default; any operator override is
+  bearer-protected with a dedicated credential;
+- `/metrics` requires its own operator bearer credential in production;
+- `TrustedHostMiddleware` enforces an explicit production host allow-list;
+- global session creation is bounded and rate-limit outcomes are counted;
+- startup logs expose modes and numeric limits without secrets;
+- no forwarded client-IP header is trusted by the application.
+
+Railway-side controls still require operator evidence: continuous monitoring/alerting, credential
+rotation and incident response, browser-origin/TLS validation, a public abuse/load test, and
+restart/rollback drills.
 
 # 10. OBSERVABILITY
 
@@ -225,9 +231,9 @@ a durable metrics backend.
 
 Verified locally as of 2026-09-06:
 
-- 158 tests pass;
+- 165 tests pass;
 - Ruff passes;
-- strict mypy passes for 37 source/script files;
+- strict mypy passes for 38 source/script files;
 - `pip check` passes;
 - locked editable and normal wheel installs succeed;
 - the payload-redacted smoke client passes end to end against a local deterministic server;
@@ -247,6 +253,7 @@ Not yet verified:
 
 | Date | Change |
 | :--- | :----- |
+| 2026-09-07 | Added production diagnostics lockdown, operator authentication, host allow-listing, global session-creation limiting, and startup configuration summary. |
 | 2026-09-07 | Added direct Anthropic mode and documented Phase 2 packaging/PORT/release evidence workflow. |
 | 2026-09-06 | Added Phase 1 smoke tooling status and refreshed the local verification baseline. |
 | 2026-09-06 | Rewritten from the implemented GlossLattice-only backend; module map and production gaps corrected. |

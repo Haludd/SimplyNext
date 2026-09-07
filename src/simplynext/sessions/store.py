@@ -154,6 +154,7 @@ class EphemeralSessionStore:
         max_sessions: int = 128,
         websocket_path_template: str = "/v1/sessions/{session_id}/lattices",
         max_lattice_message_bytes: int = MAX_GLOSS_LATTICE_BYTES,
+        max_session_creations_per_minute_global: int = 60,
         max_lattices_per_session: int = 100,
         max_lattices_per_minute: int = 30,
         max_lattices_per_minute_global: int = 120,
@@ -165,6 +166,8 @@ class EphemeralSessionStore:
             raise ValueError("ttl_seconds must be positive")
         if max_sessions < 1:
             raise ValueError("max_sessions must be positive")
+        if max_session_creations_per_minute_global < 1:
+            raise ValueError("max_session_creations_per_minute_global must be positive")
         if "{session_id}" not in websocket_path_template:
             raise ValueError("websocket_path_template must contain {session_id}")
         if max_lattice_message_bytes != MAX_GLOSS_LATTICE_BYTES:
@@ -178,6 +181,7 @@ class EphemeralSessionStore:
 
         self._ttl = timedelta(seconds=ttl_seconds)
         self._max_sessions = max_sessions
+        self._max_session_creations_per_minute_global = max_session_creations_per_minute_global
         self._websocket_path_template = websocket_path_template
         self._max_lattices_per_session = max_lattices_per_session
         self._max_lattices_per_minute = max_lattices_per_minute
@@ -186,6 +190,7 @@ class EphemeralSessionStore:
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
         self._id_factory = id_factory or uuid4
         self._records: dict[UUID, _SessionRecord] = {}
+        self._global_session_created_at: deque[datetime] = deque()
         self._global_lattice_received_at: deque[datetime] = deque()
         self._lock = RLock()
 
@@ -219,11 +224,18 @@ class EphemeralSessionStore:
         )
         with self._lock:
             self._purge_expired_locked(now)
+            self._prune_window(self._global_session_created_at, now)
+            if (
+                len(self._global_session_created_at)
+                >= self._max_session_creations_per_minute_global
+            ):
+                raise TooManySessions("global session creation rate limit exceeded")
             if len(self._records) >= self._max_sessions:
                 raise TooManySessions("maximum number of active sessions reached")
             if session_id in self._records:
                 raise ValueError("id_factory returned an existing session_id")
             self._records[session_id] = record
+            self._global_session_created_at.append(now)
 
         return SessionCreateResponse(
             session_id=session_id,
@@ -466,6 +478,12 @@ class EphemeralSessionStore:
             self._erase_record(self._records[session_id])
             del self._records[session_id]
         return len(expired_ids)
+
+    @staticmethod
+    def _prune_window(events: deque[datetime], now: datetime) -> None:
+        minute_ago = now - timedelta(minutes=1)
+        while events and events[0] <= minute_ago:
+            events.popleft()
 
     @staticmethod
     def _erase_record(record: _SessionRecord) -> None:

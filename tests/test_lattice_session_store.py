@@ -26,6 +26,7 @@ from simplynext.sessions import (
     LatticeRateLimited,
     LatticeReservationDisposition,
     NonMonotonicSequence,
+    TooManySessions,
 )
 
 SESSION_ID = UUID("12345678-1234-5678-1234-567812345678")
@@ -170,3 +171,21 @@ async def test_quota_rate_and_active_execution_lifecycle_guards() -> None:
     with pytest.raises(LatticeRateLimited):
         await rate_store.reserve_lattice(second, TOKEN, _digest(second))
 
+
+@pytest.mark.asyncio
+async def test_global_session_creation_rate_is_bounded() -> None:
+    clock = FakeClock(datetime(2026, 9, 6, tzinfo=UTC))
+    # ``create`` allocates the candidate ID before checking the global limit,
+    # so the rejected attempt consumes an ID from this deterministic factory.
+    next_id = iter((UUID(int=101), UUID(int=102), UUID(int=103)))
+    store = EphemeralSessionStore(
+        max_session_creations_per_minute_global=1,
+        clock=clock,
+        token_factory=lambda: TOKEN,
+        id_factory=lambda: next(next_id),
+    )
+    await store.create(_request())
+    with pytest.raises(TooManySessions, match="creation rate"):
+        await store.create(_request())
+    clock.advance(seconds=60)
+    await store.create(_request())

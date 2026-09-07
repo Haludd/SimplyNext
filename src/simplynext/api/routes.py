@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from simplynext import __version__
+from simplynext.api.operator import require_operator_token
 from simplynext.contracts import (
     SessionCreateRequest,
     SessionCreateResponse,
@@ -33,11 +34,12 @@ def services_from_request(request: Request) -> RuntimeServices:
 
 
 @health_router.get("/", include_in_schema=False)
-async def root() -> dict[str, str]:
+async def root(request: Request) -> dict[str, str]:
+    settings = services_from_request(request).settings
     return {
         "service": "SimplyNext Backend",
         "version": __version__,
-        "docs": "/docs",
+        "docs": "/docs" if settings.environment != "production" else "disabled",
     }
 
 
@@ -67,13 +69,28 @@ async def readiness(request: Request, response: Response) -> dict[str, object]:
         },
         "assembler": {
             "ready": assembler_ready,
-            "mode": "bedrock" if services.settings.bedrock_enabled else "deterministic",
+            "mode": (
+                "bedrock"
+                if services.settings.bedrock_enabled
+                else "anthropic"
+                if services.settings.anthropic_enabled
+                else "deterministic"
+            ),
         },
     }
 
 
 @health_router.get("/metrics")
-async def metrics(request: Request) -> dict[str, object]:
+async def metrics(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    settings = services_from_request(request).settings
+    require_operator_token(
+        settings.operator_metrics_token,
+        authorization,
+        allow_unconfigured=settings.environment != "production",
+    )
     return services_from_request(request).metrics.snapshot()
 
 
@@ -103,6 +120,7 @@ async def create_session(
     try:
         session = await services.sessions.create(payload)
     except TooManySessions as exc:
+        services.metrics.increment("session_creation_rate_limited")
         raise _http_session_error(exc) from exc
     response.headers["Cache-Control"] = "no-store"
     services.metrics.increment("sessions_created")

@@ -52,6 +52,14 @@ def test_text_request_is_translated_and_response_preserves_internal_shape() -> N
     assert request["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "Return JSON."}]}
     ]
+    assert request["output_config"]["format"]["type"] == "json_schema"
+    assert request["output_config"]["format"]["schema"]["required"] == [
+        "schema_version",
+        "utterance_id",
+        "language",
+        "candidate_text",
+        "parts",
+    ]
     assert response["output"] == {
         "message": {"role": "assistant", "content": [{"text": '{"ok":true}'}]}
     }

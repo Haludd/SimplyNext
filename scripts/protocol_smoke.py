@@ -353,7 +353,14 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
                 timeout_seconds=args.timeout_seconds,
             )
             if not isinstance(confident, LatticeResultEvent):
-                raise SmokeFailure("high-confidence fixture did not produce lattice_result")
+                # Repair reason codes and provider source are intentionally safe diagnostics:
+                # they contain no prompt, lattice text, token, or model output. Include them so
+                # a live-provider failure is distinguishable from a fixture/policy mismatch.
+                reason_codes = ",".join(confident.reason_codes) or "none"
+                raise SmokeFailure(
+                    "high-confidence fixture did not produce lattice_result "
+                    f"(agent_source={confident.agent_source}, reason_codes={reason_codes})"
+                )
             if confident.agent_source != args.expect_agent_source:
                 raise SmokeFailure("high-confidence result used an unexpected agent source")
 

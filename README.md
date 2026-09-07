@@ -98,9 +98,11 @@ python main.py
 `SIMPLYNEXT_ANTHROPIC_MODEL_ID` defaults to the direct-API model identifier and
 `SIMPLYNEXT_ANTHROPIC_API_BASE_URL` defaults to `https://api.anthropic.com`. The cache rates must
 still be numeric when prompt caching is disabled; use the provider's documented zero/unavailable
-value only after verifying it with Anthropic. Phase 1 includes an opt-in, payload-redacted protocol
-harness at `scripts/protocol_smoke.py`; either hosted mode requires `--confirm-live-spend` and
-never runs as part of the normal test suite.
+value only after verifying it with Anthropic. Anthropic assembler and critic requests use the
+provider's Structured Outputs JSON schema in addition to the repository's strict Pydantic and
+evidence-grounding validation. Phase 1 includes an opt-in, payload-redacted protocol harness at
+`scripts/protocol_smoke.py`; either hosted mode requires `--confirm-live-spend` and never runs as
+part of the normal test suite.
 
 The adapter reads only `ANTHROPIC_API_KEY` from the process environment; a
 `SIMPLYNEXT_ANTHROPIC_API_KEY` setting is intentionally not supported. Export the key in the same

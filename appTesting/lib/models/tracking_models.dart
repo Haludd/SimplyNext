@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'hand_coordinate_analysis.dart';
 import 'hand_tracking_models.dart';
 import 'face_tracking_models.dart';
+import 'state_normalisation_models.dart';
 
 class NormalizedPoint {
   const NormalizedPoint({
@@ -39,7 +40,11 @@ class LandmarkFrame {
     this.faceUpperLandmarks = const <FaceLandmark>[],
     this.faceMouthLandmarks = const <FaceLandmark>[],
     this.subjectTracking,
+    this.trackingState,
+    this.normalisation,
   });
+
+  static const Object _notProvided = Object();
 
   final DateTime timestamp;
   final NormalizedPoint? leftShoulder;
@@ -59,12 +64,81 @@ class LandmarkFrame {
   final List<FaceLandmark> faceMouthLandmarks;
   final SubjectTracking? subjectTracking;
 
+  /// Runtime-only Stage 3 result. It is deliberately excluded from [toJson]
+  /// so the raw LandmarkFrame wire schema stays unchanged.
+  final TrackingStateResult? trackingState;
+
+  /// Runtime-only Stage 4 result. It is deliberately excluded from [toJson]
+  /// so the raw LandmarkFrame wire schema stays unchanged.
+  final NormalisationResult? normalisation;
+
   bool get shouldersVisible =>
       leftShoulder?.isVisible == true && rightShoulder?.isVisible == true;
   bool get armsVisible =>
       leftWrist?.isVisible == true && rightWrist?.isVisible == true;
   bool get handsVisible =>
       hands.isNotEmpty || (leftHandVisible && rightHandVisible);
+
+  /// Returns a frame with selected values replaced while preserving all other
+  /// raw landmark values and derived pipeline state.
+  LandmarkFrame copyWith({
+    DateTime? timestamp,
+    Object? leftShoulder = _notProvided,
+    Object? rightShoulder = _notProvided,
+    Object? leftWrist = _notProvided,
+    Object? rightWrist = _notProvided,
+    bool? leftHandVisible,
+    bool? rightHandVisible,
+    double? lightingScore,
+    double? trackingConfidence,
+    List<double>? featureVector,
+    List<TrackedHand>? hands,
+    List<HandCoordinateAnalysis>? handCoordinateAnalysis,
+    Object? faceExpression = _notProvided,
+    List<PoseLandmark>? poseLandmarks,
+    List<FaceLandmark>? faceUpperLandmarks,
+    List<FaceLandmark>? faceMouthLandmarks,
+    Object? subjectTracking = _notProvided,
+    Object? trackingState = _notProvided,
+    Object? normalisation = _notProvided,
+  }) => LandmarkFrame(
+    timestamp: timestamp ?? this.timestamp,
+    leftShoulder: identical(leftShoulder, _notProvided)
+        ? this.leftShoulder
+        : leftShoulder as NormalizedPoint?,
+    rightShoulder: identical(rightShoulder, _notProvided)
+        ? this.rightShoulder
+        : rightShoulder as NormalizedPoint?,
+    leftWrist: identical(leftWrist, _notProvided)
+        ? this.leftWrist
+        : leftWrist as NormalizedPoint?,
+    rightWrist: identical(rightWrist, _notProvided)
+        ? this.rightWrist
+        : rightWrist as NormalizedPoint?,
+    leftHandVisible: leftHandVisible ?? this.leftHandVisible,
+    rightHandVisible: rightHandVisible ?? this.rightHandVisible,
+    lightingScore: lightingScore ?? this.lightingScore,
+    trackingConfidence: trackingConfidence ?? this.trackingConfidence,
+    featureVector: featureVector ?? this.featureVector,
+    hands: hands ?? this.hands,
+    handCoordinateAnalysis:
+        handCoordinateAnalysis ?? this.handCoordinateAnalysis,
+    faceExpression: identical(faceExpression, _notProvided)
+        ? this.faceExpression
+        : faceExpression as FaceExpressionFeatures?,
+    poseLandmarks: poseLandmarks ?? this.poseLandmarks,
+    faceUpperLandmarks: faceUpperLandmarks ?? this.faceUpperLandmarks,
+    faceMouthLandmarks: faceMouthLandmarks ?? this.faceMouthLandmarks,
+    subjectTracking: identical(subjectTracking, _notProvided)
+        ? this.subjectTracking
+        : subjectTracking as SubjectTracking?,
+    trackingState: identical(trackingState, _notProvided)
+        ? this.trackingState
+        : trackingState as TrackingStateResult?,
+    normalisation: identical(normalisation, _notProvided)
+        ? this.normalisation
+        : normalisation as NormalisationResult?,
+  );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'timestamp': timestamp.toUtc().toIso8601String(),

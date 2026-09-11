@@ -11,13 +11,15 @@ import '../models/tracking_models.dart';
 /// sustained pause before it finishes anything.
 class UtteranceStillnessDetector {
   UtteranceStillnessDetector({
-    this.stillnessThreshold = 0.006,
-    this.activityThreshold = 0.015,
-    this.pauseDuration = const Duration(milliseconds: 1000),
-    this.minimumCaptureDuration = const Duration(milliseconds: 350),
+    this.stillnessThreshold = 0.014,
+    this.activityThreshold = 0.022,
+    this.pauseDuration = const Duration(milliseconds: 650),
+    this.minimumCaptureDuration = const Duration(milliseconds: 450),
   });
 
   /// Maximum average x/y landmark displacement considered still per frame.
+  /// This admits ordinary webcam landmark jitter without treating it as an
+  /// endless new sign motion.
   final double stillnessThreshold;
 
   /// Average displacement that proves the signer has started moving.

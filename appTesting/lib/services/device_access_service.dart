@@ -66,6 +66,24 @@ class DeviceAccessService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Releases the active camera stream and marks the camera as unavailable.
+  /// On web, the MediaPipe bridge owns the actual stream; the controller stops
+  /// tracking before calling this method.
+  Future<void> disableCamera() async {
+    if (kIsWeb) {
+      _webCameraReady = false;
+      cameraStatus = 'Camera off';
+      notifyListeners();
+      return;
+    }
+
+    final activeController = cameraController;
+    cameraController = null;
+    await activeController?.dispose();
+    cameraStatus = 'Not enabled';
+    notifyListeners();
+  }
+
   void markWebCameraUnavailable([String status = 'Camera unavailable']) {
     if (!kIsWeb) return;
     _webCameraReady = false;

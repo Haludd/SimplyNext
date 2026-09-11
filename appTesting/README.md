@@ -6,6 +6,7 @@ SignBridge is an uncertainty-aware sign-language communication prototype. The Fl
 2. Live Translator shows the camera, landmark overlay, captions, tracking confidence, and view modes (Raw / Mesh / Clean).
 3. Capture starts automatically when a usable hand is detected; the signer does not press a Start button.
 4. A sustained pause, or hands leaving the frame after movement, automatically ends the utterance and prepares it for the next processing stage.
+5. The video overlay includes a camera-off button. Turning it off stops landmark tracking and releases the camera; the **Open camera** action starts it again.
 
 The older calibration, My signs, and Settings widgets remain in the source for
 future work, but they are not part of the current single-page UI.
@@ -22,6 +23,24 @@ flutter run
 The project includes generated Android, iOS, and web platform scaffolding. Verify the setup with `flutter analyze`, `flutter test`, or `flutter run`.
 
 The generated platform files already include the permission descriptions required by the `camera` and `permission_handler` packages: `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` in iOS `Info.plist`, plus camera and record-audio permissions in Android `AndroidManifest.xml`.
+
+## Speech features
+
+The current `frontend_track` UI now includes the speech features from the
+`frontend_speechtotext` branch without replacing the tracking screen:
+
+- `SpeechToTextService` manages microphone permission, partial/final
+  transcripts, locale selection, errors, and safe start/stop behaviour.
+- The **Spoken captions** card in the live page lets a user start, stop, and
+  clear speech recognition. Speech audio is handled by the device speech
+  service and is not sent by this capture-only frontend.
+- `TextToSpeechService` reads the latest `tts_text` (or caption) returned by
+  the classifier. Use the speaker button in the video overlay after a result
+  is available.
+- The frontend keeps completed `LandmarkFrame` data in the Stage 3/4 pipeline.
+  The full-integration transport sends only the final compact GlossLattice
+  result after a Stage 5/6 classifier is connected; raw camera frames and
+  landmarks never cross that boundary.
 
 ## Hand tracking and sign analysis
 
@@ -66,12 +85,20 @@ The live pipeline is:
 ```text
 Chrome camera
   → MediaPipe 21-point hand tracker
-  → body/hand normalizer + 3D-style skeleton
-  → LandmarkFrame JSON
-  → local utterance buffer: List<LandmarkFrame>
-  → WebSocket utterance chunks
-  → next processing stage
+  → stable subject/hand tracking state
+  → body-relative normalisation
+  → appTesting UI + LandmarkFrame JSON
+  → server-owned LandmarkBatch v1 adapter
+  → authenticated WebSocket transport
+  → Railway normalisation → segmentation → classification
+  → backend result / repair response
 ```
+
+The `frontend_segment_classify` commit is not a trained Flutter classifier. It
+is a Python synthetic test kit that exercises a heuristic `SignAnalyzer` with
+generated hand/pose positions, and its README says it does not change the
+Flutter app or provide a trained recognizer. It is useful as a protocol
+experiment, but the production sign model remains on the server branch.
 
 ### Capture boundaries and handoff
 
@@ -86,17 +113,19 @@ pause detector:
 3. After movement has been observed, a visible, locked subject whose hands
    remain still for about one second is automatically finished. If hands leave
    the frame, that absence also starts the same pause timer.
-4. The frontend stops storing frames and exposes the completed
-   `List<LandmarkFrame>` as `AppController.lastUtteranceFrames`.
+4. In camera-only mode, the frontend stops storing frames and exposes the
+   completed `List<LandmarkFrame>` as `AppController.lastUtteranceFrames`.
+   In server-stream mode, the Railway segmenter owns the utterance boundary;
+   the frontend continuously sends `LandmarkBatch` micro-batches instead.
 
 Frames received before a hand appears or after an utterance ends are still
-available for the live preview, but are not included in that utterance. The next stage should
-consume `lastUtteranceFrames` (or the list returned by
+available for the live preview, but are not included in that utterance. In
+camera-only mode, the next stage should consume `lastUtteranceFrames` (or the list returned by
 `TrackingService.finishUtterance()`) and then use `LandmarkFrame.toJson()` for
 serialization. `AppController.lastUtteranceJson` is also available as a
-convenience view. When WebSocket mode is enabled, the same completed list is
-sent as bounded JSON chunks; the camera does not send individual HTTP frame
-requests.
+convenience view. Server-stream mode serializes the live frames into the fixed
+backend contract before sending them; it never sends the rich UI-only
+`LandmarkFrame.toJson()` shape.
 
 The schema deliberately stores landmarks, not a guessed translation:
 
@@ -111,129 +140,101 @@ tracking information. A word or sentence is therefore a time-ordered list of
 these frames. Velocity, acceleration, classifier labels, and camera images
 are not part of this frontend handoff schema.
 
-## Sending tracking data over WebSocket
+## Server-owned segmentation and classification
 
-The active frontend transport is `SignTrackingWebSocketClient`. It connects to:
+The production path for the backend branch is implemented by these files:
 
-```text
-ws://127.0.0.1:8001/v1/tracking
-```
+- `lib/contracts/landmark_stream.dart` defines the session, camera, and
+  `landmark_batch` JSON schemas.
+- `lib/services/landmark_batch_adapter.dart` converts each rich local
+  `LandmarkFrame` into the fixed four-world layout: 21 left-hand points, 21
+  right-hand points when present, 9 curated pose points, and 16 curated face
+  points. Each point is `[x, y, z, confidence]`.
+- `lib/services/landmark_stream_session_client.dart` negotiates the ephemeral
+  session with `POST /v1/sessions`.
+- `lib/services/landmark_stream_websocket_client.dart` sends ordered batches,
+  waits for matching `ack` events, and forwards `activity`,
+  `utterance_result`, `repair_required`, and `error` events.
+- `lib/services/server_landmark_stream_integration.dart` subscribes to the
+  continuous MediaPipe `LandmarkFrame` stream and sends bounded batches. The
+  data-object button in the live video overlay opens the last acknowledged
+  batch as pretty-printed JSON for inspection.
+- `AppController.connectToBackend()` switches utterance ownership to the
+  server and applies backend captions, confidence, gloss trace, latency, and
+  TTS text to the existing UI.
 
-Run the frontend with WebSocket mode enabled:
+When this path is enabled, the frontend does not run its local heuristic
+analyzer or decide when an utterance ends. The backend's hysteresis segmenter
+does that from the incoming frames and emits a result after the segment is
+committed.
+
+The connection is opt-in so the camera page still works offline. Enable it
+with the required environment values:
 
 ```bash
-flutter run -d chrome \
-  --dart-define=SIGNBRIDGE_ENABLE_WEBSOCKET=true \
-  --dart-define=SIGNBRIDGE_WEBSOCKET_URL=ws://127.0.0.1:8001/v1/tracking
+flutter run -d ios \
+  --dart-define=SIGNBRIDGE_STREAM_ENABLED=true \
+  --dart-define=BPP_HTTPS_BASE_URL=https://your-server \
+  --dart-define=BPP_WSS_BASE_URL=wss://your-server \
+  --dart-define=BPP_LANGUAGE=sgsl \
+  --dart-define=BPP_CLIENT_PLATFORM=ios \
+  --dart-define=BPP_CLIENT_VERSION=1.0.0 \
+  --dart-define=BPP_DETECTOR_NAME=mediapipe-holistic \
+  --dart-define=BPP_DETECTOR_VERSION=0.10.35 \
+  --dart-define=BPP_DETECTOR_DELEGATE=unknown
 ```
 
-When the automatic pause detector finishes an utterance, the client sends this sequence:
+For a native client use `android` or `ios` as the platform. The current
+Railway contract requires `Authorization: Bearer <stream_token>` during the
+WebSocket upgrade. Native Flutter can send that header; a browser WebSocket
+cannot, so Chrome can still test the camera locally but needs the backend team
+to add a secure browser ticket or cookie-based handshake before live WSS
+testing can work.
 
-```text
-ready ← server
-start →
-utterance_start →
-chunk → (one or more bounded groups of LandmarkFrame JSON)
-utterance_end →
-utterance_ended ← server
+## Full integration handoff
+
+Your current appTesting UI remains unchanged, but the full integration code is
+now present in the same project:
+
+- `lib/services/state_normalised_tracking_service.dart` adds Stage 3/4 state
+  to every frame received by the UI.
+- `lib/integration/segmentation_classification_port.dart` is the seam for the
+  next teammate's Stage 5/6 classifier.
+- `lib/services/frontend_pipeline_coordinator.dart` connects processed frames
+  to completed classifier output.
+- `lib/adapters/gloss_lattice_builder.dart` creates the exact backend payload.
+- `lib/services/gloss_lattice_frontend_session.dart` and the related session
+  classes negotiate the backend session and send GlossLattice over WebSocket.
+
+The older GlossLattice transport coordinator is tested independently and is
+still available for a backend that expects finalized classifier output from a
+client-side Stage 5/6 service:
+
+```dart
+final pipeline = FrontendPipelineCoordinator(
+  tracking: stateNormalisedTracking,
+  recognition: teammateClassifier,
+  submissions: negotiatedSession.submissions,
+);
+await pipeline.start();
 ```
 
-The current tracking server acknowledges each chunk and reports the total
-number of frames received. If it also sends an `utterance_result` message, the
-frontend parses that JSON into `SignAnalysisResult` and updates the caption.
-Until the classifier is connected to the socket, the frontend keeps showing
-its local readout after the server acknowledgement. A socket failure never
-stops the camera; it shows the local readout and a WebSocket-unavailable
-status instead.
+When an utterance ends, the completed frames are also available locally:
 
-Automatic utterance completion creates the payload below from the completed
-LandmarkFrame list and splits its `frames` list into chunks:
-
-```json
-{
-  "session_id": "session-123",
-  "sequence_id": "sequence-008",
-  "language": "ASL",
-  "started_at": "2026-09-05T08:14:02Z",
-  "ended_at": "2026-09-05T08:14:03Z",
-  "frame_count": 36,
-  "lexicon_version": "2026-09-seed-2",
-  "frames": [
-    {
-      "timestamp": "2026-09-05T08:14:02.000Z",
-      "tracking_confidence": 0.95,
-      "hands": [
-        {
-          "handedness": "right",
-          "confidence": 0.98,
-          "landmarks": [
-            {"x": 0.48, "y": 0.52, "z": -0.02, "world_x": 0.01, "world_y": -0.02, "world_z": 0.00}
-          ]
-        }
-      ],
-      "hand_coordinate_analysis": [
-        {
-          "handedness": "right",
-          "coordinate_space": "world_wrist_centered",
-          "joint_count": 21,
-          "centroid": {"x": 0.02, "y": -0.04, "z": 0.01},
-          "bounds": {
-            "min_x": -0.08,
-            "max_x": 0.11,
-            "min_y": -0.18,
-            "max_y": 0.03,
-            "min_z": -0.04,
-            "max_z": 0.02
-          },
-          "depth_range": 0.06,
-          "span": 0.29
-        }
-      ]
-    }
-  ]
-}
+```dart
+final frames = controller.lastUtteranceFrames;
+final jsonFrames = controller.lastUtteranceJson;
 ```
 
-The `hands[].landmarks` array remains the source of truth: it contains all 21
-landmarks and their x/y/z values. `hand_coordinate_analysis` is a derived,
-wrist-centred summary for a backend model. `world_wrist_centered` is used when
-MediaPipe provides world landmarks; otherwise the app labels the summary
-`image_normalized_wrist_centered`. This distinction prevents the backend from
-treating webcam-relative depth as absolute physical measurements.
+Each item in `frames` is one processed `LandmarkFrame`. The frame JSON contains
+the timestamp, tracking confidence, left/right hand worlds, pose points,
+curated face points, handedness/finger quality, and subject tracking
+information. `SignSequencePayload.toJson()` remains a local/debug wrapper;
+production integration uses the GlossLattice adapter instead of the removed
+legacy HTTP `hypotheses` + `features` path.
 
-The same frame can include `face_expression`. Chrome can still use the
-optional local face-expression snapshot endpoint for seven HSEmotion/DeepFace
-scores—angry, disgust, fear, happy, sad, surprise, and neutral. That optional
-face signal is separate from the LandmarkFrame WebSocket handoff; the
-coordinate utterance itself is not sent through HTTPS.
-
-The requested [OpenCV + DeepFace repository](https://github.com/manish-9245/Facial-Emotion-Recognition-using-OpenCV-and-Deepface)
-is not a drop-in Flutter dependency: its `emotion.py` owns an OpenCV desktop
-webcam loop. The backend adapter keeps its face-cascade → RGB face crop →
-`DeepFace.analyze(actions=['emotion'])` logic, but returns JSON for the Flutter
-browser instead of opening an OpenCV window. It should still be treated as a
-generic emotion signal, not as a declaration of a person's intent or a
-complete sign-language translation.
-
-The request path is:
-
-```text
-camera frame
-  → MediaPipe hand + pose landmarkers
-  → optional JPEG snapshot → /v1/emotions/analyze → HSEmotion (DeepFace fallback)
-  → HandTrackingFrame
-  → HandPoseNormalizer
-  → LandmarkFrame.toJson()
-  → SignSequencePayload.toJson()
-  → WebSocket `chunk` messages
-```
-
-DeepFace's output is a generic facial-expression estimate, not a declaration
-of a person's emotion or intent. A sign-language model should use it as a
-non-manual feature alongside hand and body motion, with consent and an
-appropriate model for the selected language.
-
-The backend should validate the schema, store the sequence and model version, resample or normalize the frames, run a language-specific temporal classifier, and return a response such as:
+The backend result contract is kept in `SignAnalysisResult.fromJson()` so the
+next stage can pass a response such as:
 
 ```json
 {
@@ -250,23 +251,78 @@ The backend should validate the schema, store the sequence and model version, re
 }
 ```
 
-For uncertain output, return `status: "needs_review"` or `status: "unknown"` with top candidates rather than inventing a sentence. The Flutter controller falls back to its local feature result when WebSocket mode is not configured or is unavailable.
+The live overlay is ready to display the returned status, caption, confidence,
+gloss trace, model version, and latency. `TextToSpeechService` uses
+`tts_text` (or `caption` as a fallback) when the next processing stage
+provides a confident completed result.
 
-When WebSocket mode is not enabled, automatic utterance completion uses an
-offline simulation. It builds the same `SignSequencePayload`, waits briefly to
-mimic a service call, runs the local feature readout, and returns a clearly
-labelled `simulated` result. No camera frame or coordinate is sent over the
-network.
+The optional facial-expression snapshot still uses the local emotion endpoint
+described in the hand-tracking section only when that separate face service is
+configured. Landmark coordinates remain local to this frontend.
 
-The older `SignSequenceApiClient` remains in `services/api_client.dart` only
-for compatibility with existing tests and experiments; the live
-`AppController` no longer uses it.
+The requested [OpenCV + DeepFace repository](https://github.com/manish-9245/Facial-Emotion-Recognition-using-OpenCV-and-Deepface)
+is not a drop-in Flutter dependency. The browser tracker keeps the face
+landmarks local; the legacy face-image upload switch and old HTTP sign-sequence
+client were removed to preserve the full-integration privacy boundary.
 
-For browser testing, use `ws://` on localhost or `wss://` for a secure deployed
-socket, allow the Flutter dev origin in the WebSocket server, and never upload
-raw video unless the user has explicitly opted into it. DeepFace requires a
-still image, so the optional local service receives compressed snapshots; it
-does not store them. Store landmarks and the consent/session ID instead of
-camera frames by default.
+`AlignmentEvaluator` remains independent of the UI. It receives normalized
+shoulder points, computes midpoint, width, horizontal error, and vertical error,
+and returns feedback such as “Move back” or “Position looks good ✓”.
 
-`AlignmentEvaluator` remains independent of the UI. It receives normalized shoulder points, computes midpoint, width, horizontal error, and vertical error, and returns feedback such as “Move back” or “Position looks good ✓”.
+## Legacy client-owned GlossLattice path (BPP Section 6 Phase 4)
+
+The native client integration is prepared in
+`lib/services/bpp_client_integration.dart`. It negotiates `POST /v1/sessions`,
+waits for the versioned `activity: idle` handshake, opens the authenticated WSS
+path returned by the server, sends only validated finalized `GlossLattice` JSON,
+supports exact pending-lattice retry, ping, and clean session end, and exposes
+backend result/repair events to the existing UI through
+`AppController.acceptBackendEvent()`.
+
+This is a separate contract from the server-owned landmark stream above. It is
+not enabled by default and is only appropriate when a teammate supplies a real
+client-side `SegmentationClassificationPort` that emits finalized
+`GlossLattice` results. The server-owned path should be used for the current
+`origin/backend` implementation.
+
+When that classifier is available, the composition point is:
+
+```dart
+final config = BppClientConfig.fromEnvironment()!;
+final integration = await BppClientIntegration.connect(
+  config: config,
+  tracking: stateNormalisedTracking,
+  recognition: teammateClassifier,
+  onEvent: controller.acceptBackendEvent,
+);
+await integration.start();
+```
+
+The classifier must emit `ClassifiedUtteranceOutput` only after its temporal
+window is finalized. The app then builds and sends one `GlossLattice`; it does
+not send `LandmarkFrame` JSON, camera images, raw scores, or guessed captions.
+
+Supply these non-secret values with `--dart-define`; do not put tokens or
+credentials in source:
+
+```text
+BPP_HTTPS_BASE_URL
+BPP_WSS_BASE_URL
+BPP_LANGUAGE                 # asl or sgsl
+BPP_CLASSIFIER_ID
+BPP_CLASSIFIER_VERSION
+BPP_CALIBRATION_VERSION
+BPP_VOCABULARY_VERSION
+BPP_CLIENT_PLATFORM          # android, ios, or test
+BPP_CLIENT_VERSION
+BPP_DETECTOR_NAME
+BPP_DETECTOR_VERSION
+BPP_DETECTOR_DELEGATE         # cpu, gpu, nnapi, core_ml, or unknown
+```
+
+Optional controls are `BPP_DEVICE_MODEL`, `BPP_SESSION_TIMEOUT_SECONDS`,
+`BPP_CONNECT_TIMEOUT_SECONDS`, `BPP_RESPONSE_TIMEOUT_SECONDS`, and
+`BPP_MAX_RETRIES`. The bearer `stream_token` is held in memory only. Browser
+Flutter remains blocked until the backend provides a secure ticket/cookie
+handshake because browser WebSockets cannot set the required Authorization
+header.

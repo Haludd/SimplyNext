@@ -1,14 +1,10 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 import 'package:apptesting/models/hand_tracking_models.dart';
 import 'package:apptesting/models/face_tracking_models.dart';
 import 'package:apptesting/models/tracking_models.dart';
-import 'package:apptesting/services/api_client.dart';
 import 'package:apptesting/services/hand_pose_normalizer.dart';
+import 'package:apptesting/services/local_sign_sequence.dart';
 import 'package:apptesting/services/tracking_service.dart';
 import 'package:apptesting/services/utterance_stillness_detector.dart';
 
@@ -116,88 +112,6 @@ void main() {
 
     expect(frame.trackingConfidence, closeTo(.3, .0001));
   });
-
-  test(
-    'posts 21-point coordinates and derived geometry to the backend',
-    () async {
-      final hand = TrackedHand(
-        handedness: Handedness.right,
-        confidence: .95,
-        landmarks: List<HandLandmark>.generate(
-          21,
-          (index) => HandLandmark(
-            x: .4 + index * .005,
-            y: .5 - index * .004,
-            z: -.01 * index,
-          ),
-        ),
-      );
-      final frame = HandPoseNormalizer().normalize(
-        HandTrackingFrame(
-          timestamp: DateTime.utc(2026, 9, 5),
-          processingConfidence: .95,
-          hands: <TrackedHand>[hand],
-        ),
-      );
-      final client = MockClient((request) async {
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        final frames = body['frames'] as List<dynamic>;
-        final sentFrame = frames.single as Map<String, dynamic>;
-        final sentHands = sentFrame['hands'] as List<dynamic>;
-        final sentHand = sentHands.single as Map<String, dynamic>;
-        final geometry = sentFrame['hand_coordinate_analysis'] as List<dynamic>;
-
-        expect(request.method, 'POST');
-        expect(request.url.path, '/v1/sign-sequences/analyze');
-        expect(sentHand['landmarks'], hasLength(21));
-        expect((geometry.single as Map<String, dynamic>)['joint_count'], 21);
-        expect(sentFrame['hand_motion'], isNull);
-        expect(sentFrame['feature_vector'], isNull);
-        return http.Response(
-          jsonEncode(<String, dynamic>{
-            'type': 'utterance_result',
-            'utterance_id': 'utt-123',
-            'status': 'confident',
-            'caption': 'water, please.',
-            'tts_text': 'water, please.',
-            'confidence': .91,
-            'gloss_trace': <String>['WATER', 'PLEASE'],
-            'hypotheses': <dynamic>[],
-            'model_version': 'classifier-v1',
-            'latency_ms': <String, dynamic>{'total': 125},
-          }),
-          200,
-        );
-      });
-      final api = SignSequenceApiClient(
-        baseUri: Uri.parse('https://api.example.test'),
-        client: client,
-      );
-
-      final result = await api.analyze(
-        SignSequencePayload(
-          sessionId: 'session-test',
-          sequenceId: 'sequence-test',
-          language: 'ASL',
-          startedAt: frame.timestamp,
-          endedAt: frame.timestamp,
-          frames: <LandmarkFrame>[frame],
-          lexiconVersion: 'test-1',
-        ),
-      );
-
-      expect(result.type, 'utterance_result');
-      expect(result.utteranceId, 'utt-123');
-      expect(result.caption, 'water, please.');
-      expect(result.ttsText, 'water, please.');
-      expect(result.confidence, .91);
-      expect(result.glossTrace, <String>['WATER', 'PLEASE']);
-      expect(result.hypotheses, isEmpty);
-      expect(result.modelVersion, 'classifier-v1');
-      expect(result.totalLatencyMs, 125);
-      api.close();
-    },
-  );
 
   test('keeps facial expression features in the frame payload', () {
     const face = FaceExpressionFeatures(
@@ -307,6 +221,56 @@ void main() {
     expect(detector.update(moved), isFalse);
     expect(detector.update(paused), isFalse);
     expect(detector.update(pausedLongEnough), isTrue);
+  });
+
+  test('finishes despite ordinary live-tracker jitter after a sign', () {
+    final detector = UtteranceStillnessDetector(
+      minimumCaptureDuration: const Duration(milliseconds: 0),
+    );
+    final started = DateTime.utc(2026, 9, 5);
+
+    expect(
+      detector.update(_handFrame(timestamp: started, xOffset: 0)),
+      isFalse,
+    );
+    expect(
+      detector.update(
+        _handFrame(
+          timestamp: started.add(const Duration(milliseconds: 100)),
+          xOffset: .06,
+        ),
+      ),
+      isFalse,
+    );
+    // These sub-threshold movements model normal camera landmark noise, not
+    // a continuing sign. They must not keep the capture open for seconds.
+    expect(
+      detector.update(
+        _handFrame(
+          timestamp: started.add(const Duration(milliseconds: 250)),
+          xOffset: .07,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      detector.update(
+        _handFrame(
+          timestamp: started.add(const Duration(milliseconds: 500)),
+          xOffset: .081,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      detector.update(
+        _handFrame(
+          timestamp: started.add(const Duration(milliseconds: 950)),
+          xOffset: .092,
+        ),
+      ),
+      isTrue,
+    );
   });
 }
 

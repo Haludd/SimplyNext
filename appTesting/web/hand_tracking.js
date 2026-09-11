@@ -1,18 +1,16 @@
 import {
-  FilesetResolver,
-  FaceLandmarker,
-  HandLandmarker,
-  PoseLandmarker,
-} from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs';
+  beginAslCapture,
+  finishAslCapture,
+  ingestAslFrame,
+  prepareAslRecognizer,
+  resetAslCapture,
+} from './asl_recognizer.js?v=20250911-model-aligned-adaptation';
 
-const WASM_ROOT =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
-const MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-const POSE_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-const FACE_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+// The bundled ASL model was trained with MediaPipe Holistic, not independent
+// Hand/Pose/Face Task models. The legacy browser Holistic solution emits the
+// identical 468-face + 33-pose + left/right-21-hand topology in one pass.
+const HOLISTIC_CDN_BASE =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629';
 
 // These are the useful upper-body points from MediaPipe Pose. The model still
 // sees the complete pose internally; only this small, stable subset crosses
@@ -75,34 +73,25 @@ const FACE_MOUTH_LANDMARKS = [
   [95, 'lower_lip_left'],
   [324, 'lower_lip_right'],
 ];
-const queryBackendEnabled = new URLSearchParams(globalThis.location.search).get(
-  'backend',
-) === '1';
-const BACKEND_ENABLED =
-  globalThis.signBridgeEnableBackend === true || queryBackendEnabled;
-const configuredDeepFaceUrl = globalThis.signBridgeDeepFaceUrl;
-const queryDeepFaceUrl = new URLSearchParams(globalThis.location.search).get(
-  'deepface_api',
-);
-const DEEPFACE_API_URL =
-  BACKEND_ENABLED
-    ? configuredDeepFaceUrl ||
-      queryDeepFaceUrl ||
-      'http://127.0.0.1:8000/v1/emotions/analyze'
-    : '';
+// The integrated architecture keeps every camera image on the device. The
+// old opt-in DeepFace upload is deliberately disabled; only the compact
+// GlossLattice may cross the frontend/backend boundary.
+const DEEPFACE_API_URL = '';
 const DEEPFACE_INTERVAL_MS = 1200;
 const queryTrackingFps = Number(
   new URLSearchParams(globalThis.location.search).get('tracking_fps'),
 );
 const TRACKING_FPS = Number.isFinite(queryTrackingFps)
-  ? Math.min(60, Math.max(30, queryTrackingFps))
+  ? Math.min(60, Math.max(18, queryTrackingFps))
   : 30;
 const DETECTION_INTERVAL_MS = 1000 / TRACKING_FPS;
-const FACE_DETECTION_INTERVAL_MS = 1000 / Math.min(20, TRACKING_FPS);
+const FLUTTER_EVENT_FPS = Math.min(18, TRACKING_FPS);
+const FLUTTER_EVENT_INTERVAL_MS = 1000 / FLUTTER_EVENT_FPS;
 const POINT_QUALITY_CANVAS_WIDTH = 192;
+const POINT_QUALITY_INTERVAL_MS = 100;
 const SUBJECT_MATCH_DISTANCE = 0.32;
 const SUBJECT_FACE_MATCH_DISTANCE = 0.25;
-const SUBJECT_ACQUIRE_STABLE_FRAMES = 12;
+const SUBJECT_ACQUIRE_STABLE_FRAMES = 8;
 // If two people are similarly close to the locked subject, do not guess.
 // Holding the last lock is safer for sign-language capture than switching.
 const SUBJECT_AMBIGUITY_MARGIN = 0.08;
@@ -125,9 +114,7 @@ const FINGER_DEFINITIONS = {
 };
 const FINGER_HISTORY_LENGTH = 8;
 
-let handLandmarker;
-let poseLandmarker;
-let faceLandmarker;
+let holistic;
 let video;
 let stream;
 let animationFrame;
@@ -144,14 +131,14 @@ let pointQualityContext;
 let pointQualityPixels;
 let pointQualityWidth = 0;
 let pointQualityHeight = 0;
+let lastPointQualityAt = 0;
 let lastProcessedAt = 0;
+let lastFlutterFrameAt = 0;
 let detectionInProgress = false;
 let trackingFrameErrorShown = false;
 let trackingLoopFrameCount = 0;
 let trackingLoopStartedAt = 0;
 let trackingLoopLastLogAt = 0;
-let lastFaceResult;
-let lastFaceProcessedAt = 0;
 let subjectTrack;
 let subjectAcquire;
 let subjectReferenceIdentity;
@@ -212,6 +199,13 @@ function clamp01(value) {
 // has less detail, so its point confidence is reduced. This is a quality
 // estimate, not a guarantee that the anatomy is visible.
 function preparePointQualityFrame() {
+  const now = performance.now();
+  if (
+    pointQualityPixels &&
+    now - lastPointQualityAt < POINT_QUALITY_INTERVAL_MS
+  ) {
+    return;
+  }
   pointQualityPixels = null;
   if (
     !video ||
@@ -249,6 +243,7 @@ function preparePointQualityFrame() {
       pointQualityWidth,
       pointQualityHeight,
     ).data;
+    lastPointQualityAt = now;
   } catch (error) {
     // Camera/CORS/browser canvas restrictions should not stop tracking. The
     // fallback below uses the detector's hand-level confidence only.
@@ -649,6 +644,22 @@ function validHandPoint(point) {
   );
 }
 
+function correctedHandedness(categoryName, source = 'tasks') {
+  const raw = categoryName?.toLowerCase();
+  // Holistic already exposes the same named left/right result streams as the
+  // Python Holistic pipeline used to train this model. Do not flip them.
+  if (source === 'holistic') {
+    return raw === 'left' || raw === 'right' ? raw : 'unknown';
+  }
+  // CSS mirrors the preview only; the video pixels delivered to MediaPipe are
+  // not mirrored. MediaPipe's hand labels assume mirrored selfie input, so
+  // swap them to restore the person-relative left/right order required by the
+  // upstream Holistic-trained ASL model.
+  if (raw === 'left') return 'right';
+  if (raw === 'right') return 'left';
+  return 'unknown';
+}
+
 function distanceBetweenPoints(first, second) {
   return Math.hypot(
     first.x - second.x,
@@ -887,7 +898,10 @@ function dispatchFrame(
   const allHands = (result.landmarks ?? []).map((landmarks, index) => {
     const category = handednesses[index]?.[0];
     const world = result.worldLandmarks?.[index] ?? [];
-    const handedness = category?.categoryName?.toLowerCase() ?? 'unknown';
+    const handedness = correctedHandedness(
+      category?.categoryName,
+      result.source,
+    );
     const confidence = category?.score ?? 0;
     return {
       handedness,
@@ -968,36 +982,9 @@ function dispatchFrame(
         missing_frames: 0,
       };
   const landmarkWorlds = {
-    left_hand: {
-      handedness: 'left',
-      confidence: leftHand?.confidence ?? 0,
-      finger_status: leftHand?.finger_status ?? {},
-      landmarks: (leftHand?.landmarks ?? []).map((landmark, index) => ({
-        index,
-        x: landmark.x,
-        y: landmark.y,
-        z: landmark.z ?? 0,
-        world_x: landmark.world_x,
-        world_y: landmark.world_y,
-        world_z: landmark.world_z,
-        visibility: landmark.visibility ?? 1,
-      })),
-    },
-    right_hand: {
-      handedness: 'right',
-      confidence: rightHand?.confidence ?? 0,
-      finger_status: rightHand?.finger_status ?? {},
-      landmarks: (rightHand?.landmarks ?? []).map((landmark, index) => ({
-        index,
-        x: landmark.x,
-        y: landmark.y,
-        z: landmark.z ?? 0,
-        world_x: landmark.world_x,
-        world_y: landmark.world_y,
-        world_z: landmark.world_z,
-        visibility: landmark.visibility ?? 1,
-      })),
-    },
+    // `hands` already carries the complete hand payload. Do not serialize it
+    // again in `landmark_worlds`: duplicate JSON parsing on every video frame
+    // was consuming time that the local model needs for tracking.
     pose: {
       landmarks: poseLandmarks,
     },
@@ -1047,139 +1034,137 @@ function dispatchFrame(
     landmark_worlds: landmarkWorlds,
     subject_tracking: subjectTracking,
   };
-  window.dispatchEvent(
-    new CustomEvent('signbridge-hand-frame', {
-      detail: JSON.stringify(frame),
-    }),
-  );
+  // The Google ASL model needs the complete 543-point landmark tensor. Keep
+  // that tensor inside this browser module only; the ordinary Flutter event
+  // below remains the intentionally curated tracking contract.
+  ingestAslFrame({
+    timestampMs,
+    faceLandmarks,
+    poseLandmarks: pose,
+    leftHand: leftHand?.landmarks ?? [],
+    rightHand: rightHand?.landmarks ?? [],
+    subjectTracking,
+  });
+  // Keep the local recognizer fed from every detector result, but cap the
+  // expensive JS-to-Dart JSON handoff. Eighteen visual frames per second is
+  // smooth in the overlay and frees time for MediaPipe and ONNX inference.
+  if (timestampMs - lastFlutterFrameAt >= FLUTTER_EVENT_INTERVAL_MS) {
+    lastFlutterFrameAt = timestampMs;
+    window.dispatchEvent(
+      new CustomEvent('signbridge-hand-frame', {
+        detail: JSON.stringify(frame),
+      }),
+    );
+  }
   void requestDeepFaceEmotion(subject, faceLandmarks);
+}
+
+function holisticResultAsTaskResults(results) {
+  const landmarks = [];
+  const handednesses = [];
+  const addHand = (points, handedness) => {
+    if (!Array.isArray(points) || points.length !== 21) return;
+    landmarks.push(points);
+    // Holistic is already person-relative and names its output slots exactly
+    // as the Python Holistic API used by the model. The score is only used by
+    // the visual-quality UI; model input stays the raw landmark coordinates.
+    handednesses.push([{categoryName: handedness, score: 0.99}]);
+  };
+  addHand(results.leftHandLandmarks, 'left');
+  addHand(results.rightHandLandmarks, 'right');
+  return {
+    source: 'holistic',
+    landmarks,
+    handednesses,
+    worldLandmarks: [],
+  };
+}
+
+function onHolisticResults(results) {
+  if (!started) return;
+  const now = performance.now();
+  const pose = Array.isArray(results?.poseLandmarks)
+    ? results.poseLandmarks
+    : [];
+  const face = Array.isArray(results?.faceLandmarks)
+    ? results.faceLandmarks
+    : [];
+  dispatchFrame(
+    holisticResultAsTaskResults(results ?? {}),
+    {landmarks: pose.length === 33 ? [pose] : []},
+    {faceLandmarks: face.length === 468 ? [face] : []},
+    Date.now(),
+  );
+  trackingLoopFrameCount += 1;
+  if (now - trackingLoopLastLogAt >= 10_000) {
+    const elapsedSeconds = (now - trackingLoopStartedAt) / 1000;
+    console.info(
+      `SignBridge Holistic loop alive: ${trackingLoopFrameCount} frames over ${elapsedSeconds.toFixed(1)}s at ~${TRACKING_FPS} FPS.`,
+    );
+    trackingLoopLastLogAt = now;
+  }
+}
+
+async function processHolisticFrame() {
+  try {
+    await holistic.send({image: video});
+  } catch (error) {
+    // A transient camera or WASM error must not end continuous capture.
+    if (!trackingFrameErrorShown) {
+      console.warn('A MediaPipe Holistic frame failed; continuing capture.', error);
+      trackingFrameErrorShown = true;
+    }
+  } finally {
+    detectionInProgress = false;
+  }
 }
 
 function processFrame() {
   if (!started) return;
   try {
     syncVisibleCameraElement();
-    if (
-      video?.readyState >= 2 &&
-      handLandmarker &&
-      poseLandmarker &&
-      !detectionInProgress
-    ) {
+    if (video?.readyState >= 2 && holistic && !detectionInProgress) {
       const now = performance.now();
       if (now - lastProcessedAt >= DETECTION_INTERVAL_MS) {
         lastProcessedAt = now;
         detectionInProgress = true;
-        try {
-          const result = handLandmarker.detectForVideo(video, now);
-          const poseResult = poseLandmarker.detectForVideo(video, now);
-          let faceResult = lastFaceResult;
-          let selectedSubject;
-          if (
-            faceLandmarker &&
-            now - lastFaceProcessedAt >= FACE_DETECTION_INTERVAL_MS
-          ) {
-            try {
-              selectedSubject = selectSubjectPose(poseResult);
-              faceResult = faceLandmarker.detectForVideo(video, now);
-              lastFaceResult = faceResult;
-              lastFaceProcessedAt = now;
-            } catch (error) {
-              // Face is supplementary. Keep hand and pose tracking alive if one
-              // face inference fails.
-              lastFaceProcessedAt = now;
-              if (!trackingFrameErrorShown) {
-                console.warn('A face frame failed; continuing hand/pose capture.', error);
-                trackingFrameErrorShown = true;
-              }
-            }
-          }
-          dispatchFrame(
-            result,
-            poseResult,
-            faceResult,
-            Date.now(),
-            selectedSubject,
-          );
-          trackingLoopFrameCount += 1;
-          if (now - trackingLoopLastLogAt >= 10_000) {
-            const elapsedSeconds =
-              (now - trackingLoopStartedAt) / 1000;
-            console.info(
-              `SignBridge tracking loop alive: ${trackingLoopFrameCount} frames over ${elapsedSeconds.toFixed(1)}s at ~${TRACKING_FPS} FPS.`,
-            );
-            trackingLoopLastLogAt = now;
-          }
-        } catch (error) {
-          // A malformed frame or temporary detector failure must not terminate
-          // requestAnimationFrame. The next video frame can recover.
-          if (!trackingFrameErrorShown) {
-            console.warn('A tracking frame failed; continuing capture.', error);
-            trackingFrameErrorShown = true;
-          }
-        } finally {
-          detectionInProgress = false;
-        }
+        void processHolisticFrame();
       }
     }
   } catch (error) {
     // A camera element can be replaced while Flutter rebuilds the page. Keep
-    // the outer loop alive so the next frame can reconnect to the visible video.
+    // the outer loop alive so the next video frame can reconnect to the view.
     if (!trackingFrameErrorShown) {
       console.warn('Tracking loop recovered from a camera error.', error);
       trackingFrameErrorShown = true;
     }
   } finally {
-    // This is deliberately outside the detector block: no single camera or
-    // MediaPipe error is allowed to stop continuous tracking.
     if (started) animationFrame = requestAnimationFrame(processFrame);
   }
 }
 
-async function createLandmarker(delegate) {
-  const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
-  const hand = await HandLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: MODEL_URL,
-      delegate,
-    },
-    runningMode: 'VIDEO',
-    numHands: 2,
-    minHandDetectionConfidence: 0.55,
-    minHandPresenceConfidence: 0.55,
-    minTrackingConfidence: 0.55,
-  });
-  const pose = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: POSE_MODEL_URL,
-      delegate,
-    },
-    runningMode: 'VIDEO',
-    numPoses: 2,
-    minPoseDetectionConfidence: 0.55,
-    minPosePresenceConfidence: 0.55,
-    minTrackingConfidence: 0.55,
-  });
-  let face = null;
-  try {
-    face = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: FACE_MODEL_URL,
-        delegate,
-      },
-      runningMode: 'VIDEO',
-      numFaces: 2,
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-      minFaceDetectionConfidence: 0.55,
-      minFacePresenceConfidence: 0.55,
-      minTrackingConfidence: 0.55,
-    });
-  } catch (error) {
-    // Face landmarks are useful but optional. DeepFace emotion and the hand /
-    // pose worlds should continue working if this extra model cannot load.
-    console.warn('MediaPipe face landmarks unavailable.', error);
+function createHolistic() {
+  const Holistic = globalThis.Holistic;
+  if (typeof Holistic !== 'function') {
+    throw new Error('MediaPipe Holistic did not load. Refresh and try again.');
   }
-  return { hand, pose, face };
+  const tracker = new Holistic({
+    locateFile: (file) => `${HOLISTIC_CDN_BASE}/${file}`,
+  });
+  // These match the upstream Python live-recognition defaults: one coherent
+  // Holistic stream, 468 face landmarks (no iris refinement), full pose, and
+  // left/right hand slots produced by the same graph as training data.
+  tracker.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    smoothSegmentation: false,
+    refineFaceLandmarks: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+  tracker.onResults(onHolisticResults);
+  return tracker;
 }
 
 function waitForCameraElement(timeoutMs = 3000) {
@@ -1218,8 +1203,10 @@ async function start() {
       audio: false,
       video: {
         facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        // Match the upstream model's own Holistic live-recognition capture.
+        width: { ideal: 640, max: 640 },
+        height: { ideal: 480, max: 480 },
+        frameRate: { ideal: 30, max: 30 },
       },
     });
     video.srcObject = stream;
@@ -1227,18 +1214,7 @@ async function start() {
     video.playsInline = true;
     await video.play();
 
-    try {
-      const detectors = await createLandmarker('GPU');
-      handLandmarker = detectors.hand;
-      poseLandmarker = detectors.pose;
-      faceLandmarker = detectors.face;
-    } catch (error) {
-      console.warn('MediaPipe GPU delegate unavailable; using CPU.', error);
-      const detectors = await createLandmarker('CPU');
-      handLandmarker = detectors.hand;
-      poseLandmarker = detectors.pose;
-      faceLandmarker = detectors.face;
-    }
+    holistic = createHolistic();
   } catch (error) {
     await stop();
     throw error;
@@ -1247,8 +1223,8 @@ async function start() {
   started = true;
   trackingFrameErrorShown = false;
   lastProcessedAt = 0;
-  lastFaceResult = undefined;
-  lastFaceProcessedAt = 0;
+  lastFlutterFrameAt = 0;
+  lastPointQualityAt = 0;
   detectionInProgress = false;
   trackingLoopFrameCount = 0;
   trackingLoopStartedAt = performance.now();
@@ -1257,6 +1233,11 @@ async function start() {
   subjectAcquire = null;
   subjectReferenceIdentity = null;
   fingerQualityHistory = {left: {}, right: {}, unknown: {}};
+  void prepareAslRecognizer().catch(() => {
+    // A missing locally-exported model must not stop ordinary landmark
+    // tracking. Flutter will surface the model-unavailable result at the end
+    // of a captured sign instead.
+  });
   processFrame();
 }
 
@@ -1270,15 +1251,11 @@ async function stop() {
   deepFaceRequestInFlight = false;
   lastDeepFaceRequestAt = 0;
   deepFaceSubjectGeneration += 1;
-  handLandmarker?.close();
-  poseLandmarker?.close();
-  faceLandmarker?.close();
-  handLandmarker = null;
-  poseLandmarker = null;
-  faceLandmarker = null;
+  await holistic?.close();
+  holistic = null;
   lastProcessedAt = 0;
-  lastFaceResult = undefined;
-  lastFaceProcessedAt = 0;
+  lastFlutterFrameAt = 0;
+  lastPointQualityAt = 0;
   detectionInProgress = false;
   trackingLoopFrameCount = 0;
   trackingLoopStartedAt = 0;
@@ -1287,10 +1264,16 @@ async function stop() {
   subjectAcquire = null;
   subjectReferenceIdentity = null;
   fingerQualityHistory = {left: {}, right: {}, unknown: {}};
+  resetAslCapture();
 }
 
 globalThis.addEventListener('pagehide', () => {
   void stop();
 });
 
-window.signBridgeHandTracker = { start, stop };
+window.signBridgeHandTracker = {
+  start,
+  stop,
+  beginAslCapture,
+  finishAslCapture,
+};

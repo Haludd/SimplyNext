@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:permission_handler/permission_handler.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -5,15 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_controller.dart';
+import 'config/landmark_stream_client_config.dart';
 import 'models/face_tracking_models.dart';
 import 'models/hand_tracking_models.dart';
+import 'models/speech_recognition_models.dart';
 import 'models/tracking_models.dart';
 import 'services/device_access_service.dart';
 import 'services/local_state_service.dart';
 import 'services/sign_analysis_service.dart';
-import 'services/web_tracking_service.dart';
-import 'services/websocket_client.dart';
+import 'services/state_normalised_tracking_service.dart';
 import 'services/tracking_service.dart';
+import 'services/web_tracking_service.dart';
 import 'ui/web_camera_preview.dart';
 
 const _background = Color(0xFF07111F);
@@ -41,24 +45,33 @@ Color _confidenceStatusColor(double confidence, {required bool cameraReady}) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
-  const websocketEnabled = bool.fromEnvironment(
-    'SIGNBRIDGE_ENABLE_WEBSOCKET',
-    defaultValue: false,
+  final TrackingService mediaPipeCapture = kIsWeb
+      ? WebTrackingService()
+      : DemoTrackingService();
+  // Keep the appTesting UI on top of the complete perception pipeline:
+  // MediaPipe capture -> stable tracking state -> body-relative normalisation.
+  final TrackingService mediaPipeTracking = StateNormalisedTrackingService(
+    mediaPipeCapture,
   );
-  const websocketUrl = String.fromEnvironment('SIGNBRIDGE_WEBSOCKET_URL');
-  final websocketClient = !websocketEnabled || websocketUrl.isEmpty
-      ? null
-      : SignTrackingWebSocketClient(uri: Uri.parse(websocketUrl));
-  runApp(
-    SignBridgeApp(
-      controller: AppController(
-        LocalStateService(preferences),
-        kIsWeb ? WebTrackingService() : DemoTrackingService(),
-        DeviceAccessService(),
-        websocketClient: websocketClient,
-      ),
-    ),
+  final controller = AppController(
+    LocalStateService(preferences),
+    mediaPipeTracking,
+    DeviceAccessService(),
   );
+  LandmarkStreamClientConfig? streamConfig;
+  Object? streamConfigError;
+  try {
+    streamConfig = LandmarkStreamClientConfig.fromEnvironment();
+  } on Object catch (error) {
+    streamConfigError = error;
+  }
+  if (streamConfigError != null) {
+    controller.backendStatus =
+        'Backend configuration error · $streamConfigError';
+  } else if (streamConfig != null) {
+    unawaited(controller.connectToBackend(streamConfig));
+  }
+  runApp(SignBridgeApp(controller: controller));
 }
 
 class SignBridgeApp extends StatelessWidget {
@@ -643,7 +656,7 @@ class _LivePreviewOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final analysis = controller.latestAnalysis;
+    final analysis = controller.visibleAnalysis;
     final ttsText = analysis?.ttsText;
     final caption =
         analysis?.caption ??
@@ -658,9 +671,23 @@ class _LivePreviewOverlay extends StatelessWidget {
       confidenceValue,
       cameraReady: cameraReady,
     );
+    final resultColor = analysis == null
+        ? _subtle
+        : _resultStatusColor(analysis.status);
+    final backendActive =
+        controller.backendActivityState == 'signing' ||
+        controller.backendActivityState == 'processing';
+    final backendProcessing = controller.backendActivityState == 'processing';
+    final showBackendStatus =
+        controller.isBackendConnected ||
+        controller.backendStatus.startsWith('Backend') ||
+        controller.backendStatus.startsWith('Local ASL word') ||
+        controller.backendStatus.startsWith('Word sent');
     final status = !controller.devices.cameraReady
         ? 'CAMERA OFF'
-        : controller.isCapturingUtterance
+        : backendProcessing
+        ? 'PROCESSING'
+        : backendActive || controller.isCapturingUtterance
         ? 'CAPTURING'
         : 'READY · AUTO';
 
@@ -702,7 +729,49 @@ class _LivePreviewOverlay extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               _StatusPill(label: status, color: cameraReady ? _mint : _yellow),
+              if (controller.isBackendConnected) ...<Widget>[
+                const SizedBox(width: 7),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xB307111F),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: IconButton(
+                    onPressed: () => _showBackendPayload(context, controller),
+                    tooltip: 'Show last landmark batch',
+                    icon: const Icon(
+                      Icons.data_object,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    padding: const EdgeInsets.all(7),
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
+              ],
               if (cameraReady) ...<Widget>[
+                const SizedBox(width: 7),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xB307111F),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: IconButton(
+                    onPressed: () {
+                      controller.toggleCamera();
+                    },
+                    tooltip: 'Turn off camera',
+                    icon: const Icon(
+                      Icons.videocam_off_outlined,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    padding: const EdgeInsets.all(7),
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
                 const SizedBox(width: 7),
                 Container(
                   decoration: BoxDecoration(
@@ -715,6 +784,29 @@ class _LivePreviewOverlay extends StatelessWidget {
                     tooltip: 'Refresh tracking',
                     icon: const Icon(
                       Icons.refresh,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    padding: const EdgeInsets.all(7),
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xB307111F),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: IconButton(
+                    onPressed: controller.visibleAnalysis == null
+                        ? null
+                        : () {
+                            controller.readCaptionAloud();
+                          },
+                    tooltip: 'Read caption aloud',
+                    icon: const Icon(
+                      Icons.volume_up_outlined,
                       color: Colors.white,
                       size: 17,
                     ),
@@ -838,6 +930,19 @@ class _LivePreviewOverlay extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                if (showBackendStatus) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    controller.backendStatus,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _muted,
+                      fontSize: 9,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
                 if (ttsText != null && ttsText.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 4),
                   Text(
@@ -851,6 +956,170 @@ class _LivePreviewOverlay extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (analysis != null) ...<Widget>[
+                  const SizedBox(height: 9),
+                  const Divider(color: Colors.white12, height: 1),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 6,
+                    children: <Widget>[
+                      _ResultChip(
+                        label: 'STATUS',
+                        value: analysis.status,
+                        color: resultColor,
+                      ),
+                      _ResultChip(
+                        label: 'CONFIDENCE',
+                        value: '${(analysis.confidence * 100).round()}%',
+                        color: confidenceColor,
+                      ),
+                      if (analysis.totalLatencyMs != null)
+                        _ResultChip(
+                          label:
+                              analysis.latencyMs.containsKey('local_inference')
+                              ? 'INFERENCE'
+                              : 'LATENCY',
+                          value: '${analysis.totalLatencyMs} ms',
+                          color: _muted,
+                        ),
+                      if (analysis.modelVersion.isNotEmpty)
+                        _ResultChip(
+                          label: 'MODEL',
+                          value: analysis.modelVersion,
+                          color: _muted,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    key: const ValueKey<String>('local-asl-model-output'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _surfaceRaised.withValues(alpha: .72),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: resultColor.withValues(alpha: .35),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text(
+                          'RECOGNITION OUTPUT',
+                          style: TextStyle(
+                            color: _cyan,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          analysis.status == 'confident'
+                              ? analysis.gestureLabel.toUpperCase()
+                              : analysis.caption,
+                          key: const ValueKey<String>(
+                            'local-asl-recognized-word',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: resultColor,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (analysis.hypotheses.isNotEmpty) ...<Widget>[
+                          const SizedBox(height: 4),
+                          Text(
+                            _recognitionAlternativesText(analysis.hypotheses),
+                            key: const ValueKey<String>(
+                              'local-asl-alternatives',
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _muted,
+                              fontSize: 9,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                        if (analysis.detail.isNotEmpty) ...<Widget>[
+                          const SizedBox(height: 4),
+                          Text(
+                            analysis.detail,
+                            key: const ValueKey<String>(
+                              'local-asl-model-input',
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _muted,
+                              fontSize: 9,
+                              height: 1.35,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                        if (controller.canTeachLastAslCapture &&
+                            analysis.status == 'confident' &&
+                            analysis.modelVersion.startsWith(
+                              'google_asl_25_',
+                            )) ...<Widget>[
+                          const SizedBox(height: 4),
+                          TextButton.icon(
+                            onPressed: () =>
+                                _showAslCorrectionDialog(context, controller),
+                            icon: const Icon(Icons.edit_outlined, size: 14),
+                            label: const Text('Wrong word? Teach it'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: _cyan,
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 1,
+                              ),
+                              textStyle: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (analysis.glossTrace.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 7),
+                    Text(
+                      'Gloss: ${analysis.glossTrace.join(' · ')}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _muted,
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                  if (analysis.repairAction != null) ...<Widget>[
+                    const SizedBox(height: 7),
+                    Text(
+                      'Action: ${analysis.repairAction}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _yellow,
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ],
               ],
             ),
           ),
@@ -858,6 +1127,134 @@ class _LivePreviewOverlay extends StatelessWidget {
       ],
     );
   }
+
+  static Color _resultStatusColor(String status) =>
+      switch (status.toLowerCase()) {
+        'confident' => _mint,
+        'candidate' || 'needs_review' => _yellow,
+        'unknown' || 'no_signal' => _red,
+        _ => _subtle,
+      };
+}
+
+String _recognitionAlternativesText(List<Map<String, dynamic>> hypotheses) =>
+    hypotheses
+        .take(3)
+        .map((candidate) {
+          final label =
+              candidate['word']?.toString() ??
+              candidate['gloss_id']?.toString() ??
+              candidate['label']?.toString() ??
+              'unknown';
+          final confidence = (candidate['confidence'] as num?)?.toDouble();
+          final percent = confidence == null
+              ? ''
+              : ' ${(confidence * 100).round()}%';
+          return '$label$percent';
+        })
+        .join('  ·  ');
+
+Future<void> _showAslCorrectionDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  final field = TextEditingController();
+  final label = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Teach the correct word'),
+      content: TextField(
+        controller: field,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(
+          labelText: 'Correct ASL word',
+          hintText: 'For example: bye',
+          helperText: 'Saved only in this browser for similar hand motion.',
+        ),
+        onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(field.text),
+          child: const Text('Save correction'),
+        ),
+      ],
+    ),
+  );
+  field.dispose();
+
+  if (label == null || label.trim().isEmpty) return;
+  final receipt = await controller.teachLastAslCapture(label);
+  if (!context.mounted) return;
+  final message = receipt?.isStored == true
+      ? 'Saved ${receipt!.sampleCount}/5 local examples for "${receipt.label}". Sign it again and correct it a few times for a stronger match.'
+      : 'Could not save that motion. Sign it once more, then choose Teach it.';
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
+
+Future<void> _showBackendPayload(
+  BuildContext context,
+  AppController controller,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(
+        'Last landmark batch · ${controller.backendFramesSent} frames sent',
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 520),
+        child: SingleChildScrollView(
+          child: SelectableText(
+            controller.lastBackendBatchJson ?? 'No acknowledged landmark batch yet. Start the camera and backend stream first.',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ResultChip extends StatelessWidget {
+  const _ResultChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: color.withValues(alpha: .22)),
+    ),
+    child: Text(
+      '$label  ${value.toUpperCase()}',
+      style: TextStyle(
+        color: color,
+        fontSize: 8,
+        fontFamily: 'monospace',
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
 }
 
 class _PreviewBackgroundPainter extends CustomPainter {
@@ -1147,6 +1544,8 @@ class LiveTranslatorScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
+          _SpeechCaptionCard(controller: controller),
+          const SizedBox(height: 18),
           _ActionDock(controller: controller),
         ],
       ),
@@ -1209,7 +1608,6 @@ class _ViewToggle extends StatelessWidget {
     segments: const <ButtonSegment<ViewMode>>[
       ButtonSegment(value: ViewMode.raw, label: Text('Raw')),
       ButtonSegment(value: ViewMode.wireframe, label: Text('Mesh')),
-      ButtonSegment(value: ViewMode.clean, label: Text('Clean')),
     ],
     selected: <ViewMode>{controller.viewMode},
     onSelectionChanged: (selection) => controller.setViewMode(selection.first),
@@ -1220,6 +1618,350 @@ class _ViewToggle extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _SpeechCaptionCard extends StatelessWidget {
+  const _SpeechCaptionCard({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final speech = controller.speechToText;
+    final status = speech.status;
+    final error = speech.lastError;
+    final confidence = speech.confidence;
+    final selectedLocale = speech.locale;
+    final confirmed = speech.finalTranscript.trim();
+    final partial = speech.partialTranscript.trim();
+    final hasTranscript = confirmed.isNotEmpty || partial.isNotEmpty;
+    final isActive = _isActive(status);
+    final isStopping = status == SpeechServiceStatus.stopping;
+    final statusLabel = _statusLabel(status, error?.message);
+    final statusColor = _statusColor(status);
+
+    return GlassCard(
+      key: const ValueKey<String>('speech-caption-card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 14,
+            runSpacing: 10,
+            children: <Widget>[
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(Icons.mic_none, color: _mint, size: 19),
+                  SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'SPOKEN CAPTIONS',
+                        style: TextStyle(
+                          color: _mint,
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Hearing person → signer',
+                        style: TextStyle(color: _muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              if (selectedLocale != null)
+                _SpeechLocaleMenu(
+                  selectedLocale: selectedLocale,
+                  locales: speech.availableLocales,
+                  enabled: !isActive && !isStopping,
+                  onSelected: speech.selectLocale,
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            constraints: const BoxConstraints(minHeight: 112),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _background.withValues(alpha: .72),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: _mint.withValues(alpha: .2)),
+            ),
+            alignment: Alignment.centerLeft,
+            child: Semantics(
+              key: const ValueKey<String>('spoken-caption-text'),
+              container: true,
+              liveRegion: confirmed.isNotEmpty,
+              label: confirmed.isNotEmpty
+                  ? 'Final spoken caption: $confirmed'
+                  : partial.isNotEmpty
+                  ? 'Draft spoken caption: $partial'
+                  : 'No spoken caption yet',
+              child: ExcludeSemantics(
+                child: hasTranscript
+                    ? SelectableText.rich(
+                        TextSpan(
+                          children: <InlineSpan>[
+                            if (confirmed.isNotEmpty)
+                              TextSpan(
+                                text: confirmed,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            if (confirmed.isNotEmpty && partial.isNotEmpty)
+                              const TextSpan(text: ' '),
+                            if (partial.isNotEmpty)
+                              TextSpan(
+                                text: partial,
+                                style: TextStyle(
+                                  color: _cyan.withValues(alpha: .72),
+                                ),
+                              ),
+                          ],
+                          style: const TextStyle(
+                            fontSize: 26,
+                            height: 1.35,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      )
+                    : const Text(
+                        'Tap Start listening, then speak one short message.',
+                        style: TextStyle(
+                          color: _muted,
+                          fontSize: 20,
+                          height: 1.4,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            container: true,
+            liveRegion:
+                status == SpeechServiceStatus.listening ||
+                status == SpeechServiceStatus.error ||
+                status == SpeechServiceStatus.unavailable,
+            label: statusLabel,
+            child: ExcludeSemantics(
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.circle, color: statusColor, size: 8),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (confidence != null && confirmed.isNotEmpty)
+                    Text(
+                      '${(confidence * 100).round()}% confidence',
+                      style: const TextStyle(
+                        color: _subtle,
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Semantics(
+                button: true,
+                toggled: isActive,
+                enabled: !isStopping,
+                label: isActive
+                    ? 'Stop speech recognition'
+                    : 'Start speech recognition',
+                onTap: isStopping
+                    ? null
+                    : () {
+                        controller.toggleSpeechCaptioning();
+                      },
+                excludeSemantics: true,
+                child: SizedBox(
+                  height: 48,
+                  child: FilledButton.icon(
+                    key: const ValueKey<String>('toggle-speech-captioning'),
+                    onPressed: isStopping
+                        ? null
+                        : controller.toggleSpeechCaptioning,
+                    icon: Icon(
+                      isActive ? Icons.stop_circle_outlined : Icons.mic,
+                      size: 19,
+                    ),
+                    label: Text(
+                      isActive
+                          ? 'Stop listening'
+                          : status == SpeechServiceStatus.error ||
+                                status == SpeechServiceStatus.unavailable
+                          ? 'Try again'
+                          : 'Start listening',
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: isActive ? _red : _mint,
+                      foregroundColor: _background,
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(
+                height: 48,
+                child: TextButton.icon(
+                  key: const ValueKey<String>('clear-speech-caption'),
+                  onPressed: hasTranscript && !isActive && !isStopping
+                      ? controller.clearSpeechCaption
+                      : null,
+                  icon: const Icon(Icons.cleaning_services_outlined, size: 17),
+                  label: const Text('Clear caption'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(Icons.info_outline, color: _subtle, size: 15),
+              SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Speech recognition uses your device\'s configured service and may require an internet connection. Audio is not sent by this capture-only frontend.',
+                  style: TextStyle(color: _subtle, fontSize: 10, height: 1.45),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static bool _isActive(SpeechServiceStatus status) =>
+      status == SpeechServiceStatus.initializing ||
+      status == SpeechServiceStatus.starting ||
+      status == SpeechServiceStatus.listening;
+
+  static Color _statusColor(SpeechServiceStatus status) => switch (status) {
+    SpeechServiceStatus.ready => _mint,
+    SpeechServiceStatus.starting || SpeechServiceStatus.listening => _cyan,
+    SpeechServiceStatus.unavailable || SpeechServiceStatus.error => _red,
+    SpeechServiceStatus.uninitialized ||
+    SpeechServiceStatus.initializing ||
+    SpeechServiceStatus.stopping => _yellow,
+  };
+
+  static String _statusLabel(SpeechServiceStatus status, String? error) =>
+      switch (status) {
+        SpeechServiceStatus.uninitialized =>
+          'Ready · microphone permission is requested when you start',
+        SpeechServiceStatus.initializing =>
+          'Requesting microphone and speech-recognition access…',
+        SpeechServiceStatus.ready => 'Ready for a short spoken message',
+        SpeechServiceStatus.starting => 'Starting the microphone…',
+        SpeechServiceStatus.listening => 'Listening… speak naturally',
+        SpeechServiceStatus.stopping => 'Finishing the caption…',
+        SpeechServiceStatus.unavailable =>
+          'Speech recognition is unavailable on this device or browser',
+        SpeechServiceStatus.error => _friendlyError(error),
+      };
+
+  static String _friendlyError(String? error) {
+    final normalized = (error ?? '').toLowerCase();
+    if (normalized.contains('permission') || normalized.contains('denied')) {
+      return 'Microphone or speech-recognition permission was denied';
+    }
+    if (normalized.contains('network')) {
+      return 'Speech recognition needs a network connection on this device';
+    }
+    if (normalized.contains('no_match') || normalized.contains('no match')) {
+      return 'No speech was recognised · try again and speak clearly';
+    }
+    if (normalized.contains('busy')) {
+      return 'The device speech recogniser is busy · try again';
+    }
+    return error == null || error.trim().isEmpty
+        ? 'Speech recognition stopped because of an unexpected error'
+        : 'Speech recognition error · $error';
+  }
+}
+
+class _SpeechLocaleMenu extends StatelessWidget {
+  const _SpeechLocaleMenu({
+    required this.selectedLocale,
+    required this.locales,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final SpeechLocale selectedLocale;
+  final List<SpeechLocale> locales;
+  final bool enabled;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final canChoose = enabled && locales.length > 1;
+    return PopupMenuButton<String>(
+      enabled: canChoose,
+      tooltip: canChoose ? 'Choose spoken language' : 'Spoken language',
+      initialValue: selectedLocale.localeId,
+      onSelected: onSelected,
+      itemBuilder: (context) => locales
+          .map(
+            (locale) => PopupMenuItem<String>(
+              value: locale.localeId,
+              child: Text(locale.name),
+            ),
+          )
+          .toList(growable: false),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          color: _mint.withValues(alpha: .07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _mint.withValues(alpha: .2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.language, color: _mint, size: 15),
+            const SizedBox(width: 6),
+            Text(
+              selectedLocale.name,
+              style: const TextStyle(color: _muted, fontSize: 10),
+            ),
+            if (canChoose) ...<Widget>[
+              const SizedBox(width: 4),
+              const Icon(Icons.arrow_drop_down, color: _muted, size: 17),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ActionDock extends StatelessWidget {

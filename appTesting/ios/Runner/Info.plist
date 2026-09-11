@@ -6,6 +6,8 @@
 	<string>SignBridge uses the camera to track signing movements on your device.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>SignBridge uses the microphone for optional voice input and microphone tests.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>SignBridge uses speech recognition to transcribe spoken words into text.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

@@ -109,6 +109,8 @@ class SignAnalysisResult {
     this.modelVersion = '',
     this.latencyMs = const <String, dynamic>{},
     this.detail = '',
+    this.repairAction,
+    this.reasonCodes = const <String>[],
   });
 
   final String type;
@@ -123,6 +125,8 @@ class SignAnalysisResult {
   final String modelVersion;
   final Map<String, dynamic> latencyMs;
   final String detail;
+  final String? repairAction;
+  final List<String> reasonCodes;
 
   bool get needsBackend => status == 'candidate' || status == 'unknown';
   int? get totalLatencyMs => (latencyMs['total'] as num?)?.toInt();
@@ -141,10 +145,14 @@ class SignAnalysisResult {
   };
 
   factory SignAnalysisResult.fromJson(Map<String, dynamic> json) {
-    final glossTrace = (json['gloss_trace'] as List<dynamic>? ?? <dynamic>[])
+    final rawGlossTrace = json['gloss_trace'] ?? json['gloss_id_trace'];
+    final glossTrace = (rawGlossTrace as List<dynamic>? ?? <dynamic>[])
         .whereType<String>()
         .toList(growable: false);
-    final caption = json['caption'] as String? ?? 'No caption returned.';
+    final caption =
+        json['caption'] as String? ??
+        json['message'] as String? ??
+        'No caption returned.';
     final fallbackLabel = glossTrace.isEmpty
         ? 'unknown'
         : glossTrace.join(', ').toLowerCase();
@@ -160,6 +168,11 @@ class SignAnalysisResult {
         ? Map<String, dynamic>.from(rawLatency)
         : const <String, dynamic>{};
 
+    final rawReasons = json['reason_codes'];
+    final reasonCodes = rawReasons is List
+        ? rawReasons.whereType<String>().toList(growable: false)
+        : const <String>[];
+
     return SignAnalysisResult(
       type: json['type'] as String? ?? 'utterance_result',
       utteranceId: json['utterance_id'] as String? ?? '',
@@ -170,9 +183,17 @@ class SignAnalysisResult {
       confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
       glossTrace: glossTrace,
       hypotheses: hypotheses,
-      modelVersion: json['model_version'] as String? ?? '',
+      modelVersion:
+          json['model_version'] as String? ??
+          json['classifier_version'] as String? ??
+          '',
       latencyMs: latencyMs,
-      detail: json['detail'] as String? ?? '',
+      detail:
+          json['detail'] as String? ??
+          json['message'] as String? ??
+          '',
+      repairAction: json['action'] as String?,
+      reasonCodes: reasonCodes,
     );
   }
 }
